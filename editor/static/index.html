@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HakusAI Code Editor</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/golden-layout@2.6.0/dist/css/goldenlayout-base.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/golden-layout@2.6.0/dist/css/themes/goldenlayout-dark-theme.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+<div class="titlebar">
+  <div class="titlebar-left">
+    <div class="titlebar-dots"><span></span><span></span><span></span></div>
+    <span class="title">HakusAI Code Editor</span>
+  </div>
+  <div class="titlebar-center"></div>
+  <div class="titlebar-right">
+    <select id="modelSelect" class="model-select">
+      <option value="deepseek">DeepSeek V3</option><option value="qwen">Qwen</option>
+      <option value="glm">GLM</option><option value="mimo">MiMo</option><option value="gemini">Gemini</option>
+    </select>
+    <button class="tb-btn" id="newFileBtn" title="New File">+</button>
+    <button class="tb-btn" id="refreshTreeBtn" title="Refresh">&#x21bb;</button>
+    <span class="ws-dot" id="wsDot"></span>
+    <span class="ws-label" id="wsLabel">Connecting...</span>
+    <button class="tb-btn tb-icon-btn" id="voiceBtn" title="Voice">&#x1f3a4;</button>
+  </div>
+</div>
+
+<div id="goldenLayoutContainer"></div>
+
+<div class="statusbar" id="statusBar">
+  <div class="sb-left"><span class="ws-dot-sm" id="statusDot"></span><span id="statusText">Ready</span></div>
+  <div class="sb-right"><span id="statusInfo"></span><span>UTF-8</span><span>Ln 1, Col 1</span></div>
+</div>
+
+</div>
+
+<div class="inline-overlay hidden" id="inlineOverlay">
+  <div class="il-header">&#x270f; AI Inline Edit</div>
+  <div class="il-body">
+    <input type="text" id="ilInput" placeholder="Describe the change...">
+    <button class="btn sm primary" id="ilSubmit">Apply</button>
+    <button class="btn sm ghost" id="ilCancel">Cancel</button>
+  </div>
+  <div class="diff-view hidden" id="diffView"></div>
+  <div class="il-actions hidden" id="ilActions">
+    <button class="btn sm accept" id="ilAccept">&#x2713; Accept</button>
+    <button class="btn sm reject" id="ilReject">&#x2717; Reject</button>
+  </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+<script>window._defineTemp=window.define;window.define=undefined;</script>
+<script src="goldenlayout.js?v=3"></script>
+<script>window.define=window._defineTemp;delete window._defineTemp;</script>
+<script>
+// Ensure GoldenLayout is exposed to window (fallback for AMD environments)
+if (typeof window.GoldenLayout === 'undefined' && typeof window.lm !== 'undefined') {
+  window.GoldenLayout = window.lm.LayoutManager;
+}
+</script>
+<script src="app.js?v=13"></script>
+</body>
+</html>

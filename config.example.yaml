@@ -1,0 +1,199 @@
+# ============================================================
+# HakusAI 配置模板 (config.example.yaml)
+# ============================================================
+# 使用方法:
+#   1. 复制此文件为 config.yaml:  cp config.example.yaml config.yaml
+#   2. 或复制到用户目录:      mkdir -p ~/.hakus && cp config.example.yaml ~/.hakus/config.yaml
+#   3. 填入你的 API Key 和配置
+#
+# 支持环境变量覆盖，格式: ${ENV_VAR:默认值}
+#   例: ${OPENAI_API_KEY:sk-xxx}  → 优先用环境变量 OPENAI_API_KEY，没有则用 sk-xxx
+#
+# 配置加载优先级: 环境变量 > ~/.hakus/config.yaml > ./config.yaml
+# ============================================================
+
+# ==================== API 密钥配置 ====================
+api_keys:
+  # --- OpenAI ---
+  # 注册: https://platform.openai.com/api-keys
+  openai_api_key: ${OPENAI_API_KEY:}
+
+  # --- Anthropic (Claude) ---
+  # 注册: https://console.anthropic.com/settings/keys
+  anthropic_api_key: ${ANTHROPIC_API_KEY:}
+
+  # --- Google Gemini ---
+  # 注册: https://aistudio.google.com/apikey
+  gemini_api_key: ${GEMINI_API_KEY:}
+  google_api_key: ${GOOGLE_API_KEY:}
+  google_cse_id: ${GOOGLE_CSE_ID:}
+
+  # --- 阿里百炼 (通义千问 Qwen) ---
+  # 注册: https://bailian.console.aliyun.com/
+  dashscope_api_key: ${DASHSCOPE_API_KEY:}
+
+  # --- DeepSeek ---
+  # 注册: https://platform.deepseek.com/api_keys
+  deepseek_api_key: ${DEEPSEEK_API_KEY:}
+
+  # --- 智谱 AI (GLM) ---
+  # 注册: https://open.bigmodel.cn/usercenter/apikeys
+  glm_api_key: ${GLM_API_KEY:}
+
+  # --- 小米 MiMo ---
+  # 注册: https://www.xiaomimimo.com/
+  mimo_api_key: ${MIMO_API_KEY:}
+
+  # --- OpenAI 兼容端点 (自定义) ---
+  # 适用于任何兼容 OpenAI API 格式的服务:
+  #   - 本地 Ollama / vLLM / LM Studio
+  #   - Azure OpenAI
+  #   - Groq / Together AI / Mistral 等第三方
+  custom_api_key: ${CUSTOM_API_KEY:}
+
+
+# ==================== 模型提供商配置 ====================
+models:
+  # 默认使用的模型: openai, anthropic, deepseek, qwen, gemini, glm, mimo, ollama, custom
+  default_model: ${DEFAULT_MODEL:deepseek}
+
+  # ---- OpenAI (GPT-4o / GPT-4o-mini / o1 / o3) ----
+  openai:
+    model_name: ${OPENAI_MODEL_NAME:gpt-4o}
+    base_url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+
+  # ---- Anthropic (Claude Sonnet / Opus / Haiku) ----
+  anthropic:
+    model_name: ${ANTHROPIC_MODEL_NAME:claude-sonnet-4-20250514}
+    base_url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+
+  # ---- Google Gemini ----
+  gemini:
+    model_name: ${GEMINI_MODEL_NAME:gemini-2.5-flash}
+
+  # ---- 阿里百炼 Qwen ----
+  qwen:
+    model_name: ${QWEN_MODEL_NAME:qwen-plus}
+
+  # ---- DeepSeek ----
+  deepseek:
+    model_name: ${DEEPSEEK_MODEL_NAME:deepseek-chat}
+    base_url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+
+  # ---- 智谱 GLM ----
+  glm:
+    model_name: ${GLM_MODEL_NAME:glm-4-flash}
+
+  # ---- 小米 MiMo ----
+  mimo:
+    model_name: ${MIMO_MODEL_NAME:mimo-v2.5-pro}
+    base_url: ${MIMO_BASE_URL:https://api.xiaomimimo.com/v1}
+
+  # ---- Ollama (本地模型) ----
+  # 需要先安装并启动 Ollama: https://ollama.com
+  # 拉取模型: ollama pull qwen3:8b
+  ollama:
+    model_name: ${OLLAMA_MODEL_NAME:gemma4}
+    base_url: ${OLLAMA_BASE_URL:http://localhost:11434/v1}
+
+  # ---- 自定义 OpenAI 兼容端点 ----
+  # 可用于任何兼容 OpenAI API 的服务
+  custom:
+    model_name: ${CUSTOM_MODEL_NAME:}
+    base_url: ${CUSTOM_BASE_URL:}
+
+
+# ==================== Embedding 向量模型 ====================
+embedding:
+  type: ${EMBEDDING_TYPE:google}
+  model_path: ${EMBEDDING_MODEL_PATH:shibing624/text2vec-base-chinese}
+  local_model_path: ${LOCAL_EMBEDDING_MODEL_PATH:./embedding_models/text2vec-base-chinese}
+  device: cpu
+  thread_count: 4
+  batch_size: 8
+
+
+# ==================== 记忆系统 ====================
+memory:
+  short_term_max_length: 50
+  long_term_max_length: 500
+  state_dir: ${HAKUS_STATE_DIR:~/.hakus/user_states}
+  db_dir: ${HAKUS_MEMORY_DB_DIR:~/.hakus/memory_db}
+
+
+# ==================== TTS 语音合成 ====================
+tts:
+  enabled: ${ENABLE_TTS:false}
+  audio_output: ${ENABLE_TTS_AUDIO_OUTPUT:true}
+  # 类型: sherpa-onnx, api, cosyvoice, voxcpm, gptsovits, bert-vits2
+  type: ${TTS_TYPE:off}
+
+  voxcpm_path: ${VOXCPM_PATH:}
+  voxcpm_model_path: ${VOXCPM_MODEL_PATH:}
+  gptsovits_path: ${GPTSOVITS_PATH:}
+  gptsovits_server_url: ${GPTSOVITS_SERVER_URL:http://127.0.0.1:9880}
+  gptsovits_ref_audio_path: ${GPTSOVITS_REF_AUDIO:}
+  gptsovits_ref_text: ${GPTSOVITS_REF_TEXT:}
+  gptsovits_language: ${GPTSOVITS_LANG:zh}
+
+  api:
+    api_type: ${TTS_API_TYPE:qwen}
+    voice_id: ${TTS_VOICE_ID:kirara}
+
+  sherpa_onnx:
+    model_dir: ${SHERPA_ONNX_MODEL_DIR:./tts_models}
+    voice: ${SHERPA_ONNX_VOICE:zh}
+    speed: 1.0
+    volume: 1.0
+    pitch: 1.0
+    audio_format: wav
+    sample_rate: 24000
+    device: cpu
+
+  cosyvoice:
+    model: ${COSYVOICE_MODEL:cosyvoice-v3-flash}
+    voice_id: ${COSYVOICE_VOICE_ID:}
+    ref_audio_url: ${COSYVOICE_REF_AUDIO_URL:}
+    language_hints: ${COSYVOICE_LANGUAGE_HINTS:zh}
+    streaming: true
+    format: wav
+    sample_rate: 22050
+    voice_prefix: hakus
+
+
+# ==================== 功能开关 ====================
+features:
+  enable_image_generation: false
+
+
+# ==================== 日志 ====================
+logging:
+  level: INFO
+
+
+# ==================== 调试 ====================
+debug: false
+
+
+# ==================== 语音对话 ====================
+voice:
+  asr:
+    provider: ${ASR_PROVIDER:funasr}
+    model: ${ASR_MODEL:SenseVoiceSmall}
+    sample_rate: 16000
+    language: auto
+    threshold: 600
+    min_duration: 0.3
+    silence_timeout: 1.0
+
+  tts:
+    provider: ${VOICE_TTS_PROVIDER:off}
+    model_dir: ${BERT_VITS2_MODEL_DIR:}
+    gen_config: ${BERT_VITS2_GEN_CONFIG:}
+    voice_id: ${VOICE_TTS_VOICE_ID:}
+    sample_rate: 22050
+    output_dir: ${VOICE_OUTPUT_DIR:./output}
+
+  live:
+    enabled: false
+    character_name: 羽汐

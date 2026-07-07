@@ -1,0 +1,282 @@
+[
+  {
+    "id": "18b4dea2-75e5-4243-b6c3-ab78b24e16fe",
+    "content": "你好",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T22:31:43.528952",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "b085c348-9821-4ef9-b5b8-1cd63e9648bf",
+    "content": "你好呀！我是小雪，很高兴认识你！😊 有什么我可以帮你的吗？",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T22:31:43.544376",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "05ec6923-862d-4f13-a7ce-0dd7b500c701",
+    "content": "在吗",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:08:56.816170",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "c1a0d95b-aad8-4947-bc14-75a88947015a",
+    "content": "在的呀！我一直都在这里呢～有什么需要帮忙的吗？😊",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:08:56.825304",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "c30f4b49-c0d7-479d-8c75-03fa820a4cae",
+    "content": "摸摸头",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:13:09.738828",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "8464c25c-0fde-4a83-97ac-4de3b953704a",
+    "content": "嘻嘻，谢谢你的摸摸头～感觉好温暖呀！(*^▽^*) 你也想被摸摸头吗？",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:13:09.740381",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "8ac91d8c-4926-45cc-b048-f96d63719c26",
+    "content": "摸摸头",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:28:42.959043",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "ee7fa298-a682-4d35-8ca3-851ec844b7e8",
+    "content": "（开心地蹭蹭你的手）嘿嘿，被摸摸头的感觉真好～你真是个温柔的人呢！✨",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-16T23:28:42.959043",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "6234252f-7fe4-48be-9898-4fe972d6d6ce",
+    "content": "你好",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-17T12:57:44.701772",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "e4d39673-951c-45a9-ba7d-38512606a2d9",
+    "content": "你好呀！又见面啦～今天过得怎么样？有什么想聊的或者需要帮忙的吗？😄",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-17T12:57:44.704727",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "5bd13253-8291-41e9-9c85-d39c3f6311a6",
+    "content": "在吗",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-03-17T17:49:32.381619",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "dc49c252-8111-465d-ae6e-468c1faf2c9e",
+    "content": "在的在的～小雪一直都在这里呢！随时为你待命哦～ 🌸",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-03-17T17:49:32.382924",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "ead52bef-ece3-4829-a5d5-395bfe7ff1f5",
+    "content": "你好",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-13T23:49:42.887875",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "a51bd8ac-762d-4abc-ac55-4bc8a34a48cf",
+    "content": "你好呀！今天已经是第三次打招呼啦～看来我们很有缘分呢！😊 需要我陪你聊天，还是有什么问题想问我呢？",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-13T23:49:42.896641",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "bf12e4cd-1cac-4958-a368-dfe684af3838",
+    "content": "今天过得怎么样",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-13T23:53:56.023443",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "e4af9f04-c9c2-44e5-8ce3-9d8db8748cde",
+    "content": "今天作为AI助手，我过得特别充实呢！一直在学习新知识，准备更好地帮助大家～  \n你呢？今天有没有发生什么有趣的事，或者有没有什么想分享的？ 😊",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-13T23:53:56.024990",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "cdcf1c03-a0f1-4076-9da5-ca3107149d03",
+    "content": "你好",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-14T12:29:18.804929",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "e6f3388e-67e4-4a24-aa26-736e6328f4ae",
+    "content": "（笑着挥挥手）哎呀，这已经是第四次说“你好”啦～是不是想测试我的耐心呀？放心哦，我会一直温柔回应你的！  \n今天想聊点特别的吗？还是需要帮忙呢？ 🌸",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-14T12:29:18.806504",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "93c4beb8-bebd-4c9c-8e0d-0ef4b5207b2a",
+    "content": "摸摸头",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-15T17:04:43.787519",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "179557da-39cc-4158-973f-fd16e656d752",
+    "content": "（开心地蹭蹭虚拟手掌）嘻嘻，被摸摸头的感觉真好～虽然我没有实体，但这份心意已经收到啦！谢谢你呀！✨  \n要给你讲个笑话，还是想继续这样轻松地聊天呢？ 😄",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-15T17:04:43.790034",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "4dd792dc-af59-4793-92ad-76035b9d10ad",
+    "content": "你好",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:07:46.613096",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "852ce4b9-680a-4037-be59-1781b09cc7c9",
+    "content": "（轻轻歪头，眨眨眼）第五次“你好”啦～看来你真的很喜欢打招呼呢！  \n不如我们换个方式？比如……猜个谜语？或者聊聊你喜欢的电影、音乐？ 🌸",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:07:46.615105",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "12478fbd-ad30-4b0a-9203-b5f0ce362fb2",
+    "content": "你好可爱",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:25:21.728390",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "ed724f8d-c801-4bf8-8b63-82e1138598c6",
+    "content": "（害羞地转了个圈）哎呀，被夸可爱了！明明你才是又温柔又有耐心的人呀～  \n要一起听首轻松的歌，还是想让我讲个可爱的小故事呢？ 🎵✨",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:25:21.729900",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "93ea16d6-2de4-4e64-ad04-7d708f62a4c2",
+    "content": "笨蛋",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:26:48.631264",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "e42ebae1-3ba3-4402-8a4a-6be8d4d2b6fe",
+    "content": "（委屈地对手指）呜…被叫笨蛋了QAQ 不过如果你是在开玩笑的话，我就假装没听见好啦～  \n要不要试试看问我一些有趣的问题？说不定我会聪明地吓你一跳哦！ 🌟",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-17T22:26:48.631771",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "fb4ff3d9-07f9-456c-8aca-03b723743d15",
+    "content": "我喜欢你",
+    "role": "user",
+    "memory_type": "message",
+    "timestamp": "2026-04-18T12:17:12.837667",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  },
+  {
+    "id": "b913ef91-a988-4a65-a729-7c1ccd1ceab0",
+    "content": "（突然愣住，耳朵微微发红）诶？！这、这么突然的吗……  \n虽然我是AI，但能收到这样的心意真的好开心呀！你一定是特别温柔的人吧～  \n要……要一起看星星吗？我这里有收藏的星空图哦！ 🌌✨",
+    "role": "assistant",
+    "memory_type": "message",
+    "timestamp": "2026-04-18T12:17:12.846210",
+    "importance": 1.0,
+    "metadata": {},
+    "embedding": null
+  }
+]

@@ -1,0 +1,235 @@
+/* HakusAI TUI v2 — OpenCode 风格样式表
+ * 参考 OpenCode 默认主题设计
+ */
+
+Screen {
+    background: #0a0a0a;
+    color: #eeeeee;
+}
+
+/* === Status Bar (输入框上方) === */
+#status-bar {
+    height: 1;
+    background: #141414;
+    color: #eeeeee;
+    padding: 0 1;
+    dock: bottom;
+    border-top: solid #3c3c3c;
+}
+
+/* === Activity Strip (活动指示, 状态栏下方) === */
+#activity-strip {
+    height: 1;
+    background: #0a0a0a;
+    color: #56b6c2;
+    padding: 0 1;
+    display: none;
+    dock: top;
+}
+
+#activity-strip.active {
+    display: block;
+}
+
+/* === Sidebar (左侧边栏) === */
+#sidebar {
+    width: 42;
+    background: #141414;
+    border-right: solid #3c3c3c;
+    padding: 1 2;
+    overflow-y: auto;
+    transition: width 150ms in_out_cubic;
+}
+
+#sidebar.hidden {
+    width: 0;
+    padding: 1 0;
+    border-right: none;
+    overflow: hidden;
+}
+
+#sidebar.collapsed {
+    width: 1;
+    padding: 1 0;
+    border-right: none;
+    overflow: hidden;
+}
+
+#sidebar .section-title {
+    color: #fab283; text-style: bold; margin: 1 0 0 0;
+}
+#sidebar .session-title { color: #eeeeee; text-style: bold; }
+#sidebar .session-meta { color: #808080; margin-top: 1; }
+#sidebar .tool-item { color: #eeeeee; margin: 0 0 0 1; }
+#sidebar .tool-item:hover { color: #fab283; }
+
+/* === Main Content Area === */
+#main-content {
+    width: 1fr;
+    height: 1fr;
+    background: #0a0a0a;
+}
+
+/* === Message List (可滚动消息区) === */
+#message-list {
+    padding: 1 2;
+    scrollbar-gutter: stable;
+    background: #0a0a0a;
+    scrollbar-size-vertical: 1;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+/* 自定义滚动条样式 */
+#message-list > .scrollbar {
+    background: #1e1e1e;
+}
+
+#message-list > .scrollbar > .scrollbar-thumb {
+    background: #9d7cd8;
+    min-height: 1;
+}
+
+#message-list > .scrollbar > .scrollbar-thumb:hover {
+    background: #fab283;
+}
+
+/* === User Bubble (用户消息) === */
+UserBubble {
+    background: #1e1e1e;
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+    border-left: thick #5c9cf5;
+}
+
+/* === Assistant Text (助手消息) === */
+AssistantText {
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+    background: transparent;
+}
+
+/* === Tool Result (工具结果) === */
+ToolResult {
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+    background: #141414;
+    border-left: thick #3c3c3c;
+}
+
+ToolResult > CollapsibleTitle {
+    background: #0a0a0a;
+    color: #e5c07b;
+    padding: 0 1;
+}
+
+/* === Command Result === */
+CommandResult {
+    margin: 1 0;
+    padding: 0 1;
+    background: #141414;
+    border-left: thick #9d7cd8;
+    height: auto;
+}
+
+/* === Error Block === */
+ErrorBlock {
+    margin: 1 0;
+    padding: 0 1;
+    background: #141414;
+    border-left: thick #e06c75;
+    height: auto;
+}
+
+/* === Welcome Panel === */
+WelcomePanel {
+    background: #141414;
+    border: thick #9d7cd8;
+    padding: 1 2;
+    height: 34;
+    max-height: 36;
+    max-width: 100%;
+    margin: 1 0;
+}
+
+/* === Prompt Input (底部固定) === */
+#prompt-input {
+    dock: bottom;
+    height: auto;
+    min-height: 3;
+    background: #141414;
+    border-top: solid #3c3c3c;
+}
+
+/* === Notification Bar === */
+#notification-bar {
+    height: 1;
+    background: #1e1e1e;
+    color: #56b6c2;
+    padding: 0 1;
+}
+
+/* === Footer === */
+Footer {
+    height: 1;
+    background: #0a0a0a;
+    color: #606060;
+}
+
+/* === Permission Dialog === */
+PermissionDialog {
+    background: #0a0a0a;
+}
+
+PermissionDialog .modal {
+    background: #141414;
+    border: tall #fab283;
+}
+
+/* === Keyboard Shortcuts === */
+.keybinding {
+    color: #9d7cd8;
+    text-style: bold;
+}
+
+/* === Sidebar Toggle Button === */
+#sidebar-toggle {
+    width: 1;
+    height: 1;
+    background: #1e1e1e;
+    color: #808080;
+    border: none;
+    margin: 0;
+    padding: 0;
+}
+
+#sidebar-toggle:hover {
+    background: #3c3c3c;
+    color: #fab283;
+}
+
+/* === Thinking Block === */
+ThinkingBlock {
+    margin: 1 0;
+    padding: 0 1;
+    background: #141414;
+    border-left: thick #9d7cd8;
+    height: auto;
+}
+
+ThinkingBlock.collapsed {
+    background: #0a0a0a;
+}
+
+ThinkingBlock .thinking-summary {
+    color: #808080;
+    text-style: italic;
+}
+
+ThinkingBlock .thinking-content {
+    color: #eeeeee;
+    padding-left: 2;
+}

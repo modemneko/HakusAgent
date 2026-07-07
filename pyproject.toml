@@ -1,0 +1,178 @@
+# HakusAI 2.0 项目配置
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hakusai"
+version = "2.0.0"
+description = "HakusAI - AI虚拟助手平台"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "HakusAI Team"}
+]
+keywords = ["ai", "vtuber", "chatbot", "live2d", "vrm", "voice"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# 核心依赖
+dependencies = [
+    # 基础
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "watchdog>=3.0.0",
+
+    # Web框架
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "python-multipart>=0.0.6",
+
+    # 数据验证
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+
+    # HTTP客户端
+    "aiohttp>=3.9.0",
+    "httpx>=0.25.0",
+
+    # 终端UI
+    "rich>=13.0.0",
+    "textual>=0.85.0",
+
+    # 工具
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+# AI模型支持
+models = [
+    "openai>=1.6.0",
+    "google-generativeai>=0.3.0",
+    "dashscope>=1.14.0",
+]
+
+# LiteLLM 统一模型路由 (100+ 提供商)
+litellm = [
+    "litellm>=1.0.0",
+]
+
+# 语音支持
+voice = [
+    "sherpa-onnx>=1.10.0",
+    "edge-tts>=6.1.0",
+    "pyaudio>=0.2.14",
+    "silero-vad>=4.0.0",
+]
+
+# 记忆系统
+memory = [
+    "langchain>=0.1.0",
+    "chromadb>=0.4.18",
+    "sentence-transformers>=2.2.0",
+    "jieba>=0.42.1",
+]
+
+# 直播平台
+live = [
+    "blivedm>=0.3.0",
+    "discord.py>=2.3.0",
+]
+
+# 开发依赖
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.0",
+]
+
+# 全部依赖
+all = [
+    "hakusai[models,voice,memory,live]"
+]
+
+[project.scripts]
+hakusai = "hakus.entry:main"
+
+[project.urls]
+Homepage = "https://github.com/hakusai/hakusai"
+Documentation = "https://docs.hakusai.ai"
+Repository = "https://github.com/hakusai/hakusai.git"
+Issues = "https://github.com/hakusai/hakusai/issues"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["hakus*", "utils*", "tts*", "voice*"]
+exclude = ["tests*", "airi*", "Open-LLM-VTuber*", "N.E.K.O*", "ZerolanLiveRobot*",
+           "Mate-Engine-main*", "_temp_judge0*", "frontend*", "stage-web*",
+           "voxcpm*", "tts_engines*", "webui*", "docs*", "chat-app*", "configs*",
+           "data*", "editor*", "scripts*", "src*", "examples*", "docs*"]
+
+[tool.setuptools.package-dir]
+"" = "."
+"hakus" = "hakus"
+"utils" = "utils"
+"tts" = "tts"
+"voice" = "voice"
+
+# 代码格式化工具配置
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--confcutdir=tests"

@@ -1,0 +1,108 @@
+# HakusAI Chat 配置文件示例
+# 复制此文件为 config.yaml 并填写你的 API Key
+
+# ==================== API 密钥配置 ====================
+api_keys:
+  # Google Gemini API
+  gemini_api_key: ""
+  google_api_key: ""
+  google_cse_id: ""
+  
+  # 阿里百炼 Qwen API
+  dashscope_api_key: ""
+  
+  # DeepSeek API
+  deepseek_api_key: ""
+  
+  # 智谱 GLM API
+  glm_api_key: ""
+
+# ==================== 模型配置 ====================
+models:
+  # 默认使用的模型类型: gemini, qwen, deepseek, glm
+  default_model: deepseek
+  
+  # Gemini 模型设置
+  gemini:
+    model_name: gemini-2.5-flash
+  
+  # Qwen 模型设置
+  qwen:
+    model_name: qwen-flash
+  
+  # DeepSeek 模型设置
+  deepseek:
+    model_name: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+  
+  # GLM 模型设置
+  glm:
+    model_name: glm-4-flash
+
+# ==================== Embedding 配置 ====================
+embedding:
+  # 类型: google 或 local
+  type: google
+  
+  # Google Embedding 模型路径
+  model_path: shibing624/text2vec-base-chinese
+  
+  # 本地 Embedding 模型路径
+  local_model_path: ./embedding_models/text2vec-base-chinese
+  
+  # 设备: cpu 或 cuda
+  device: cpu
+  
+  # CPU 线程数
+  thread_count: 4
+  
+  # 批处理大小
+  batch_size: 8
+
+# ==================== 记忆系统配置 ====================
+memory:
+  # 短期记忆最大长度
+  short_term_max_length: 50
+  
+  # 长期记忆最大长度
+  long_term_max_length: 500
+  
+  # 数据目录
+  state_dir: ./data/user_states
+  db_dir: ./data/memory_db
+
+# ==================== TTS 语音配置 ====================
+tts:
+  # 是否启用 TTS
+  enabled: false
+  
+  # 是否输出音频文件
+  audio_output: true
+  
+  # TTS 类型: sherpa-onnx 或 api
+  type: sherpa-onnx
+  
+  # API TTS 配置
+  api:
+    api_type: qwen
+    voice_id: ""
+  
+  # Sherpa-ONNX 本地 TTS 配置
+  sherpa_onnx:
+    model_dir: ./tts_models
+    voice: zh
+    speed: 1.0
+    volume: 1.0
+    pitch: 1.0
+    audio_format: wav
+    sample_rate: 24000
+    device: cpu
+
+# ==================== 功能开关 ====================
+features:
+  # 是否启用图像生成
+  enable_image_generation: false
+
+# ==================== 日志配置 ====================
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL

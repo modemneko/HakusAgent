@@ -1,0 +1,10 @@
+{
+  "current_phase": "planning",
+  "current_task": "",
+  "total_tasks": 0,
+  "completed_tasks": 0,
+  "lessons_file": "D:\\项目\\HakusAI_chat\\doc\\lessons-learned.md",
+  "plan_file": "D:\\项目\\HakusAI_chat\\doc\\plan.md",
+  "requirement": "请回顾本次会话中你最近完成的工作,然后:\n1. 检查是否有逻辑错误、遗漏的需求、或者潜在的 bug\n2. 验证你引用的文件路径/函数名是否真实存在\n3. 给出 PASS / FAIL 结论和具体的改进建议\n请简洁回答 (不超过 200 字)。",
+  "summaries": []
+}

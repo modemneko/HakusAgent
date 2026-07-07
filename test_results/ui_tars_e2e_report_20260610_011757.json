@@ -1,0 +1,67 @@
+{
+  "test_suite": "UI-TARS Computer Use E2E",
+  "timestamp": "2026-06-10T01:17:47.950833",
+  "tests": [
+    {
+      "name": "config_check",
+      "description": "Verify UI-TARS configuration is present",
+      "status": "skipped",
+      "duration_ms": 19,
+      "details": {
+        "api_key_configured": false,
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "model_name": "doubao-1-5-thinking-vision-pro-250428",
+        "reason": "VOLCENGINE_API_KEY not configured. Set ui_tars.api_key in config.yaml or VOLCENGINE_API_KEY env var."
+      }
+    },
+    {
+      "name": "screenshot_capture",
+      "description": "Verify screenshot capture works",
+      "status": "passed",
+      "duration_ms": 9362,
+      "details": {
+        "screenshot_size_bytes": 2810843,
+        "screen_resolution": "unknown",
+        "screenshot_saved": "test_results\\test_screenshot.png"
+      }
+    },
+    {
+      "name": "adapter_init",
+      "description": "Verify UI-TARS adapter initializes correctly",
+      "status": "skipped",
+      "duration_ms": 1,
+      "details": {
+        "is_available": false,
+        "model_name": "doubao-1-5-thinking-vision-pro-250428",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "screenshot_scale": 0.5,
+        "max_steps": 15,
+        "reason": "Adapter not available (API key not configured)"
+      }
+    },
+    {
+      "name": "api_connectivity",
+      "description": "Skipped - requires VOLCENGINE_API_KEY",
+      "status": "skipped",
+      "duration_ms": 0,
+      "details": {
+        "reason": "API key not configured"
+      }
+    },
+    {
+      "name": "action_execution",
+      "description": "Skipped - requires VOLCENGINE_API_KEY",
+      "status": "skipped",
+      "duration_ms": 0,
+      "details": {
+        "reason": "API key not configured"
+      }
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 4
+  }
+}

@@ -1,0 +1,35 @@
+# HakusAI Chat 核心依赖
+# 其他依赖根据配置自动安装
+
+pyyaml>=6.0
+aiohttp>=3.8.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+websockets>=11.0
+pydantic>=2.0.0
+
+# 默认模型依赖 (deepseek/glm/qwen 使用 OpenAI 兼容接口)
+openai>=1.0.0
+
+# ==================== 可选依赖 ====================
+
+# 桌宠功能 (可选)
+# PyQt5>=5.15.0
+# PyOpenGL>=3.1.0
+# PyOpenGL-accelerate>=3.1.0
+# pyglm>=2.7.0
+# numpy>=1.20.0
+
+# 3D 模型加载 (可选)
+# pygltflib>=1.16.0
+
+# Gemini 模型 (可选)
+# google-generativeai>=0.3.0
+
+# TTS 语音合成 (可选)
+# sherpa-onnx>=1.10.0
+# dashscope>=1.20.0  # 百炼CosyVoice TTS API
+
+# Embedding 向量检索 (可选)
+# chromadb>=0.4.0
+# sentence-transformers>=2.2.0

@@ -1,0 +1,15 @@
+{
+    "models": [
+        {
+            "name": "default",
+            "model_path": "./models/tts/bert_vits2/G_1500.pth",
+            "config_path": "./models/tts/bert_vits2/config.json",
+            "lang": "ZH",
+            "sdp_ratio": 0.2,
+            "noise_scale": 0.33,
+            "noise_scale_w": 0.4,
+            "length_scale": 1.0,
+            "sampling_rate": 44100
+        }
+    ]
+}
