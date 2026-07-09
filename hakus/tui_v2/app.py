@@ -174,8 +174,7 @@ class Sidebar(Static):
         background: #141414;
         border-right: solid #fab283;
         padding: 1 2;
-        overflow-y: auto;
-        transition: width 150ms ease-out;
+        overflow: auto;
     }
     Sidebar.hidden {
         width: 0;

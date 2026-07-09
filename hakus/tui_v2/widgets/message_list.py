@@ -33,7 +33,6 @@ class MessageList(ScrollableContainer):
     DEFAULT_CSS = """
     MessageList {
         padding: 1 2;
-        scrollbar-gutter: stable;
         background: #0a0a0a;
     }
     """

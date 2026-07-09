@@ -49,7 +49,6 @@ class DiffOverlay(ModalScreen[None]):
         height: 1fr;
         background: #0a0a0a;
         padding: 0 1;
-        scrollbar-gutter: stable;
     }
 
     DiffOverlay .diff-line {

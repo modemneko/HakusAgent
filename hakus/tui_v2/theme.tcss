@@ -37,7 +37,7 @@ Screen {
     background: #141414;
     border-right: solid #3c3c3c;
     padding: 1 2;
-    overflow-y: auto;
+    overflow: auto;
     transition: width 150ms in_out_cubic;
 }
 
@@ -73,11 +73,10 @@ Screen {
 /* === Message List (可滚动消息区) === */
 #message-list {
     padding: 1 2;
-    scrollbar-gutter: stable;
     background: #0a0a0a;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 1 0;
     height: 1fr;
-    overflow-y: auto;
+    overflow: auto;
 }
 
 /* 自定义滚动条样式 */
@@ -151,7 +150,7 @@ WelcomePanel {
     padding: 1 2;
     height: 34;
     max-height: 36;
-    max-width: 100%;
+    max-width: 100;
     margin: 1 0;
 }
 
@@ -211,8 +210,8 @@ PermissionDialog .modal {
     color: #fab283;
 }
 
-/* === Thinking Block === */
-ThinkingBlock {
+/* === Reasoning Block (thinking) === */
+ReasoningBlock {
     margin: 1 0;
     padding: 0 1;
     background: #141414;
@@ -220,16 +219,16 @@ ThinkingBlock {
     height: auto;
 }
 
-ThinkingBlock.collapsed {
+ReasoningBlock.collapsed {
     background: #0a0a0a;
 }
 
-ThinkingBlock .thinking-summary {
+ReasoningBlock .reasoning-summary {
     color: #808080;
     text-style: italic;
 }
 
-ThinkingBlock .thinking-content {
+ReasoningBlock .reasoning-content {
     color: #eeeeee;
     padding-left: 2;
 }

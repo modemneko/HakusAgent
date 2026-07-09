@@ -42,7 +42,7 @@ class ReasoningBlock(Container):
 
     ReasoningBlock .reasoning-summary {
         color: #808080;
-        font-style: italic;
+        text-style: italic;
         padding: 0 1;
     }
 
@@ -98,7 +98,6 @@ class ToolCallBlock(Container):
     ToolCallBlock .tool-args {
         color: #606060;
         padding-left: 2;
-        font-family: monospace;
     }
 
     ToolCallBlock .tool-result {
@@ -108,7 +107,7 @@ class ToolCallBlock(Container):
 
     ToolCallBlock .tool-duration {
         color: #808080;
-        font-style: italic;
+        text-style: italic;
     }
     """
 
@@ -163,7 +162,6 @@ class FileBlock(Container):
 
     FileBlock .file-path {
         color: #808080;
-        font-family: monospace;
     }
     """
 
