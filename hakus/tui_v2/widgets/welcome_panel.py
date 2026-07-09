@@ -33,7 +33,7 @@ class WelcomePanel(Container):
         padding: 1 2;
         height: 24;
         max-height: 33;
-        max-width: 100%;
+        max-width: 100;
     }
 
     WelcomePanel .welcome-left {

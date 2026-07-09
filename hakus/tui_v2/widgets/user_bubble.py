@@ -45,7 +45,6 @@ class UserBubble(Container):
     UserBubble .bubble-file {
         color: #56b6c2;
         margin: 0 0 0 2;
-        font-family: monospace;
     }
 
     UserBubble .bubble-image {
