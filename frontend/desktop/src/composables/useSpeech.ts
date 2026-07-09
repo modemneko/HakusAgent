@@ -31,13 +31,11 @@ export function useSpeech() {
 
       utterance.onstart = () => {
         isSpeaking.value = true
-        console.log('[Speech] Started speaking')
       }
 
       utterance.onend = () => {
         isSpeaking.value = false
         currentUtterance = null
-        console.log('[Speech] Finished speaking')
         resolve()
       }
 

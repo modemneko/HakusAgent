@@ -173,7 +173,7 @@ class SSEChunkTimeout:
         if self._timer:
             self._timer.cancel()
         
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._timer = loop.call_later(
             self.chunk_timeout,
             self._on_timeout_callback,
@@ -315,7 +315,7 @@ class RetryManager:
             now = datetime.now(timezone.utc)
             delta = (dt - now).total_seconds()
             return max(0, delta)
-        except Exception:
+        except (ValueError, TypeError, KeyError):
             pass
         
         return None
@@ -378,3 +378,16 @@ class DoomLoopDetector:
 timeout_manager = TimeoutManager()
 retry_manager = RetryManager()
 doom_loop_detector = DoomLoopDetector()
+
+__all__ = [
+    "TimeoutLevel",
+    "TimeoutConfig",
+    "TimeoutError",
+    "TimeoutManager",
+    "SSEChunkTimeout",
+    "RetryManager",
+    "DoomLoopDetector",
+    "timeout_manager",
+    "retry_manager",
+    "doom_loop_detector",
+]

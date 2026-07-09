@@ -206,10 +206,8 @@ class PermissionManager:
             return PermissionResult(allowed=True, reason="Bypass mode active")
 
         if self._mode == PermissionMode.AUTO and not force_confirm:
-            is_likely_safe = not force_confirm
-            if is_likely_safe:
-                self._session_approvals[action_key] = True
-                return PermissionResult(allowed=True, reason="Auto-approved")
+            self._session_approvals[action_key] = True
+            return PermissionResult(allowed=True, reason="Auto-approved")
 
         if self._mode == PermissionMode.ASK or force_confirm or self._mode == PermissionMode.AUTO:
             if self._confirm_callback:
@@ -236,8 +234,7 @@ class PermissionManager:
                     self._auto_approved_tools.add(action_key.split(":")[0])
                 if not once_only:
                     # 拒绝则同时记入 _denied_tools,避免反复弹窗
-                    tool_name = action_key.split(":")[0]
-                    self._denied_tools.add(tool_name)
+                    self._denied_tools.add(action_key)
                 return PermissionResult(
                     allowed=once_only,
                     reason=reason,

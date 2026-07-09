@@ -17,6 +17,10 @@ export function useVAD(options: UseVADOptions = {}) {
     enabled = false,
   } = options
 
+  // 使用 ref 跟踪最新 transcript，避免 hark 回调中闭包过期问题
+  const transcriptRef = useRef('')
+  const isListeningRef = useRef(false)
+
   const [isListening, setIsListening] = useState(false)
   const [isSpeechDetected, setIsSpeechDetected] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -24,6 +28,10 @@ export function useVAD(options: UseVADOptions = {}) {
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const harkRef = useRef<any>(null)
+
+  // 保持 transcriptRef 与 state 同步
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
+  useEffect(() => { isListeningRef.current = isListening }, [isListening])
 
   const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current !== null) {
@@ -55,11 +63,14 @@ export function useVAD(options: UseVADOptions = {}) {
           setIsSpeechDetected(false)
           clearSilenceTimer()
           silenceTimerRef.current = setTimeout(() => {
-            if (transcript || recognitionRef.current) {
-              const finalText = transcript
+            // 使用 ref 读取最新值，避免闭包过期
+            const currentTranscript = transcriptRef.current
+            if (currentTranscript || recognitionRef.current) {
+              const finalText = currentTranscript
               if (finalText.trim()) {
                 onSpeechEnd?.(finalText)
                 setTranscript('')
+                transcriptRef.current = ''
               }
             }
           }, silenceTimeout)
@@ -95,6 +106,7 @@ export function useVAD(options: UseVADOptions = {}) {
             clearSilenceTimer()
             onSpeechEnd?.(final)
             setTranscript('')
+            transcriptRef.current = ''
           }
         }
 
@@ -106,7 +118,8 @@ export function useVAD(options: UseVADOptions = {}) {
         }
 
         recognition.onend = () => {
-          if (isListening) {
+          // 使用 ref 读取最新值，避免闭包过期
+          if (isListeningRef.current) {
             try { recognition.start() } catch { /* ignore */ }
           }
         }
@@ -119,7 +132,8 @@ export function useVAD(options: UseVADOptions = {}) {
     } catch (e) {
       console.error('[VAD] Failed to start listening:', e)
     }
-  }, [onSpeechStart, onSpeechEnd, onInterimResult, silenceTimeout, transcript, clearSilenceTimer, isListening])
+  // transcript 和 isListening 通过 ref 传递，不再需要作为依赖
+  }, [onSpeechStart, onSpeechEnd, onInterimResult, silenceTimeout, clearSilenceTimer])
 
   const stopListening = useCallback(() => {
     clearSilenceTimer()
@@ -138,8 +152,10 @@ export function useVAD(options: UseVADOptions = {}) {
       mediaStreamRef.current = null
     }
     setIsListening(false)
+    isListeningRef.current = false
     setIsSpeechDetected(false)
     setTranscript('')
+    transcriptRef.current = ''
   }, [clearSilenceTimer])
 
   useEffect(() => {

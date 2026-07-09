@@ -2,7 +2,6 @@ import asyncio
 import threading
 import time
 import os
-import re
 import wave
 import numpy as np
 from typing import Optional, Callable, Tuple
@@ -558,7 +557,10 @@ class VoiceLive:
             if hasattr(self.tts, 'generate'):
                 audio_path = self.tts.generate(response)
             elif hasattr(self.tts, 'generate_audio'):
-                audio_path = self.tts.generate_audio(text)
+                if asyncio.iscoroutinefunction(self.tts.generate_audio):
+                    audio_path = self._run_async(self.tts.generate_audio(response))
+                else:
+                    audio_path = self.tts.generate_audio(response)
         return response, audio_path
 
     def run(self):

@@ -286,9 +286,10 @@ def _sync_base_config(config: HakusConfig) -> None:
         if prov:
             key_prefix = name.upper()
             if name == "qwen":
-                key_prefix = "DASHSCOPE"
-                BASE_CONFIG[f"{key_prefix}_API_KEY"] = prov.api_key
-                key_prefix = "QWEN"
+                # Qwen uses DASHSCOPE for API key, QWEN for model info
+                BASE_CONFIG["DASHSCOPE_API_KEY"] = prov.api_key
+                BASE_CONFIG["QWEN_MODEL_NAME"] = prov.model_name
+                continue
             elif name == "deepseek":
                 BASE_CONFIG["DEEPSEEK_API_KEY"] = prov.api_key
                 BASE_CONFIG["DEEPSEEK_BASE_URL"] = prov.base_url

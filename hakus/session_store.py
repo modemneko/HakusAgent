@@ -10,6 +10,12 @@ logger = get_logger(__name__)
 HAKUS_HOME = os.path.join(os.path.expanduser("~"), ".hakus")
 SESSION_FILE = os.path.join(HAKUS_HOME, "last_session.json")
 
+__all__ = [
+    "save_last_session",
+    "load_last_session",
+    "restore_latest_checkpoint",
+]
+
 
 def save_last_session(session_id: str, working_dir: str) -> None:
     os.makedirs(HAKUS_HOME, exist_ok=True)
@@ -27,7 +33,7 @@ def load_last_session() -> Optional[Dict[str, Any]]:
             data = json.load(f)
         if data.get("session_id"):
             return data
-    except Exception as e:
+    except (json.JSONDecodeError, KeyError, OSError) as e:
         logger.warning(f"Failed to load last session: {e}")
     return None
 

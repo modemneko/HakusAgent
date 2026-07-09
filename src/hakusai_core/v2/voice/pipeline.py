@@ -180,9 +180,12 @@ class VoicePipeline:
         try:
             # TTS 合成
             tts_result = await self.tts.synthesize(text)
-            
+
+            if tts_result is None:
+                raise RuntimeError("TTS synthesize returned None")
+
             self.state = PipelineState.IDLE
-            
+
             # 转换为 AudioData
             audio_bytes = tts_result.audio_data.tobytes()
             audio = AudioData(

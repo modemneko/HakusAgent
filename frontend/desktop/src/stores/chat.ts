@@ -39,7 +39,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await tts.speak(text);
     } catch (error) {
-      console.error('TTS playback failed:', error);
+      // TTS playback failed - non-critical, silently continue
     }
   }
 
@@ -75,7 +75,7 @@ export const useChatStore = defineStore('chat', () => {
         await playTTS(response.response);
       }
     } catch (error) {
-      console.error('Failed to send message:', error);
+      // Network error - message already handled below
       
       // 添加错误消息
       const errorMessage: ChatMessage = {

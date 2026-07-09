@@ -53,7 +53,6 @@ class AudioQueueService {
       for (let i = 0; i < binaryStr.length; i++) {
         bytes[i] = binaryStr.charCodeAt(i)
       }
-      console.log('[AudioQueue] enqueue:', bytes.buffer.byteLength, 'bytes')
       this.queue.push(bytes.buffer)
       if (!this.isPlaying) {
         await this.playNext()
@@ -76,9 +75,7 @@ class AudioQueueService {
 
     try {
       const ctx = this.getContext()
-      console.log('[AudioQueue] playNext: decoding', audioData.byteLength, 'bytes, sampleRate:', ctx.sampleRate)
       const audioBuffer = await ctx.decodeAudioData(audioData)
-      console.log('[AudioQueue] decoded:', audioBuffer.duration.toFixed(2) + 's,', audioBuffer.sampleRate + 'Hz,', audioBuffer.numberOfChannels + 'ch')
 
       const source = ctx.createBufferSource()
       source.buffer = audioBuffer

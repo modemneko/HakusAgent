@@ -47,22 +47,16 @@ class Live2DManager {
 
   async init(container: HTMLDivElement) {
     this.container = container
-    console.log('[Live2D] init started')
-
     await this.ensureCubismSDK()
-    console.log('[Live2D] SDK ensured, Live2DCubismCore:', !!(window as any).Live2DCubismCore)
-
     try {
       const mod = await import('pixi-live2d-display/cubism4')
       this._Live2DModel = mod.Live2DModel
       this._Live2DModel.registerTicker(Ticker)
-      console.log('[Live2D] pixi-live2d-display/cubism4 loaded successfully, Ticker registered')
     } catch (e) {
       console.error('[Live2D] Failed to import pixi-live2d-display:', e)
       return
     }
 
-    console.log('[Live2D] Creating PIXI.Application...')
     extensions.add(TickerPlugin)
 
     this.app = new PIXI.Application({
@@ -133,7 +127,6 @@ class Live2DManager {
   }
 
   async loadModel(url: string) {
-    console.log('[Live2D] Loading model:', url)
     if (!this.app || !this._Live2DModel) {
       console.warn('[Live2D] Cannot load model: app or Live2DModel not ready', { app: !!this.app, model: !!this._Live2DModel })
       return
@@ -155,8 +148,7 @@ class Live2DManager {
       if (this.mouseTracking) {
         this.enableMouseTracking()
       }
-      console.log('[Live2D] Model loaded:', url)
-    } catch (e) {
+      } catch (e) {
       console.error('[Live2D] Failed to load model:', e)
       this._isLoaded = false
     }

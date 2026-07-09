@@ -318,8 +318,15 @@ class CosyVoiceTTS:
             
             if response.status_code == 200:
                 result = response.json()
-                voice_id = result["output"]["voice_id"]
-                base64_audio = result["output"]["preview_audio"]["data"]
+                output = result.get("output") or {}
+                voice_id = output.get("voice_id")
+                preview_audio = output.get("preview_audio") or {}
+                base64_audio = preview_audio.get("data")
+
+                if not voice_id or not base64_audio:
+                    logger.error(f"音色设计返回数据不完整: output={output}")
+                    return None, None
+
                 audio_bytes = base64.b64decode(base64_audio)
                 
                 logger.info(f"✓ 音色设计成功: {voice_id}")
@@ -667,22 +674,29 @@ class CosyVoiceTTS:
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
             temp_file_path = f.name
 
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            self.save_to_file,
-            audio_data, temp_file_path
-        )
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.save_to_file,
+                audio_data, temp_file_path
+            )
 
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            self.play_audio,
-            audio_data
-        )
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.play_audio,
+                audio_data
+            )
 
-        return temp_file_path
+            return temp_file_path
+        finally:
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                pass
 
     async def _stream_and_play(self, text: str) -> Optional[str]:
         """流式生成并播放"""
+        temp_file_path = None
         try:
             audio_chunks = []
 
@@ -706,14 +720,29 @@ class CosyVoiceTTS:
                 import sounddevice as sd
                 data, sr = sf.read(temp_file_path)
                 logger.debug(f"播放流式CosyVoice音频，时长: {len(data)/sr:.2f}秒")
-                sd.play(data, sr)
-                sd.wait()
+
+                # Run blocking sd.play/sd.wait in a daemon thread to avoid
+                # blocking the asyncio event loop
+                def _play_in_thread(audio_data, sample_rate):
+                    sd.play(audio_data, sample_rate)
+                    sd.wait()
+
+                thread = threading.Thread(
+                    target=_play_in_thread, args=(data, sr), daemon=True
+                )
+                thread.start()
 
             return temp_file_path
 
         except Exception as e:
             logger.error(f"流式播放失败: {e}")
             return None
+        finally:
+            if temp_file_path:
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    pass
 
     def is_initialized(self) -> bool:
         """检查是否已初始化"""

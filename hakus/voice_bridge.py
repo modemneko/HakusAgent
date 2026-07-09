@@ -1,13 +1,14 @@
 import asyncio
 import threading
-import time
-from typing import Optional, Callable, Tuple
+from typing import Optional, Tuple
 
 from .agent import AgentCore
 from voice.voice_config import VoiceConfig
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+__all__ = ["VoiceBridge", "PYAUDIO_AVAILABLE"]
 
 PYAUDIO_AVAILABLE = False
 try:
@@ -185,7 +186,18 @@ class VoiceBridge:
                     if hasattr(self.tts, 'generate'):
                         audio_path = self.tts.generate(text)
                     elif hasattr(self.tts, 'generate_audio'):
-                        audio_path = self.tts.generate_audio(text)
+                        coro = self.tts.generate_audio(text)
+                        if asyncio.iscoroutine(coro):
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                audio_path = loop.run_until_complete(coro)
+                            finally:
+                                loop.run_until_complete(loop.shutdown_asyncgens())
+                                loop.close()
+                                asyncio.set_event_loop(None)
+                        else:
+                            audio_path = coro
                     else:
                         audio_path = None
 

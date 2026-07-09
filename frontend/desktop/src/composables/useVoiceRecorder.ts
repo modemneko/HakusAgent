@@ -77,10 +77,7 @@ export function useVoiceRecorder(options: VoiceRecorderOptions = {}) {
       isRecording.value = true
       options.onStart?.()
       analyze()
-
-      console.log('[VoiceRecorder] Started recording')
     } catch (error) {
-      console.error('[VoiceRecorder] Failed to start:', error)
       options.onError?.(error as Error)
       throw error
     }
@@ -108,7 +105,6 @@ export function useVoiceRecorder(options: VoiceRecorderOptions = {}) {
     audioData.value = null
 
     options.onStop?.()
-    console.log('[VoiceRecorder] Stopped recording')
   }
 
   // 录制指定时长的音频并返回 Blob

@@ -35,11 +35,8 @@ async function initPixiStage(parent: HTMLDivElement) {
   try {
     // 检查尺寸是否有效
     if (props.width <= 0 || props.height <= 0) {
-      console.warn('[Live2D] Invalid canvas size:', props.width, props.height)
       return
     }
-
-    console.log('[Live2D] Initializing PIXI stage with size:', props.width, props.height)
 
     // 动态导入依赖 - 使用 PixiJS v6 模块化版本
     const [
@@ -102,7 +99,6 @@ async function initPixiStage(parent: HTMLDivElement) {
     parent.appendChild(canvas)
 
     isReady.value = true
-    console.log('[Live2D] Canvas ready, emitting event')
     emit('ready', pixiApp.value)
   } catch (error) {
     console.error('[Live2D] Failed to initialize PIXI stage:', error)
@@ -128,14 +124,11 @@ watch(() => props.maxFps, (limit) => {
 })
 
 onMounted(async () => {
-  console.log('[Live2D] Component mounted, waiting for valid size...')
   // 等待有效尺寸
   const checkAndInit = async () => {
     if (props.width > 0 && props.height > 0 && containerRef.value) {
-      console.log('[Live2D] Size valid, initializing...')
       await initPixiStage(containerRef.value)
     } else {
-      console.log('[Live2D] Waiting for valid size...', props.width, props.height)
       setTimeout(checkAndInit, 100)
     }
   }

@@ -156,8 +156,8 @@ class SherpaOnnxTTS:
                     raise
             
             # 设置音频参数
-            self.sample_rate = BASE_CONFIG["SHERPA_ONNX_SAMPLE_RATE"]
-            self.audio_format = BASE_CONFIG["SHERPA_ONNX_AUDIO_FORMAT"]
+            self.sample_rate = BASE_CONFIG.get("SHERPA_ONNX_SAMPLE_RATE", 22050)
+            self.audio_format = BASE_CONFIG.get("SHERPA_ONNX_AUDIO_FORMAT", "WAV")
             
             logger.info("✓ sherpa-onnx本地TTS初始化完成")
             
@@ -190,13 +190,40 @@ class SherpaOnnxTTS:
             
             logger.debug(f"生成TTS音频: 文本='{text[:20]}...' 语速={speed} 音量={volume} 音调={pitch}")
             
-            # 生成音频
-            audio = self.tts.generate(text)
+            # 生成音频 — pass speed to generate() as the 'speed' keyword
+            # argument when supported by the sherpa-onnx version.  The
+            # 'speed' parameter maps to length_scale internally (higher
+            # speed → smaller length_scale).
+            try:
+                audio = self.tts.generate(text, speed=speed)
+            except TypeError:
+                # Older sherpa-onnx versions may not accept 'speed' kwarg;
+                # fall back to text-only call.  Speed was already baked into
+                # length_scale during _initialize(), so the init-time value
+                # is used instead.
+                logger.warning(
+                    "sherpa-onnx generate() does not accept 'speed' kwarg; "
+                    "using init-time length_scale. Per-call speed adjustment unavailable."
+                )
+                audio = self.tts.generate(text)
             
             logger.debug(f"生成的音频采样率: {audio.sample_rate}，音频长度: {len(audio.samples)} 样本")
             
-            # 由于GeneratedAudio对象的限制，目前不支持调整音频参数
-            # audio = self._adjust_audio(audio, speed, volume, pitch)
+            # Apply volume adjustment (not supported by sherpa-onnx API)
+            if volume is not None and volume != 1.0:
+                samples = np.array(audio.samples, dtype=np.float32) * volume
+                # Reconstruct a GeneratedAudio-like object; sherpa-onnx returns
+                # a named-tuple with .samples and .sample_rate
+                audio = type(audio)(samples=samples, sample_rate=audio.sample_rate)
+            
+            # Pitch adjustment is not supported by the sherpa-onnx API at
+            # either config or generate() level.  Log a warning so callers
+            # are aware the parameter is silently ignored.
+            if pitch is not None and pitch != 1.0:
+                logger.warning(
+                    "sherpa-onnx backend does not support pitch adjustment; "
+                    "ignoring pitch=%.2f", pitch
+                )
             
             return audio
             

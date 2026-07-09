@@ -3,7 +3,6 @@
 提供会话持久化、状态恢复、工具清理等功能
 """
 
-import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -14,6 +13,13 @@ import logging
 import hashlib
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ToolState",
+    "SessionSnapshot",
+    "RecoveryManager",
+    "recovery_manager",
+]
 
 
 @dataclass

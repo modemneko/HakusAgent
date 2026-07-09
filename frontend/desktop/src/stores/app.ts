@@ -35,7 +35,6 @@ export const useAppStore = defineStore('app', () => {
     try {
       // 健康检查
       const health = await api.healthCheck();
-      console.log('Server health:', health);
 
       // 获取配置
       const [configData, characterData] = await Promise.all([
@@ -66,7 +65,6 @@ export const useAppStore = defineStore('app', () => {
         switch (data.type) {
           case 'connected':
             vtuberConnected.value = true;
-            console.log('VTuber 连接成功:', data.message);
             break;
           case 'tts_start':
             vtuberSpeaking.value = true;
@@ -98,10 +96,18 @@ export const useAppStore = defineStore('app', () => {
         vtuberConnected.value = false;
       },
       (event) => {
-        console.log('VTuber WebSocket 关闭:', event);
         vtuberConnected.value = false;
       }
     );
+  }
+
+  // 共享 AudioContext（避免每块音频创建新实例）
+  let _sharedAudioContext: AudioContext | null = null;
+  function getAudioContext(): AudioContext {
+    if (!_sharedAudioContext || _sharedAudioContext.state === 'closed') {
+      _sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    return _sharedAudioContext;
   }
 
   // 播放 Base64 音频
@@ -113,7 +119,7 @@ export const useAppStore = defineStore('app', () => {
         bytes[i] = binaryString.charCodeAt(i);
       }
       
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = getAudioContext();
       const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
       
       const source = audioContext.createBufferSource();

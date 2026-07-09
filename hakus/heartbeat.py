@@ -19,6 +19,12 @@ logger = get_logger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 30
 HEARTBEAT_TIMEOUT_SECONDS = 90
 
+__all__ = [
+    "HEARTBEAT_INTERVAL_SECONDS",
+    "HEARTBEAT_TIMEOUT_SECONDS",
+    "WorkspaceHeartbeat",
+]
+
 
 class WorkspaceHeartbeat:
     """基于文件系统的心跳写入器.
