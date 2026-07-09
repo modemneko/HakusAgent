@@ -210,8 +210,8 @@ PermissionDialog .modal {
     color: #fab283;
 }
 
-/* === Reasoning Block (thinking) === */
-ReasoningBlock {
+/* === Thinking Block === */
+ThinkingBlock {
     margin: 1 0;
     padding: 0 1;
     background: #141414;
@@ -219,16 +219,16 @@ ReasoningBlock {
     height: auto;
 }
 
-ReasoningBlock.collapsed {
+ThinkingBlock.collapsed {
     background: #0a0a0a;
 }
 
-ReasoningBlock .reasoning-summary {
+ThinkingBlock .thinking-summary {
     color: #808080;
     text-style: italic;
 }
 
-ReasoningBlock .reasoning-content {
+ThinkingBlock .thinking-content {
     color: #eeeeee;
     padding-left: 2;
 }
