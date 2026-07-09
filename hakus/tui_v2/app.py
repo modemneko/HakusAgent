@@ -169,6 +169,33 @@ class Sidebar(Static):
     """左侧边栏：会话信息、工具、状态"""
 
     DEFAULT_CSS = """
+    Sidebar {
+        width: 42;
+        background: #141414;
+        border-right: solid #fab283;
+        padding: 1 2;
+        overflow: auto;
+        transition: width 150ms in_out_cubic;
+    }
+    Sidebar.hidden {
+        width: 0;
+        padding: 1 0;
+        border-right: none;
+        overflow: hidden;
+    }
+    Sidebar.collapsed {
+        width: 1;
+        padding: 1 0;
+        border-right: none;
+        overflow: hidden;
+    }
+    Sidebar .section-title {
+        color: #9d7cd8; text-style: bold; margin: 1 0 0 0;
+    }
+    Sidebar .session-title { color: #eeeeee; text-style: bold; }
+    Sidebar .session-meta { color: #808080; margin-top: 1; }
+    Sidebar .tool-item { color: #eeeeee; margin: 0 0 0 1; }
+    Sidebar .tool-item:hover { color: #9d7cd8; }
     Sidebar .sidebar-section { margin: 1 0; }
     Sidebar .sidebar-section.hidden { display: none; }
     """
