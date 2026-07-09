@@ -157,22 +157,38 @@ function handleClose() {
 
 async function testConnection() {
   try {
-    // TODO: 实现连接测试
-    ElMessage.success('连接成功');
+    const res = await fetch(`http://${serverForm.host}:${serverForm.port}/api/health`, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      ElMessage.success('连接成功');
+    } else {
+      ElMessage.error(`连接失败: HTTP ${res.status}`);
+    }
   } catch (error) {
-    ElMessage.error('连接失败');
+    ElMessage.error(`连接失败: ${error}`);
   }
 }
 
 function selectModel() {
   // TODO: 实现文件选择
-  console.log('Select model file');
 }
 
-function saveSettings() {
-  // TODO: 实现设置保存
-  ElMessage.success('设置已保存');
-  handleClose();
+async function saveSettings() {
+  try {
+    const payload = {
+      server: { host: serverForm.host, port: serverForm.port },
+      voice: { ...voiceSettings },
+      avatar: { ...avatarSettings },
+    };
+    await fetch(`http://${serverForm.host}:${serverForm.port}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    ElMessage.success('设置已保存');
+    handleClose();
+  } catch (error) {
+    ElMessage.error(`保存失败: ${error}`);
+  }
 }
 </script>
 

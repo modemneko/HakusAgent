@@ -14,7 +14,7 @@ class ApiClient {
 
   constructor(baseURL: string = 'http://localhost:8081') {
     this.baseURL = baseURL;
-    this.wsBaseURL = baseURL.replace('http://', 'ws://').replace('https://', 'wss://');
+    this.wsBaseURL = baseURL.replace('http://', 'ws://').replace('https://wss://');
     this.client = axios.create({
       baseURL,
       timeout: 30000,
@@ -22,6 +22,11 @@ class ApiClient {
         'Content-Type': 'application/json',
       },
     });
+    // Make default baseURL configurable via environment variable
+    const envUrl = typeof process !== 'undefined' && process.env?.env?.VITE_API_BASE_URL;
+    if (envUrl) {
+      this.setBaseURL(envUrl);
+    }
   }
 
   // 健康检查
@@ -92,7 +97,7 @@ class ApiClient {
     this.vtuberWs = new WebSocket(`${this.wsBaseURL}/ws/vtuber`);
 
     this.vtuberWs.onopen = () => {
-      console.log('VTuber WebSocket 连接成功');
+      // Connection established
     };
 
     this.vtuberWs.onmessage = (event) => {
@@ -110,7 +115,6 @@ class ApiClient {
     };
 
     this.vtuberWs.onclose = (event) => {
-      console.log('VTuber WebSocket 关闭:', event);
       onClose?.(event);
     };
   }

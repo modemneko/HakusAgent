@@ -3,7 +3,6 @@ import type { AppStatus, ChatMessage } from '@/types'
 import { useVTuberSocket } from '@/hooks/useVTuberSocket'
 import { useAudioQueue } from '@/hooks/useAudioQueue'
 import { useVAD } from '@/hooks/useVAD'
-import { Live2DStage } from '@/components/Live2DStage'
 import { AudioVisualizer } from '@/components/AudioVisualizer'
 import { StatusIndicator } from '@/components/StatusIndicator'
 import { ChatBubble } from '@/components/ChatBubble'
@@ -27,7 +26,7 @@ export function ControlPanel() {
   const handleAudioChunk = (msg: any) => {
     console.log('[WS] audio_chunk received, has audio:', !!msg?.audio, 'len:', msg?.audio?.length)
     if (msg?.audio) {
-      audio.enqueue(msg.audio)
+      audio.enqueue(msg)
     }
   }
 

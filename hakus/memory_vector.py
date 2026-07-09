@@ -12,7 +12,14 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-import faiss
+
+# 检查Faiss是否可用
+faiss_available = False
+try:
+    import faiss
+    faiss_available = True
+except ImportError:
+    faiss_available = False
 
 # 导入jieba并初始化
 _has_jieba = False
@@ -22,14 +29,6 @@ try:
     _has_jieba = True
 except ImportError:
     _has_jieba = False
-
-# 检查Faiss是否可用
-faiss_available = False
-try:
-    import faiss
-    faiss_available = True
-except ImportError:
-    faiss_available = False
 
 # 尝试导入各种Embedding模型
 has_google_embedding = False
@@ -71,7 +70,7 @@ _GLOBAL_EMBEDDING = None
 _EMBEDDING_LOCK = threading.Lock()
 
 
-def get_embedding():
+def get_embedding() -> Any:
     """获取全局嵌入模型实例 - 支持多平台"""
     global _GLOBAL_EMBEDDING
     

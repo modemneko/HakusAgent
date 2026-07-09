@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import logging
@@ -360,7 +360,7 @@ class HakusAIServer:
             }
             """
             if not self.agent:
-                return {"error": "Agent not initialized"}, 503
+                raise HTTPException(status_code=503, detail="Agent not initialized")
             
             try:
                 logger.info(f"Chat request: {request.message}")
@@ -393,7 +393,7 @@ class HakusAIServer:
                 logger.error(f"Chat error: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-                return {"error": str(e)}, 500
+                raise HTTPException(status_code=500, detail=str(e))
         
         @app.post("/api/chat/stream")
         async def chat_stream(request: ChatRequest):
@@ -403,7 +403,7 @@ class HakusAIServer:
             返回SSE流
             """
             if not self.agent:
-                return {"error": "Agent not initialized"}, 503
+                raise HTTPException(status_code=503, detail="Agent not initialized")
             
             async def generate():
                 try:
@@ -572,20 +572,23 @@ class HakusAIServer:
             返回音频文件 (MP3)
             """
             if not self.tts_engine:
-                return {"error": "TTS not initialized"}, 503
+                raise HTTPException(status_code=503, detail="TTS not initialized")
             
             text = request.get("text", "")
             voice = request.get("voice")
             speed = request.get("speed", 1.0)
             
             if not text:
-                return {"error": "Text is required"}, 400
+                raise HTTPException(status_code=400, detail="Text is required")
             
             try:
                 from fastapi.responses import Response
                 
                 # 合成语音
                 result = await self.tts_engine.synthesize(text, voice=voice, speed=speed)
+                
+                if result is None:
+                    raise HTTPException(status_code=500, detail="TTS synthesis returned no audio")
                 
                 return Response(
                     content=result.audio_data,
@@ -597,7 +600,7 @@ class HakusAIServer:
                 )
             except Exception as e:
                 logger.error(f"TTS error: {e}")
-                return {"error": str(e)}, 500
+                raise HTTPException(status_code=500, detail=str(e))
         
         @app.get("/api/tts/voices")
         async def list_tts_voices():

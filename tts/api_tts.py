@@ -38,7 +38,7 @@ class ApiTTS:
         """初始化API TTS"""
         try:
             # 获取API类型
-            self.api_type = BASE_CONFIG["TTS_API_TYPE"]
+            self.api_type = BASE_CONFIG.get("TTS_API_TYPE", "gemini")
             
             # 根据API类型初始化对应的模型
             if self.api_type == "qwen":
@@ -48,7 +48,7 @@ class ApiTTS:
                 self.api_type = "gemini"
                 self.model = GeminiModel()
             
-            logger.info(f"✓ API TTS初始化完成，使用模型: {self.api_type}")
+            logger.info(f"API TTS初始化完成，使用模型: {self.api_type}")
             
         except Exception as e:
             logger.error(f"初始化API TTS失败: {e}")
@@ -82,27 +82,33 @@ class ApiTTS:
     async def _generate_with_qwen(self, text: str) -> Optional[str]:
         """使用Qwen API生成音频"""
         try:
-            # 使用Qwen的TTS API
-            # 注意：这里需要根据实际的Qwen API进行调整
-            # 目前Qwen API可能通过调用DashScope的TTS服务来实现
             logger.info(f"使用Qwen API生成TTS音频: {text[:20]}...")
             
-            # 这里是一个简化的实现，实际应该调用Qwen的TTS API
-            # 例如：使用阿里云DashScope的TTS服务
-            # import dashscope
-            # response = dashscope.audio.tts.SpeechSynthesis.call(
-            #     model='sambert-zhichu-v1',
-            #     text=text,
-            #     voice='zhichu-emo',
-            #     format='wav'
-            # )
+            import dashscope
+            from dashscope.audio.tts_v2 import SpeechSynthesizer
             
-            # 创建临时文件作为占位符
+            # 使用 DashScope CosyVoice API
+            synthesizer = SpeechSynthesizer(
+                model=BASE_CONFIG.get("COSYVOICE_MODEL", "cosyvoice-v2"),
+                voice=BASE_CONFIG.get("TTS_VOICE_ID", "longxiaochun"),
+            )
+            
+            audio = synthesizer.call(text)
+            
+            if audio is None:
+                logger.error("Qwen TTS API 返回空音频")
+                return None
+            
+            # 写入临时文件
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(audio)
                 temp_file_path = f.name
             
             return temp_file_path
             
+        except ImportError:
+            logger.warning("dashscope 未安装，Qwen TTS 不可用，请安装: pip install dashscope")
+            return None
         except Exception as e:
             logger.error(f"使用Qwen API生成音频失败: {e}")
             return None
@@ -110,32 +116,53 @@ class ApiTTS:
     async def _generate_with_gemini(self, text: str) -> Optional[str]:
         """使用Gemini API生成音频"""
         try:
-            # 使用Gemini的TTS API
-            # 注意：这里需要根据实际的Gemini API进行调整
             logger.info(f"使用Gemini API生成TTS音频: {text[:20]}...")
             
-            # 这里是一个简化的实现，实际应该调用Gemini的TTS API
-            # 例如：使用Google Cloud Text-to-Speech API
-            # from google.cloud import texttospeech_v1beta1 as texttospeech
-            # client = texttospeech.TextToSpeechClient()
-            # input_text = texttospeech.SynthesisInput(text=text)
-            # voice = texttospeech.VoiceSelectionParams(
-            #     language_code="zh-CN",
-            #     ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
-            # )
-            # audio_config = texttospeech.AudioConfig(
-            #     audio_encoding=texttospeech.AudioEncoding.LINEAR16
-            # )
-            # response = client.synthesize_speech(
-            #     input=input_text, voice=voice, audio_config=audio_config
-            # )
+            import google.generativeai as genai
             
-            # 创建临时文件作为占位符
+            api_key = BASE_CONFIG.get("GEMINI_API_KEY", "")
+            if not api_key:
+                logger.error("GEMINI_API_KEY 未配置")
+                return None
+            
+            genai.configure(api_key=api_key)
+            
+            # 使用 Gemini 的 TTS 能力（通过 generate_content）
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(
+                f"请将以下文本转为语音音素描述: {text}",
+                generation_config=genai.types.GenerationConfig(
+                    response_mime_type="audio/wav",
+                ),
+            )
+            
+            if not response or not hasattr(response, "candidates"):
+                logger.error("Gemini TTS API 返回空响应")
+                return None
+            
+            # 提取音频数据
+            audio_data = None
+            for candidate in response.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, "inline_data") and part.inline_data:
+                            audio_data = part.inline_data.data
+                            break
+            
+            if audio_data is None:
+                logger.error("Gemini TTS 响应中未找到音频数据")
+                return None
+            
+            # 写入临时文件
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(audio_data)
                 temp_file_path = f.name
             
             return temp_file_path
             
+        except ImportError:
+            logger.warning("google-generativeai 未安装，Gemini TTS 不可用")
+            return None
         except Exception as e:
             logger.error(f"使用Gemini API生成音频失败: {e}")
             return None
@@ -152,7 +179,7 @@ class ApiTTS:
         try:
             audio_path = await self.generate_audio(text)
             
-            if audio_path and BASE_CONFIG["ENABLE_TTS_AUDIO_OUTPUT"]:
+            if audio_path and BASE_CONFIG.get("ENABLE_TTS_AUDIO_OUTPUT", True):
                 # 播放音频文件
                 import sounddevice as sd
                 import soundfile as sf

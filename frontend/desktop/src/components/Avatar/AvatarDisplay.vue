@@ -94,9 +94,9 @@
     <!-- 控制栏 -->
     <div class="avatar-controls">
       <el-button-group>
-        <el-button :icon="VideoPlay" @click="playIdleAnimation" :disabled="!modelLoaded">待机</el-button>
-        <el-button :icon="VideoPause" @click="stopAnimation" :disabled="!modelLoaded">停止</el-button>
-        <el-button :icon="Refresh" @click="resetPosition" :disabled="!modelLoaded">重置</el-button>
+        <el-button :icon="VideoPlay" @click="playIdleAnimation" :disabled="!modelLoaded" title="待机动画">待机</el-button>
+        <el-button :icon="VideoPause" @click="stopAnimation" :disabled="!modelLoaded" title="停止动画">停止</el-button>
+        <el-button :icon="Refresh" @click="resetPosition" :disabled="!modelLoaded" title="重置位置">重置</el-button>
       </el-button-group>
       
       <el-dropdown @command="playExpression" v-if="modelLoaded">
@@ -127,7 +127,7 @@
         </template>
       </el-dropdown>
 
-      <el-button :icon="FullScreen" @click="toggleFullscreen">全屏</el-button>
+      <el-button :icon="FullScreen" @click="toggleFullscreen" title="全屏">全屏</el-button>
     </div>
 
     <!-- 模型信息 -->
@@ -151,9 +151,9 @@
       
       <!-- 缩放控制 -->
       <div class="scale-control">
-        <el-button :icon="ZoomOut" circle size="small" @click="decreaseScale" />
+        <el-button :icon="ZoomOut" circle size="small" title="缩小" @click="decreaseScale" />
         <span class="scale-value">{{ Math.round(modelScale * 100) }}%</span>
-        <el-button :icon="ZoomIn" circle size="small" @click="increaseScale" />
+        <el-button :icon="ZoomIn" circle size="small" title="放大" @click="increaseScale" />
       </div>
     </div>
   </div>
@@ -248,7 +248,6 @@ watch(() => appStore.vtuberSpeaking, (speaking) => {
 // 监听画布状态，画布准备好后加载待处理的模型
 watch(canvasReady, (ready) => {
   if (ready && pendingModelUrl.value) {
-    console.log('[AvatarDisplay] Canvas ready, loading pending model:', pendingModelUrl.value);
     currentModelUrl.value = pendingModelUrl.value;
     currentModelName.value = pendingModelName.value;
     pendingModelUrl.value = '';
@@ -348,7 +347,6 @@ function playExpression(expression: string) {
 
 // 模型点击事件
 function onModelHit(areas: string[]) {
-  console.log('[AvatarDisplay] Model hit areas:', areas);
   if (areas.includes('Head')) {
     ElMessage.info('你摸了摸头~');
   } else if (areas.includes('Body')) {
@@ -377,7 +375,6 @@ function stopLipSync() {
 }
 
 function onCanvasReady(app: any) {
-  console.log('[AvatarDisplay] Live2D canvas ready');
   canvasReady.value = true;
 }
 
@@ -386,7 +383,6 @@ function onModelLoaded() {
   modelLoading.value = false;
   loadingProgress.value = 0;
   ElMessage.success('模型加载成功');
-  console.log('[AvatarDisplay] Live2D model loaded');
 }
 
 function onModelError(error: Error) {
@@ -434,14 +430,12 @@ async function selectModelFile() {
 }
 
 function loadModel(url: string, name?: string) {
-  console.log('[AvatarDisplay] Loading model:', url);
   modelLoading.value = true;
   modelLoaded.value = false;
   loadingProgress.value = 0;
   
   // 如果画布还没准备好，先保存模型信息
   if (!canvasReady.value) {
-    console.log('[AvatarDisplay] Canvas not ready, queuing model');
     pendingModelUrl.value = url;
     pendingModelName.value = name || 'Live2D Model';
     return;
@@ -458,7 +452,6 @@ function loadDefaultModel() {
 }
 
 function loadPresetModel(model: { name: string; url: string }) {
-  console.log('[AvatarDisplay] Loading preset model:', model.name);
   loadModel(model.url, model.name);
 }
 
@@ -470,7 +463,6 @@ function playIdleAnimation() {
 
 function stopAnimation() {
   // Live2D 模型会自动播放待机动画，这里可以暂停或重置
-  console.log('Stop animation');
 }
 
 function resetPosition() {

@@ -22,6 +22,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
+# WebSocket 配置常量
+_WS_RECEIVE_TIMEOUT = 300.0  # WebSocket 接收超时（秒）
+_WS_TTS_WORKER_TIMEOUT = 60.0  # TTS 工作协程等待超时（秒）
+_WS_TTS_TASK_SHUTDOWN_TIMEOUT = 30.0  # TTS 任务关闭等待超时（秒）
+_LIP_SYNC_FRAME_DURATION_MS = 50  # 口型同步帧时长（毫秒）
+
 
 class WSAction(Enum):
     TEXT = "text"
@@ -210,10 +216,9 @@ class TTSEngine:
             import soundfile as sf
             import io
 
-            print(f"[DEBUG VoxCPM] Synthesizing: '{text[:50]}'", flush=True)
             logger.info(f"[VoxCPM] Synthesizing: '{text[:50]}'")
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _generate():
                 wav = self._engine.generate(
@@ -224,20 +229,16 @@ class TTSEngine:
                 return wav
 
             wav = await loop.run_in_executor(None, _generate)
-            print(f"[DEBUG VoxCPM] Generated wav array: {len(wav)} samples, {len(wav)/self._engine.tts_model.sample_rate:.2f}s", flush=True)
             logger.info(f"[VoxCPM] Generated wav array: {len(wav)} samples, {len(wav)/self._engine.tts_model.sample_rate:.2f}s")
 
             buf = io.BytesIO()
             sf.write(buf, wav, self._engine.tts_model.sample_rate, format='WAV')
             buf.seek(0)
             audio_bytes = buf.read()
-            print(f"[DEBUG VoxCPM] WAV encoded: {len(audio_bytes)} bytes, sample_rate={self._engine.tts_model.sample_rate}", flush=True)
-            logger.info(f"[VoxCPM] WAV encoded: {len(audio_bytes)} bytes")
+            logger.info(f"[VoxCPM] WAV encoded: {len(audio_bytes)} bytes, sample_rate={self._engine.tts_model.sample_rate}")
             return audio_bytes
         except Exception as e:
             import traceback
-            print(f"[DEBUG VoxCPM] Error: {e}", flush=True)
-            print(traceback.format_exc(), flush=True)
             logger.error(f"VoxCPM synthesis failed: {e}")
             logger.error(traceback.format_exc())
             return None
@@ -387,7 +388,7 @@ class VTuberWebSocketHandler:
                 try:
                     raw_data = await asyncio.wait_for(
                         websocket.receive(),
-                        timeout=300.0
+                        timeout=_WS_RECEIVE_TIMEOUT
                     )
 
                     if raw_data.get("type") == "websocket.disconnect":
@@ -578,7 +579,7 @@ class VTuberWebSocketHandler:
             finally:
                 await tts_queue.put(None)
                 try:
-                    await asyncio.wait_for(tts_task, timeout=30.0)
+                    await asyncio.wait_for(tts_task, timeout=_WS_TTS_TASK_SHUTDOWN_TIMEOUT)
                 except asyncio.TimeoutError:
                     tts_task.cancel()
                     try:
@@ -613,7 +614,7 @@ class VTuberWebSocketHandler:
         """TTS工作协程 - 从队列取句子，合成音频，推送"""
         while True:
             try:
-                sentence = await asyncio.wait_for(queue.get(), timeout=60.0)
+                sentence = await asyncio.wait_for(queue.get(), timeout=_WS_TTS_WORKER_TIMEOUT)
 
                 if sentence is None:
                     break
@@ -648,7 +649,7 @@ class VTuberWebSocketHandler:
             return
 
         if not self.tts_engine.is_available():
-            print(f"[DEBUG] TTS engine not available, sending text only: {text[:30]}", flush=True)
+            logger.debug("TTS engine not available, sending text only")
             await self._send(websocket, {
                 "action": WSAction.TEXT.value,
                 "content": text,
@@ -657,9 +658,9 @@ class VTuberWebSocketHandler:
             return
 
         try:
-            print(f"[DEBUG] Starting TTS synthesis for: {text[:50]}", flush=True)
+            logger.debug(f"Starting TTS synthesis for: {text[:50]}")
             audio_data = await self.tts_engine.synthesize(text)
-            print(f"[DEBUG] TTS synthesis result: {type(audio_data)}, len={len(audio_data) if audio_data else 0}", flush=True)
+            logger.debug(f"TTS synthesis result: {type(audio_data)}, len={len(audio_data) if audio_data else 0}")
 
             if interrupt_event and interrupt_event.is_set():
                 return
@@ -667,14 +668,13 @@ class VTuberWebSocketHandler:
             if audio_data:
                 # 后端直接播放音频（用于测试）
                 try:
-                    print(f"[DEBUG] Playing audio on backend: {len(audio_data)} bytes", flush=True)
+                    logger.debug(f"Playing audio on backend: {len(audio_data)} bytes")
                     import soundfile as sf
                     import sounddevice as sd
                     import io
                     
                     buf = io.BytesIO(audio_data)
                     wav_data, sample_rate = sf.read(buf)
-                    print(f"[DEBUG] Decoded WAV: {len(wav_data)} samples, {sample_rate}Hz", flush=True)
                     
                     # 异步播放，不阻塞主流程
                     def _play():
@@ -684,13 +684,11 @@ class VTuberWebSocketHandler:
                     import threading
                     play_thread = threading.Thread(target=_play, daemon=True)
                     play_thread.start()
-                    print(f"[DEBUG] Backend audio playback started", flush=True)
                 except Exception as play_err:
-                    print(f"[DEBUG] Backend playback failed: {play_err}", flush=True)
+                    logger.debug(f"Backend playback failed: {play_err}")
                 
                 # 发送到前端
                 audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-                print(f"[DEBUG] Base64 encoded: {len(audio_base64)} chars", flush=True)
                 logger.info(f"[TTS] Sending audio chunk: {len(audio_base64)} chars base64, text: {text[:30]}...")
 
                 await self._send(websocket, {
@@ -707,7 +705,7 @@ class VTuberWebSocketHandler:
                         from hakusai_core.avatar.lip_sync_v2 import LipSyncAnalyzerV2, LipSyncConfig
 
                         analyzer = LipSyncAnalyzerV2(LipSyncConfig())
-                        lip_sync_data = analyzer.process_audio_file(audio_data)
+                        lip_sync_data = await analyzer.process_audio_file(audio_data)
 
                         if lip_sync_data:
                             await self._send(websocket, {
@@ -738,10 +736,9 @@ class VTuberWebSocketHandler:
                             "text": text
                         })
 
-                print(f"[DEBUG] Audio chunk sent to frontend", flush=True)
                 logger.debug(f"[TTS] Sent audio for: {text[:30]}...")
             else:
-                print(f"[DEBUG] TTS returned None, sending text only", flush=True)
+                logger.debug("TTS returned None, sending text only")
                 await self._send(websocket, {
                     "action": WSAction.TEXT.value,
                     "content": text,
@@ -752,9 +749,8 @@ class VTuberWebSocketHandler:
             raise
         except Exception as e:
             import traceback
-            print(f"[DEBUG] TTS error: {e}", flush=True)
-            print(traceback.format_exc(), flush=True)
             logger.error(f"TTS synthesis error: {e}")
+            logger.debug(traceback.format_exc())
 
     async def _handle_interrupt(self, websocket: WebSocket, session: VTuberSession):
         logger.info(f"[{session.session_id}] Interrupt received")
@@ -805,7 +801,7 @@ class VTuberWebSocketHandler:
             if not samples:
                 return None
 
-            frame_duration_ms = 50
+            frame_duration_ms = _LIP_SYNC_FRAME_DURATION_MS
             samples_per_frame = int(sample_rate * frame_duration_ms / 1000)
             lip_sync_data = []
             max_amplitude = max(abs(s) for s in samples) if samples else 1

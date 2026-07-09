@@ -153,8 +153,10 @@ class CheckpointManager:
         with self._lock:
             if checkpoint_id in self._checkpoints:
                 del self._checkpoints[checkpoint_id]
-                if checkpoint_id in self._checkpoint_order:
+                try:
                     self._checkpoint_order.remove(checkpoint_id)
+                except ValueError:
+                    pass
                 return True
             return False
 

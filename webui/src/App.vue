@@ -62,7 +62,18 @@
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import { Picture } from '@element-plus/icons-vue'
+import {
+  Odometer,
+  ChatDotRound,
+  Setting,
+  Document,
+  Grid,
+  Picture,
+  User,
+  InfoFilled,
+  Expand,
+  Fold,
+} from '@element-plus/icons-vue'
 
 const route = useRoute()
 const isCollapse = ref(false)

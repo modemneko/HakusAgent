@@ -55,7 +55,10 @@ class BertVITS2TTS:
 
             with open(self.gen_config_path, "r", encoding="utf-8") as f:
                 gen_config = json.load(f)
-            self.sample_rate = gen_config["models"][0].get("sampling_rate", 22050)
+            models = gen_config.get("models")
+            if not models:
+                raise ValueError(f"gen_config 中缺少 'models' 字段: {self.gen_config_path}")
+            self.sample_rate = models[0].get("sampling_rate", 22050)
 
             self._ready = True
             logger.info(f"✓ BertVITS2 TTS 初始化完成 (采样率: {self.sample_rate})")

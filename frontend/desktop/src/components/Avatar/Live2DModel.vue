@@ -211,7 +211,6 @@ async function loadModel() {
   }
 
   try {
-    console.log('[Live2D] Loading model:', props.modelSrc)
     emit('progress', 30)
 
     const { Live2DFactory, Live2DModel } = await getLive2dLib()
@@ -221,7 +220,6 @@ async function loadModel() {
 
     // 加载模型 - 直接传递 URL 字符串
     emit('progress', 70)
-    console.log('[Live2D] Setting up model with URL:', props.modelSrc)
     await Live2DFactory.setupLive2DModel(
       live2DModel,
       props.modelSrc,
@@ -266,7 +264,6 @@ async function loadModel() {
     // 启动待机动画
     startIdleAnimation()
 
-    console.log('[Live2D] Model loaded successfully')
     emit('loaded')
   } catch (error) {
     console.error('[Live2D] Failed to load model:', error)

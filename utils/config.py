@@ -204,17 +204,17 @@ BASE_CONFIG: Dict[str, Any] = {
     # ---- API Keys ----
     "OPENAI_API_KEY": _resolved_config["api_keys"].get("openai_api_key", ""),
     "ANTHROPIC_API_KEY": _resolved_config["api_keys"].get("anthropic_api_key", ""),
-    "GEMINI_API_KEY": _resolved_config["api_keys"]["gemini_api_key"],
-    "GOOGLE_API_KEY": _resolved_config["api_keys"]["google_api_key"],
-    "GOOGLE_CSE_ID": _resolved_config["api_keys"]["google_cse_id"],
-    "DASHSCOPE_API_KEY": _resolved_config["api_keys"]["dashscope_api_key"],
-    "DEEPSEEK_API_KEY": _resolved_config["api_keys"]["deepseek_api_key"],
-    "GLM_API_KEY": _resolved_config["api_keys"]["glm_api_key"],
+    "GEMINI_API_KEY": _resolved_config["api_keys"].get("gemini_api_key", ""),
+    "GOOGLE_API_KEY": _resolved_config["api_keys"].get("google_api_key", ""),
+    "GOOGLE_CSE_ID": _resolved_config["api_keys"].get("google_cse_id", ""),
+    "DASHSCOPE_API_KEY": _resolved_config["api_keys"].get("dashscope_api_key", ""),
+    "DEEPSEEK_API_KEY": _resolved_config["api_keys"].get("deepseek_api_key", ""),
+    "GLM_API_KEY": _resolved_config["api_keys"].get("glm_api_key", ""),
     "MIMO_API_KEY": _resolved_config["api_keys"].get("mimo_api_key", ""),
     "CUSTOM_API_KEY": _resolved_config["api_keys"].get("custom_api_key", ""),
 
     # ---- Models ----
-    "DEFAULT_MODEL": _resolved_config["models"]["default_model"],
+    "DEFAULT_MODEL": _resolved_config["models"].get("default_model", "deepseek-chat"),
 
     # OpenAI
     "OPENAI_MODEL_NAME": _resolved_config["models"].get("openai", {}).get("model_name", "gpt-4o"),
@@ -225,17 +225,17 @@ BASE_CONFIG: Dict[str, Any] = {
     "ANTHROPIC_BASE_URL": _resolved_config["models"].get("anthropic", {}).get("base_url", "https://api.anthropic.com"),
 
     # Gemini
-    "GEMINI_MODEL_NAME": _resolved_config["models"]["gemini"]["model_name"],
+    "GEMINI_MODEL_NAME": _resolved_config["models"].get("gemini", {}).get("model_name", "gemini-2.5-flash"),
 
     # Qwen
-    "QWEN_MODEL_NAME": _resolved_config["models"]["qwen"]["model_name"],
+    "QWEN_MODEL_NAME": _resolved_config["models"].get("qwen", {}).get("model_name", "qwen-flash"),
 
     # DeepSeek
-    "DEEPSEEK_MODEL_NAME": _resolved_config["models"]["deepseek"]["model_name"],
-    "DEEPSEEK_BASE_URL": _resolved_config["models"]["deepseek"]["base_url"],
+    "DEEPSEEK_MODEL_NAME": _resolved_config["models"].get("deepseek", {}).get("model_name", "deepseek-chat"),
+    "DEEPSEEK_BASE_URL": _resolved_config["models"].get("deepseek", {}).get("base_url", "https://api.deepseek.com/v1"),
 
     # GLM
-    "GLM_MODEL_NAME": _resolved_config["models"]["glm"]["model_name"],
+    "GLM_MODEL_NAME": _resolved_config["models"].get("glm", {}).get("model_name", "glm-4-flash"),
 
     # MiMo
     "MIMO_MODEL_NAME": _resolved_config["models"].get("mimo", {}).get("model_name", "mimo-v2.5-pro"),
@@ -250,55 +250,55 @@ BASE_CONFIG: Dict[str, Any] = {
     "CUSTOM_BASE_URL": _resolved_config["models"].get("custom", {}).get("base_url", ""),
 
     # ---- Embedding ----
-    "EMBEDDING_TYPE": _resolved_config["embedding"]["type"],
-    "EMBEDDING_MODEL_PATH": _resolved_config["embedding"]["model_path"],
-    "LOCAL_EMBEDDING_MODEL_PATH": _resolved_config["embedding"]["local_model_path"],
-    "EMBEDDING_DEVICE": _resolved_config["embedding"]["device"],
-    "CPU_THREAD_COUNT": convert_value(_resolved_config["embedding"]["thread_count"], "THREAD_COUNT"),
-    "EMBEDDING_BATCH_SIZE": convert_value(_resolved_config["embedding"]["batch_size"], "BATCH_SIZE"),
+    "EMBEDDING_TYPE": _resolved_config.get("embedding", {}).get("type", "google"),
+    "EMBEDDING_MODEL_PATH": _resolved_config.get("embedding", {}).get("model_path", "shibing624/text2vec-base-chinese"),
+    "LOCAL_EMBEDDING_MODEL_PATH": _resolved_config.get("embedding", {}).get("local_model_path", "./embedding_models/text2vec-base-chinese"),
+    "EMBEDDING_DEVICE": _resolved_config.get("embedding", {}).get("device", "cpu"),
+    "CPU_THREAD_COUNT": convert_value(_resolved_config.get("embedding", {}).get("thread_count", 4), "THREAD_COUNT"),
+    "EMBEDDING_BATCH_SIZE": convert_value(_resolved_config.get("embedding", {}).get("batch_size", 8), "BATCH_SIZE"),
 
     # ---- Memory ----
     "SHORT_TERM_MEMORY_MAX_LENGTH": convert_value(
-        _resolved_config["memory"]["short_term_max_length"], "SHORT_TERM_MAX_LENGTH"
+        _resolved_config.get("memory", {}).get("short_term_max_length", 20), "SHORT_TERM_MAX_LENGTH"
     ),
     "LONG_TERM_MEMORY_MAX_LENGTH": convert_value(
-        _resolved_config["memory"]["long_term_max_length"], "LONG_TERM_MAX_LENGTH"
+        _resolved_config.get("memory", {}).get("long_term_max_length", 100), "LONG_TERM_MAX_LENGTH"
     ),
-    "STATE_DIR": os.path.abspath(os.path.expanduser(_resolved_config["memory"]["state_dir"])),
-    "MEMORY_DB_DIR": os.path.abspath(os.path.expanduser(_resolved_config["memory"]["db_dir"])),
+    "STATE_DIR": os.path.abspath(os.path.expanduser(_resolved_config.get("memory", {}).get("state_dir", "./state"))),
+    "MEMORY_DB_DIR": os.path.abspath(os.path.expanduser(_resolved_config.get("memory", {}).get("db_dir", "./data/memory_db"))),
 
     # ---- TTS ----
-    "ENABLE_TTS": convert_value(_resolved_config["tts"]["enabled"], "ENABLED"),
-    "ENABLE_TTS_AUDIO_OUTPUT": convert_value(_resolved_config["tts"]["audio_output"], "AUDIO_OUTPUT"),
-    "TTS_TYPE": _resolved_config["tts"]["type"],
-    "TTS_API_TYPE": _resolved_config["tts"]["api"]["api_type"],
-    "TTS_VOICE_ID": _resolved_config["tts"]["api"]["voice_id"],
-    "SHERPA_ONNX_MODEL_DIR": _resolved_config["tts"]["sherpa_onnx"]["model_dir"],
-    "SHERPA_ONNX_VOICE": _resolved_config["tts"]["sherpa_onnx"]["voice"],
-    "SHERPA_ONNX_SPEED": convert_value(_resolved_config["tts"]["sherpa_onnx"]["speed"], "SPEED"),
-    "SHERPA_ONNX_VOLUME": convert_value(_resolved_config["tts"]["sherpa_onnx"]["volume"], "VOLUME"),
-    "SHERPA_ONNX_PITCH": convert_value(_resolved_config["tts"]["sherpa_onnx"]["pitch"], "PITCH"),
-    "SHERPA_ONNX_AUDIO_FORMAT": _resolved_config["tts"]["sherpa_onnx"]["audio_format"],
-    "SHERPA_ONNX_SAMPLE_RATE": convert_value(_resolved_config["tts"]["sherpa_onnx"]["sample_rate"], "SAMPLE_RATE"),
-    "SHERPA_ONNX_DEVICE": _resolved_config["tts"]["sherpa_onnx"]["device"],
+    "ENABLE_TTS": convert_value(_resolved_config.get("tts", {}).get("enabled", False), "ENABLED"),
+    "ENABLE_TTS_AUDIO_OUTPUT": convert_value(_resolved_config.get("tts", {}).get("audio_output", True), "AUDIO_OUTPUT"),
+    "TTS_TYPE": _resolved_config.get("tts", {}).get("type", "sherpa_onnx"),
+    "TTS_API_TYPE": _resolved_config.get("tts", {}).get("api", {}).get("api_type", "gemini"),
+    "TTS_VOICE_ID": _resolved_config.get("tts", {}).get("api", {}).get("voice_id", ""),
+    "SHERPA_ONNX_MODEL_DIR": _resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("model_dir", "./models/tts/sherpa_onnx"),
+    "SHERPA_ONNX_VOICE": _resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("voice", ""),
+    "SHERPA_ONNX_SPEED": convert_value(_resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("speed", 1.0), "SPEED"),
+    "SHERPA_ONNX_VOLUME": convert_value(_resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("volume", 1.0), "VOLUME"),
+    "SHERPA_ONNX_PITCH": convert_value(_resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("pitch", 1.0), "PITCH"),
+    "SHERPA_ONNX_AUDIO_FORMAT": _resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("audio_format", "wav"),
+    "SHERPA_ONNX_SAMPLE_RATE": convert_value(_resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("sample_rate", 22050), "SAMPLE_RATE"),
+    "SHERPA_ONNX_DEVICE": _resolved_config.get("tts", {}).get("sherpa_onnx", {}).get("device", "cpu"),
 
     # CosyVoice
-    "COSYVOICE_MODEL": _resolved_config["tts"]["cosyvoice"]["model"],
-    "COSYVOICE_VOICE_ID": _resolved_config["tts"]["cosyvoice"]["voice_id"],
-    "COSYVOICE_REF_AUDIO_URL": _resolved_config["tts"]["cosyvoice"]["ref_audio_url"],
-    "COSYVOICE_LANGUAGE_HINTS": _resolved_config["tts"]["cosyvoice"]["language_hints"],
-    "COSYVOICE_STREAMING": convert_value(_resolved_config["tts"]["cosyvoice"]["streaming"], "STREAMING"),
-    "COSYVOICE_FORMAT": _resolved_config["tts"]["cosyvoice"]["format"],
-    "COSYVOICE_SAMPLE_RATE": convert_value(_resolved_config["tts"]["cosyvoice"]["sample_rate"], "SAMPLE_RATE"),
-    "COSYVOICE_VOICE_PREFIX": _resolved_config["tts"]["cosyvoice"]["voice_prefix"],
+    "COSYVOICE_MODEL": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("model", "cosyvoice-v2"),
+    "COSYVOICE_VOICE_ID": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("voice_id", "longxiaochun"),
+    "COSYVOICE_REF_AUDIO_URL": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("ref_audio_url", ""),
+    "COSYVOICE_LANGUAGE_HINTS": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("language_hints", ""),
+    "COSYVOICE_STREAMING": convert_value(_resolved_config.get("tts", {}).get("cosyvoice", {}).get("streaming", False), "STREAMING"),
+    "COSYVOICE_FORMAT": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("format", "wav"),
+    "COSYVOICE_SAMPLE_RATE": convert_value(_resolved_config.get("tts", {}).get("cosyvoice", {}).get("sample_rate", 22050), "SAMPLE_RATE"),
+    "COSYVOICE_VOICE_PREFIX": _resolved_config.get("tts", {}).get("cosyvoice", {}).get("voice_prefix", ""),
 
     # ---- Features ----
     "ENABLE_IMAGE_GENERATION": convert_value(
-        _resolved_config["features"]["enable_image_generation"], "ENABLE_IMAGE_GENERATION"
+        _resolved_config.get("features", {}).get("enable_image_generation", False), "ENABLE_IMAGE_GENERATION"
     ),
 
     # ---- Logging ----
-    "LOG_LEVEL": getattr(logging, _resolved_config["logging"]["level"].upper(), logging.INFO),
+    "LOG_LEVEL": getattr(logging, _resolved_config.get("logging", {}).get("level", "INFO").upper(), logging.INFO),
 
     # ---- Debug ----
     "DEBUG": convert_value(_resolved_config.get("debug", False), "DEBUG"),
@@ -384,5 +384,5 @@ TOOLS_CONFIG = [
 ]
 
 # 创建必要的目录
-for dir_path in [BASE_CONFIG["STATE_DIR"], BASE_CONFIG["MEMORY_DB_DIR"]]:
+for dir_path in [BASE_CONFIG.get("STATE_DIR", "./state"), BASE_CONFIG.get("MEMORY_DB_DIR", "./data/memory_db")]:
     os.makedirs(dir_path, exist_ok=True)

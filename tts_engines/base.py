@@ -6,10 +6,11 @@ TTS 引擎基类
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, AsyncIterator, List
 from dataclasses import dataclass, field
-import time
-import logging
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "BaseTTSEngine",
+    "TTSResult",
+]
 
 
 @dataclass

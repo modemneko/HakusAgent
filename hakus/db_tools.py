@@ -90,7 +90,7 @@ class DBConnectTool(Tool):
                       save: bool = True, **kwargs) -> str:
         try:
             existing = DB_MANAGER.get_config(name)
-            if existing and not any([host, user, password, database, path]):
+            if existing and not any([user, password, database, path]):
                 # 已存在同名连接, 直接用
                 cfg = existing
             else:
@@ -395,10 +395,10 @@ class DBBakcupTool(Tool):
             # 触发 checkpoint
             if hasattr(driver, "_ensure"):
                 try:
-                    driver._ensure().execute("VACUUM INTO ?", (to,))
+                    driver._ensure().execute(f'VACUUM INTO "{to.replace(chr(34), chr(34)+chr(34))}"')
                     return f"✓ VACUUM INTO 备份完成: {to}"
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"VACUUM INTO 失败，回退到文件复制: {e}")
             shutil.copy2(driver.path, to)
             return f"✓ 已复制到 {to}"
         except Exception as e:

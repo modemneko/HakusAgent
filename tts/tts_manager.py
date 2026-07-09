@@ -82,6 +82,11 @@ class TTSManager:
             if not text or not text.strip():
                 logger.warning("空文本，跳过TTS生成")
                 return None
+
+            # 限制文本长度，防止过长的输入导致问题
+            if len(text) > 5000:
+                logger.warning(f"TTS文本过长 ({len(text)} 字符)，截断到 5000 字符")
+                text = text[:5000]
             
             logger.debug(f"生成TTS音频: {text[:20]}...")
             
@@ -122,13 +127,18 @@ class TTSManager:
             if not text or not text.strip():
                 logger.warning("空文本，跳过TTS生成")
                 return None
+
+            # 限制文本长度
+            if len(text) > 5000:
+                logger.warning(f"TTS文本过长 ({len(text)} 字符)，截断到 5000 字符")
+                text = text[:5000]
             
             logger.debug(f"生成TTS音频文件: {text[:20]}...")
             
             # 根据TTS类型调用不同的方法
             if self.tts_type == "sherpa-onnx":
                 # 生成音频数据
-                audio = await asyncio.get_event_loop().run_in_executor(
+                audio = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self.tts_instance.generate_audio, text, speed, volume, pitch
                 )
@@ -138,7 +148,7 @@ class TTSManager:
                 with tempfile.NamedTemporaryFile(suffix=f".{self.tts_instance.audio_format}", delete=False) as f:
                     temp_file_path = f.name
                 
-                await asyncio.get_event_loop().run_in_executor(
+                await asyncio.get_running_loop().run_in_executor(
                     None,
                     self.tts_instance.save_to_file, audio, temp_file_path
                 )
@@ -148,7 +158,7 @@ class TTSManager:
                 return await self.tts_instance.generate_audio(text)
             elif self.tts_type == "cosyvoice":
                 # 生成音频数据
-                audio_data = await asyncio.get_event_loop().run_in_executor(
+                audio_data = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self.tts_instance.generate_audio, text
                 )
@@ -161,14 +171,14 @@ class TTSManager:
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                     temp_file_path = f.name
 
-                await asyncio.get_event_loop().run_in_executor(
+                await asyncio.get_running_loop().run_in_executor(
                     None,
                     self.tts_instance.save_to_file, audio_data, temp_file_path
                 )
 
                 return temp_file_path
             elif self.tts_type == "bert-vits2":
-                return await asyncio.get_event_loop().run_in_executor(
+                return await asyncio.get_running_loop().run_in_executor(
                     None,
                     self.tts_instance.generate, text
                 )

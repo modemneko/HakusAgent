@@ -19,8 +19,8 @@
           @click="toggleVoiceMode"
           :title="isVoiceMode ? '切换到文本模式' : '切换到语音模式'"
         />
-        <el-button :icon="Setting" circle @click="appStore.openSettings" />
-        <el-button :icon="Delete" circle @click="clearChat" />
+        <el-button :icon="Setting" circle title="设置" @click="appStore.openSettings" />
+        <el-button :icon="Delete" circle title="清空聊天" @click="clearChat" />
       </div>
     </div>
 
@@ -197,11 +197,11 @@ async function handleVoiceTranscribe(text: string) {
 }
 
 function handleSpeechStart() {
-  console.log('[ChatPanel] Speech started');
+  // Speech recognition started
 }
 
 function handleSpeechEnd() {
-  console.log('[ChatPanel] Speech ended');
+  // Speech recognition ended
 }
 
 async function clearChat() {
