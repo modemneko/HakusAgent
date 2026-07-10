@@ -1,4 +1,4 @@
-# HakusAI TUI 重构计划
+ HakusAI TUI 重构计划
 
 ## 目标
 参考 OpenCode 的界面设计，重构 HakusAI TUI，解决滚动问题，保留 yuxi.png 图标布局。
