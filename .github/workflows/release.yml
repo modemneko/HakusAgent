@@ -59,10 +59,12 @@ jobs:
         uses: actions/checkout@v4
 
       # ============ 2. Setup Node.js ============
-      - name: 📦 Setup Node.js 20
+      # Note: Node 20 is deprecated on GitHub Actions runners as of 2025-09-19.
+      # Using Node 22 (LTS) instead.
+      - name: 📦 Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/client/package-lock.json
 
@@ -72,13 +74,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ============ 4. Install Python deps + PyInstaller ============
+      # ============ 4. Install Python deps + PyInstaller + Pillow ============
+      # - requirements.txt: HakusAI backend runtime deps
+      # - pyinstaller:       needed to bundle the backend as a sidecar binary
+      # - pillow:            needed by scripts/make-icon.py to generate icon sizes
       - name: 🔧 Install Python dependencies
         working-directory: .
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pillow
 
       # ============ 5. Build HakusAI sidecar (PyInstaller) ============
       # 生成 frontend/client/sidecar/dist/hakusai-server 二进制
