@@ -2,6 +2,12 @@ import argparse
 import asyncio
 import os
 import sys
+import warnings
+
+# Warning/print suppression is now in hakus/__init__.py (loaded first)
+# These are just backups in case __init__.py is bypassed
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TORCHAUDIO_USE_FFMPEG", "0")
 
 from utils.config import BASE_CONFIG
 from utils.logger import get_logger, quiet_console_loggers
@@ -104,7 +110,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _init_components(args: argparse.Namespace) -> AgentCore:
-    model_type = args.model or BASE_CONFIG.get("DEFAULT_MODEL", "deepseek")
+    model_type = args.model or BASE_CONFIG.get("DEFAULT_MODEL", "opencode")
 
     permission_mode = PermissionMode(args.permission)
 
@@ -295,6 +301,9 @@ def main() -> None:
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    
+    # 版本标识 — 用于确认新代码已加载
+    print("=== HakusAI v2 OpenCode Layout ===", file=sys.stderr, flush=True)
     
     args = _parse_args()
     _quiet_logging()

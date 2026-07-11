@@ -1,9 +1,23 @@
 """
-HakusAI TUI v2 — 借鉴 OpenCode 设计
-- 响应式左侧边栏 (自动折叠/隐藏)
-- 右侧主区: 消息列表 + 底部输入框
-- 状态栏 + 活动指示条
-- 命令面板、帮助、模型切换
+HakusAI TUI v2 — OpenCode 精确布局 (源码级对齐)
+
+基于 OpenCode packages/tui/src 源码分析:
+- Session 页面: 水平分屏, 左侧 flexGrow=1 + 右侧 width=42
+- 侧边栏: 宽度 42 字符, paddingTop/Bottom=1, paddingLeft/Right=2
+- 宽屏(>120)自动显示侧边栏, 窄屏叠加覆盖
+- 消息区: paddingLeft/Right=2, paddingBottom=1, gap=1
+- Prompt: flexShrink=0, maxHeight=max(6, H/3)
+- 无独立状态栏 — 状态在 Prompt 底部行
+- 侧边栏内容: Context / Modified Files / Footer
+
+快捷键对齐 OpenCode:
+- Tab: build/plan 切换
+- Ctrl+O: 模型选择
+- Ctrl+K: 命令面板
+- Ctrl+H: 帮助
+- Ctrl+S: 会话切换
+- Ctrl+T: 主题切换
+- Ctrl+F: 文件选择器
 """
 
 from __future__ import annotations
@@ -15,9 +29,9 @@ from typing import Any, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, Markdown, RichLog, Static
+from textual.widgets import Button, Markdown, Static
 
 from .messages import Message, Part, PartType
 from .session import TUISession
@@ -26,243 +40,458 @@ from .widgets.activity import ActivityStrip
 from .widgets.message_list import MessageList
 from .widgets.notification_bar import NotificationBar
 from .widgets.prompt_input import PromptInput
-from .widgets.status_bar import StatusBar
 from .widgets.welcome_panel import WelcomePanel
 from .commands import SlashCommandRegistry, build_default_registry, CommandContext
+from utils.hakus_config import get_config, save_default_model
 from utils.logger import get_logger
 from utils.turn_debug import is_debug_enabled, init_debug_logger, shutdown_debug_logger
 
 logger = get_logger(__name__)
 
+# OpenCode 侧边栏宽度: 固定 42 字符
+SIDEBAR_WIDTH = 42
+# OpenCode 宽屏阈值: width > 120 自动显示侧边栏
+WIDE_THRESHOLD = 120
+
 
 # ============================================================
-# Sidebar Toggle Button
+# Sidebar — OpenCode 右侧边栏 (width=42, 源码级精确)
 # ============================================================
-class SidebarToggle(Button):
-    """边栏切换按钮"""
+class Sidebar(Static):
+    """右侧边栏 — OpenCode 源码精确对齐: width=42, padding 1 2"""
 
-    DEFAULT_CSS = """
-    SidebarToggle {
-        width: 1;
+    DEFAULT_CSS = f"""
+    Sidebar {{
+        width: {SIDEBAR_WIDTH};
+        background: #0a0a0a;
+        border-left: solid #1e1e1e;
+        padding: 1 2;
+        overflow: auto;
+        height: 100%;
+    }}
+
+    Sidebar .sidebar-header {{
+        color: #5c9cf5;
+        text-style: bold;
         height: 1;
-        background: #1e1e1e;
+        margin-bottom: 1;
+    }}
+
+    Sidebar .sidebar-section {{
         color: #808080;
-        border: none;
-        margin: 0;
-        padding: 0;
-        content-align: center middle;
-    }
-    SidebarToggle:hover {
-        background: #3c3c3c;
-        color: #fab283;
-    }
+        text-style: bold;
+        height: 1;
+        margin-top: 1;
+    }}
+
+    Sidebar .sidebar-item {{
+        color: #606060;
+        height: 1;
+        padding-left: 1;
+    }}
+
+    Sidebar .sidebar-item.modified {{
+        color: #e5c07b;
+    }}
+
+    Sidebar .sidebar-footer {{
+        color: #606060;
+        height: 1;
+        margin-top: 1;
+        border-top: solid #1e1e1e;
+        padding-top: 1;
+    }}
     """
 
-    def __init__(self, **kwargs):
-        super().__init__("◀", **kwargs)
+    def __init__(self, session: TUISession, agent: Any, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._session = session
+        self._agent = agent
+        self._modified_files: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        # Context section (order=100)
+        yield Static("Context", classes="sidebar-section")
+        yield Static(f"  {self._session.model_name}", classes="sidebar-item")
+        workdir = self._session.working_dir or os.getcwd()
+        if len(workdir) > 35:
+            workdir = "..." + workdir[-32:]
+        yield Static(f"  {workdir}", classes="sidebar-item")
+
+        # Modified Files section (order=500)
+        yield Static("Modified Files", classes="sidebar-section", id="modified-section")
+        yield Static("  (none)", classes="sidebar-item", id="modified-placeholder")
+
+        # Footer (order=100) — 版本号
+        yield Static("", classes="sidebar-footer", id="sidebar-footer")
+
+    def on_mount(self) -> None:
+        self._update_footer()
+
+    def _update_footer(self) -> None:
+        try:
+            footer = self.query_one("#sidebar-footer", Static)
+            footer.update("  v2 · OpenCode Layout")
+        except Exception:
+            pass
+
+    def update_modified_files(self, files: list[dict]) -> None:
+        self._modified_files = files
+        try:
+            section = self.query_one("#modified-section", Static)
+            for child in list(section.parent.children):
+                if hasattr(child, 'has_class') and child.has_class("sidebar-file-item"):
+                    child.remove()
+
+            placeholder = self.query_one("#modified-placeholder", Static)
+            if not files:
+                placeholder.update("  (none)")
+                return
+            placeholder.update("")
+
+            for f in files[:10]:
+                path = f.get("path", "?")
+                adds = f.get("adds", 0)
+                dels = f.get("dels", 0)
+                name = os.path.basename(path)
+                diff_str = f"+{adds}/-{dels}" if adds or dels else ""
+                item = Static(f"  {name} {diff_str}", classes="sidebar-item sidebar-file-item modified")
+                section.mount_after(item)
+        except Exception:
+            pass
 
 
 # ============================================================
-# Permission Dialog
+# StatusBar Stub — 兼容旧 command 对 _status_bar 的写入
+# ============================================================
+class _StatusBarStub:
+    """OpenCode 风格已取消独立状态栏，但旧 /model /context /voice
+    等命令仍会写入 _status_bar 属性。此 stub 避免 AttributeError。
+    """
+
+    def __init__(self) -> None:
+        self.model_name: str = ""
+        self.context_pct: Optional[int] = None
+        self.context_tokens: int = 0
+        self.context_max: int = 0
+        self.total_tokens: int = 0
+        self.permission_mode: str = "auto"
+        self.voice_enabled: bool = False
+
+
+# ============================================================
+# Permission Dialog — OpenCode 风格 (中文本地化 + 鼠标支持)
 # ============================================================
 class PermissionDialog(ModalScreen[str]):
-    """权限确认对话框"""
+    """权限确认 — OpenCode 风格, 支持键盘与鼠标."""
 
     BINDINGS = [
-        Binding("escape", "dismiss('deny')", "Cancel"),
-        Binding("enter", "press_focused", "确认", show=False),
-        Binding("space", "press_focused", "确认", show=False),
-        Binding("left", "focus_prev", "上一个", show=False),
-        Binding("right", "focus_next", "下一个", show=False),
+        Binding("escape", "dismiss('deny')", "拒绝"),
+        Binding("left,h", "prev_option", "上一个", show=False, priority=True),
+        Binding("right,l", "next_option", "下一个", show=False, priority=True),
+        Binding("enter", "select_option", "确认", priority=True),
     ]
 
     DEFAULT_CSS = """
-    PermissionDialog { align: center middle; }
+    PermissionDialog { align: center middle; background: $surface 90%; }
     PermissionDialog > .modal {
-        width: 70%; max-width: 100; height: auto;
-        background: #141414; border: tall #fab283; padding: 1 2;
+        width: 70; max-width: 84; height: auto;
+        background: #0a0a0a; border: tall #d4a017; padding: 1 2;
     }
-    PermissionDialog .modal-title { color: #fab283; text-style: bold; text-align: center; }
-    PermissionDialog .modal-body { color: #eeeeee; margin: 1 0; }
-    PermissionDialog .modal-buttons { height: 3; align-horizontal: center; }
-    PermissionDialog Button { margin: 0 1; min-width: 14; }
-    PermissionDialog #allow-once { background: #141414; color: #56b6c2; border: tall #56b6c2; }
-    PermissionDialog #allow-session { background: #141414; color: #fab283; border: tall #fab283; }
-    PermissionDialog #deny { background: #141414; color: #e06c75; border: tall #e06c75; }
+    PermissionDialog .modal-header { width: 100%; height: auto; }
+    PermissionDialog .modal-warning { color: #d4a017; text-style: bold; }
+    PermissionDialog .modal-title { color: #eeeeee; margin-top: 1; }
+    PermissionDialog .modal-body { color: #aaaaaa; margin: 1 0; }
+    PermissionDialog .modal-body .key { color: #606060; }
+    PermissionDialog .modal-body .value { color: #eeeeee; }
+    PermissionDialog .modal-actions {
+        width: 100%; height: auto;
+        margin-top: 1;
+        layout: grid;
+        grid-size: 3;
+        grid-columns: 1fr 1fr 1fr;
+        grid-gutter: 1;
+    }
+    PermissionDialog .action-btn {
+        width: 100%; height: 1;
+        background: #1e1e1e;
+        color: #aaaaaa;
+        text-align: center;
+        content-align: center middle;
+    }
+    PermissionDialog .action-btn:hover { background: #2a2a2a; }
+    PermissionDialog .action-btn.selected {
+        background: #d4a017;
+        color: #0a0a0a;
+        text-style: bold;
+    }
+    PermissionDialog .modal-hint { color: #606060; text-align: center; margin-top: 1; }
     """
+
+    _OPTIONS = ["once", "session", "deny"]
+    _OPTION_LABELS = {
+        "once": "允许一次",
+        "session": "始终允许",
+        "deny": "拒绝",
+    }
+    _TOOL_ICONS = {
+        "bash": "#",
+        "shell": "#",
+        "read": "→",
+        "edit": "→",
+        "write": "→",
+        "glob": "✱",
+        "grep": "✱",
+        "list": "→",
+        "webfetch": "%",
+        "websearch": "◈",
+        "search": "◈",
+    }
+    _TOOL_NAMES = {
+        "bash": "Shell 命令",
+        "shell": "Shell 命令",
+        "read": "读取文件",
+        "edit": "编辑文件",
+        "write": "写入文件",
+        "glob": "Glob 匹配",
+        "grep": "Grep 搜索",
+        "list": "列出目录",
+        "webfetch": "抓取网页",
+        "websearch": "联网搜索",
+        "search": "搜索",
+        "task": "子任务",
+        "tool": "工具调用",
+    }
 
     def __init__(self, tool_name: str, args: dict) -> None:
         super().__init__()
         self._tool_name = tool_name
         self._args = args
+        self._selected = 0
+
+    @staticmethod
+    def _tool_label(tool_name: str) -> tuple[str, str]:
+        key = tool_name.lower()
+        icon = PermissionDialog._TOOL_ICONS.get(key, "⚙")
+        name = PermissionDialog._TOOL_NAMES.get(key, tool_name)
+        return icon, name
+
+    @staticmethod
+    def _translate_reason(reason: str) -> str:
+        # 将常见英文 reason 翻译为中文, 无法识别则原样返回
+        reason = reason.lower()
+        if "dangerous tool execution" in reason:
+            return "危险工具执行"
+        if "edit" in reason and "file" in reason:
+            return "请求编辑文件"
+        if "read" in reason and "file" in reason:
+            return "请求读取文件"
+        if "bash" in reason or "shell" in reason:
+            return "请求执行 Shell 命令"
+        return reason
 
     def compose(self) -> ComposeResult:
+        icon, title = self._tool_label(self._tool_name)
         with Vertical(classes="modal"):
-            yield Static("⚠ 权限请求", classes="modal-title")
-            args_str = "\n".join(f"  `{k}` = {v!r}" for k, v in self._args.items()) or "  (无参数)"
-            yield Markdown(
-                f"模型请求执行工具: **`{self._tool_name}`**\n\n**参数:**\n{args_str}\n\n是否允许?",
-                classes="modal-body",
-            )
-            with Horizontal(classes="modal-buttons"):
-                yield Button("✓ 允许 (1 次)", id="allow-once")
-                yield Button("⚡ 本次会话允许", id="allow-session")
-                yield Button("✗ 拒绝", id="deny")
+            with Vertical(classes="modal-header"):
+                yield Static("⚠ 需要权限", classes="modal-warning")
+                yield Static(f"{icon} {title}", classes="modal-title")
+            body = self._args.get("detail") or self._args.get("reason") or ""
+            if body:
+                translated = self._translate_reason(body)
+                yield Markdown(
+                    f"<span class='key'>原因:</span> <span class='value'>{translated}</span>",
+                    classes="modal-body",
+                )
+            with Horizontal(classes="modal-actions"):
+                for i, opt in enumerate(self._OPTIONS):
+                    classes = "action-btn"
+                    if i == self._selected:
+                        classes += " selected"
+                    yield Static(self._OPTION_LABELS[opt], classes=classes, id=f"action-{opt}")
+            yield Static("⇆ 选择  Enter 确认  Esc 拒绝", classes="modal-hint")
 
-    def on_mount(self) -> None:
-        """自动聚焦第一个按钮, 确保键盘导航可用."""
-        try:
-            first_btn = self.query_one("#allow-once", Button)
-            first_btn.focus()
-        except Exception:
-            pass
+    def _refresh_actions(self) -> None:
+        for i, opt in enumerate(self._OPTIONS):
+            btn = self.query_one(f"#action-{opt}", Static)
+            btn.set_class(i == self._selected, "selected")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id.replace("-", "_"))
+    def action_prev_option(self) -> None:
+        self._selected = (self._selected - 1) % len(self._OPTIONS)
+        self._refresh_actions()
 
-    def action_press_focused(self) -> None:
-        """按当前聚焦的按钮."""
-        try:
-            focused = self.focused
-            if isinstance(focused, Button):
-                focused.press()
-        except Exception:
-            pass
+    def action_next_option(self) -> None:
+        self._selected = (self._selected + 1) % len(self._OPTIONS)
+        self._refresh_actions()
 
-    def action_focus_next(self) -> None:
-        """聚焦下一个按钮."""
-        try:
-            buttons = list(self.query("Button"))
-            if not buttons:
-                return
-            focused = self.focused
-            if isinstance(focused, Button):
-                idx = buttons.index(focused)
-                next_idx = (idx + 1) % len(buttons)
-                buttons[next_idx].focus()
-            elif buttons:
-                buttons[0].focus()
-        except Exception:
-            pass
+    def action_select_option(self) -> None:
+        self.dismiss(self._OPTIONS[self._selected])
 
-    def action_focus_prev(self) -> None:
-        """聚焦上一个按钮."""
-        try:
-            buttons = list(self.query("Button"))
-            if not buttons:
-                return
-            focused = self.focused
-            if isinstance(focused, Button):
-                idx = buttons.index(focused)
-                prev_idx = (idx - 1) % len(buttons)
-                buttons[prev_idx].focus()
-            elif buttons:
-                buttons[-1].focus()
-        except Exception:
-            pass
+    def on_click(self, event) -> None:
+        # 鼠标点击按钮时根据点击位置选择最近按钮
+        target = event.control
+        if target is None or not target.id or not target.id.startswith("action-"):
+            return
+        opt = target.id.replace("action-", "")
+        if opt in self._OPTIONS:
+            self.dismiss(opt)
 
 
 # ============================================================
-# Sidebar Widget (左侧边栏) - 响应式、可折叠分区
-# ============================================================
-class Sidebar(Static):
-    """左侧边栏：会话信息、工具、状态"""
-
-    DEFAULT_CSS = """
-    Sidebar {
-        width: 42;
-        background: #141414;
-        border-right: solid #fab283;
-        padding: 1 2;
-        overflow: auto;
-        transition: width 150ms in_out_cubic;
-    }
-    Sidebar.hidden {
-        width: 0;
-        padding: 1 0;
-        border-right: none;
-        overflow: hidden;
-    }
-    Sidebar.collapsed {
-        width: 1;
-        padding: 1 0;
-        border-right: none;
-        overflow: hidden;
-    }
-    Sidebar .section-title {
-        color: #9d7cd8; text-style: bold; margin: 1 0 0 0;
-    }
-    Sidebar .session-title { color: #eeeeee; text-style: bold; }
-    Sidebar .session-meta { color: #808080; margin-top: 1; }
-    Sidebar .tool-item { color: #eeeeee; margin: 0 0 0 1; }
-    Sidebar .tool-item:hover { color: #9d7cd8; }
-    Sidebar .sidebar-section { margin: 1 0; }
-    Sidebar .sidebar-section.hidden { display: none; }
-    """
-
-    def __init__(self, session: TUISession, agent: Any, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._session = session
-        self._agent = agent
-        self._expanded_sections = {"session": True, "tools": True, "status": True}
-
-    def compose(self) -> ComposeResult:
-        # 会话信息区
-        with Vertical(classes="sidebar-section", id="section-session"):
-            yield Static("📝 会话", classes="section-title")
-            yield Static(self._session.model_name, classes="session-title")
-            yield Static(f"📁 {self._session.working_dir}", classes="session-meta")
-            yield Static(f"🔧 权限: {self._session.permission_mode}", classes="session-meta")
-
-        # 工具区
-        with Vertical(classes="sidebar-section", id="section-tools"):
-            yield Static("🛠️ 可用工具", classes="section-title")
-            tools = self._get_tools()
-            for tool in tools:
-                yield Static(f"  {tool}", classes="tool-item")
-
-        # 状态区
-        with Vertical(classes="sidebar-section", id="section-status"):
-            yield Static("ℹ️ 状态", classes="section-title")
-            yield Static("  准备就绪", id="status-line", classes="tool-item")
-
-    def _get_tools(self) -> list[str]:
-        try:
-            return self._agent._tool_registry.list_tools()
-        except Exception:
-            return ["bash", "read", "write", "edit", "glob", "grep", "task", "web_search"]
-
-    def toggle_section(self, section: str) -> None:
-        """切换区域展开/折叠"""
-        self._expanded_sections[section] = not self._expanded_sections.get(section, True)
-        try:
-            section_widget = self.query_one(f"#section-{section}", Vertical)
-            if self._expanded_sections[section]:
-                section_widget.remove_class("hidden")
-            else:
-                section_widget.add_class("hidden")
-        except Exception:
-            pass
-
-
-# ============================================================
-# Main App
+# Main App — OpenCode 精确布局 (源码级对齐)
 # ============================================================
 class HakusApp(App):
-    """HakusAI 简洁 TUI - 借鉴 OpenCode 设计"""
+    """HakusAI TUI — OpenCode 源码级精确布局
+
+    基于 packages/tui/src/routes/session/index.tsx:
+    - 水平分屏: flexDirection="row"
+    - 左侧: flexGrow=1, minHeight=0, paddingLeft=2, paddingRight=2, paddingBottom=1
+    - 右侧: width=42 (侧边栏, 宽屏自动显示)
+    - 消息区: flexGrow=1 (scrollbox)
+    - Prompt: flexShrink=0, maxHeight=max(6, H/3)
+    - 无独立状态栏
+    """
 
     CSS_PATH = "theme.tcss"
     TITLE = "HakusAI"
-    SUB_TITLE = "v2 — OpenCode Style"
+
+    DEFAULT_CSS = """
+    Screen {
+        background: #0a0a0a;
+        color: #eeeeee;
+    }
+
+    #top-pane {
+        height: 1fr;
+        background: #0a0a0a;
+    }
+
+    #messages-pane {
+        width: 1fr;
+        background: #0a0a0a;
+        padding: 0 2 1 2;
+        overflow: hidden;
+    }
+
+    #sidebar {
+        width: 42;
+        background: #0a0a0a;
+        border-left: solid #1e1e1e;
+        padding: 1 2;
+        overflow: auto;
+    }
+
+    #sidebar.hidden {
+        display: none;
+    }
+
+    #message-list {
+        padding: 0;
+        background: #0a0a0a;
+        scrollbar-size: 1 0;
+        height: 1fr;
+        overflow: auto;
+    }
+
+    #prompt-input {
+        dock: bottom;
+        height: auto;
+        min-height: 1;
+        max-height: 24;
+        background: #0a0a0a;
+        border-top: solid #1e1e1e;
+        padding: 0 1;
+    }
+
+    #activity-strip {
+        height: 1;
+        background: #0a0a0a;
+        color: #56b6c2;
+        padding: 0 1;
+        display: none;
+        dock: top;
+    }
+
+    #activity-strip.active {
+        display: block;
+    }
+
+    #notification-bar {
+        height: 1;
+        background: #0a0a0a;
+        color: #56b6c2;
+        padding: 0 1;
+    }
+
+    WelcomePanel {
+        background: transparent;
+        padding: 1 2;
+        height: auto;
+        max-width: 75;
+        margin: 1 0;
+    }
+
+    UserBubble {
+        background: #0a0a0a;
+        margin: 1 0;
+        padding: 0 1;
+        height: auto;
+        border-left: tall #3c3c3c;
+    }
+
+    AssistantText {
+        margin: 1 0;
+        padding: 0 1;
+        height: auto;
+        background: transparent;
+    }
+
+    ToolResult {
+        margin: 0;
+        padding: 0 1;
+        height: auto;
+        background: transparent;
+        border-left: tall #1e1e1e;
+    }
+
+    ToolResult.expanded {
+        border-left: tall #e5c07b;
+    }
+
+    ToolResult.error {
+        border-left: tall #e06c75;
+    }
+
+    CommandResult {
+        margin: 0;
+        padding: 0 1;
+        background: transparent;
+        border-left: tall #282828;
+        height: auto;
+    }
+
+    ErrorBlock {
+        margin: 1 0;
+        padding: 0 1;
+        background: transparent;
+        border-left: tall #e06c75;
+        height: auto;
+    }
+    """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit_or_cancel", "退出/取消", show=True),
-        Binding("ctrl+l", "clear_screen", "清屏", show=True),
-        Binding("escape", "cancel_streaming", "取消", show=False),
-        Binding("ctrl+m", "show_model_overlay", "模型", show=False),
-        Binding("ctrl+p", "show_command_palette", "命令面板", show=True),
-        Binding("ctrl+b", "toggle_sidebar", "切换边栏", show=True),
-        Binding("f1", "show_help", "帮助", show=False),
+        Binding("ctrl+c", "quit_or_cancel", "Quit", show=False),
+        Binding("ctrl+l", "clear_screen", "Clear", show=False),
+        Binding("escape", "cancel_streaming", "Cancel", show=False),
+        Binding("ctrl+k", "show_command_palette", "Commands", show=True),
+        Binding("ctrl+o", "show_model_overlay", "Model", show=True),
+        Binding("ctrl+shift+o", "show_model_config", "Config", show=True),
+        Binding("tab", "toggle_agent_mode", "Build/Plan", show=True),
+        Binding("ctrl+t", "cycle_theme", "Theme", show=False),
+        Binding("ctrl+s", "switch_session", "Session", show=False),
+        Binding("ctrl+h", "show_help", "Help", show=False),
+        Binding("ctrl+f", "file_picker", "Files", show=False),
+        Binding("ctrl+b", "toggle_details", "Details", show=False),
     ]
 
     def __init__(
@@ -275,7 +504,7 @@ class HakusApp(App):
         self._agent = agent
         agent._tui_mode = True
         self._session = TUISession(
-            model_name=getattr(agent, "_model_type", "deepseek"),
+            model_name=getattr(agent, "_model_type", "opencode"),
             working_dir=os.getcwd(),
             voice_enabled=voice_enabled,
             permission_mode="bypass",
@@ -286,74 +515,69 @@ class HakusApp(App):
         self._debug_enabled = is_debug_enabled()
         if self._debug_enabled:
             self._debug_logger = init_debug_logger(session_id=session_id)
-            logger.info(f"Debug mode ON — logs → {self._debug_logger.session_dir}")
 
-        self._command_registry: SlashCommandRegistry = build_default_registry()
+        self._command_registry = build_default_registry()
         self._sink: Optional[StreamingSink] = None
-        self._streaming_in_progress: bool = False
+        self._streaming_in_progress = False
+        self._agent_mode = "build"
+        self._show_details = False
+        self._last_model = ""
         self._sidebar_visible = True
-        self._sidebar_collapsed = False
 
-        # 子组件 (在 compose 中赋值)
+        # 子组件
         self._sidebar: Optional[Sidebar] = None
         self._message_list: Optional[MessageList] = None
-        self._status_bar: Optional[StatusBar] = None
         self._activity: Optional[ActivityStrip] = None
         self._prompt_input: Optional[PromptInput] = None
         self._notification_bar: Optional[NotificationBar] = None
-        self._sidebar_toggle: Optional[SidebarToggle] = None
-        self._welcome_shown: bool = False
+        self._status_bar = _StatusBarStub()
+        self._welcome_shown = False
 
     def compose(self) -> ComposeResult:
-        # 活动指示条
-        self._activity = ActivityStrip(id="activity-strip")
-        yield self._activity
+        """OpenCode 精确布局: 水平分屏(flexGrow+width=42)+底部Prompt"""
 
-        # 主布局：左侧边栏 + 右侧内容区
-        with Horizontal(id="main-layout"):
-            # 边栏切换按钮
-            self._sidebar_toggle = SidebarToggle(id="sidebar-toggle")
-            yield self._sidebar_toggle
-
-            self._sidebar = Sidebar(self._session, self._agent, id="sidebar")
-            yield self._sidebar
-
-            with Vertical(id="main-content"):
+        # ── 水平分屏: 左侧内容(flexGrow=1) + 右侧侧边栏(width=42) ──
+        with Horizontal(id="top-pane"):
+            # 左侧: 消息区 (flexGrow=1, paddingLeft=2, paddingRight=2, paddingBottom=1)
+            with Vertical(id="messages-pane"):
                 self._message_list = MessageList(id="message-list")
                 yield self._message_list
 
-                # 状态栏 (消息列表下方)
-                self._status_bar = StatusBar(id="status-bar")
-                yield self._status_bar
+            # 右侧: 侧边栏 (width=42, 宽屏>120自动显示)
+            self._sidebar = Sidebar(self._session, self._agent, id="sidebar")
+            yield self._sidebar
 
-        # 底部输入框
+        # ── Prompt (flexShrink=0, 底部固定) ──
         self._prompt_input = PromptInput(id="prompt-input")
         yield self._prompt_input
 
-        # 通知栏
+        # 浮动组件
         self._notification_bar = NotificationBar(id="notification-bar")
         yield self._notification_bar
 
-        yield Footer()
+        self._activity = ActivityStrip(id="activity-strip")
+        yield self._activity
 
     def on_mount(self) -> None:
-        # 检查首次运行
         from .screens.setup_wizard import SetupWizard, needs_setup
         if needs_setup():
-            self.push_screen(SetupWizard(), callback=self._on_setup_done)
+            self.push_screen(SetupWizard(), callback=lambda _: self._show_welcome())
             return
-
         self._show_welcome()
         self._bind_permissions()
-        self._setup_responsive_sidebar()
-        self._notification_bar.show("🌸 欢迎使用 HakusAI v2 · 输入 /help 查看命令 · Ctrl+B 切换边栏")
+        self._notification_bar.show("^K commands · ^O model · Tab mode · ^H help")
 
-    def _on_setup_done(self, saved: bool) -> None:
-        if saved:
-            self._notification_bar.show("[bold cyan]配置已保存![/]")
-        else:
-            self._notification_bar.show("[yellow]跳过配置[/] · 可用 /config 重新设置")
-        self._show_welcome()
+    def on_resize(self, event) -> None:
+        """OpenCode 行为: width > 120 自动显示侧边栏, 否则隐藏"""
+        if self._sidebar is None:
+            return
+        try:
+            should_show = event.size.width > WIDE_THRESHOLD
+            if should_show != self._sidebar_visible:
+                self._sidebar_visible = should_show
+                self._sidebar.set_class(not should_show, "hidden")
+        except Exception:
+            pass
 
     def _show_welcome(self) -> None:
         if self._welcome_shown:
@@ -365,83 +589,95 @@ class HakusApp(App):
         )
         self._message_list.mount_widget(welcome)
 
-    def _setup_responsive_sidebar(self) -> None:
-        """设置响应式边栏：窄终端自动隐藏"""
-        self.watch(self.app, "size", self._on_resize)
-        self._on_resize(None)
+    # ============================================================
+    # OpenCode 快捷键 Actions
+    # ============================================================
 
-    def _on_resize(self, event) -> None:
-        """终端大小变化时自动调整边栏"""
-        if not self._sidebar or not self._sidebar_toggle:
+    def action_toggle_agent_mode(self) -> None:
+        self._agent_mode = "plan" if self._agent_mode == "build" else "build"
+        label = "build (read/write)" if self._agent_mode == "build" else "plan (read-only)"
+        self._notification_bar.show(f"Mode: {label}")
+
+    def action_cycle_theme(self) -> None:
+        self._notification_bar.show("Theme: default")
+
+    def action_switch_session(self) -> None:
+        self._notification_bar.show("Session: current")
+
+    def action_file_picker(self) -> None:
+        self._notification_bar.show("File picker: not yet implemented")
+
+    def action_toggle_details(self) -> None:
+        from .widgets.tool_result import ToolResult
+        ToolResult.show_details = not ToolResult.show_details
+        state = "on" if ToolResult.show_details else "off"
+        self._notification_bar.show(f"Details: {state}")
+
+    def action_show_model_overlay(self) -> None:
+        from .overlays import ModelOverlay
+        current = getattr(self._agent, "_model_type", "opencode")
+        self.push_screen(ModelOverlay(current), callback=lambda m: self._switch_model(m) if m and m != current else None)
+
+    def action_show_model_config(self) -> None:
+        from .overlays import ModelConfigOverlay
+        current = getattr(self._agent, "_model_type", "opencode")
+        self.push_screen(ModelConfigOverlay(current), callback=self._apply_model_config)
+
+    def action_show_command_palette(self) -> None:
+        from .overlays import CommandPalette
+        self.push_screen(CommandPalette(self._command_registry), callback=self._on_palette_command)
+
+    def action_show_help(self) -> None:
+        from .overlays import HelpOverlay
+        self.push_screen(HelpOverlay())
+
+    def _switch_model(self, model: str) -> None:
+        current = getattr(self._agent, "_model_type", "opencode")
+        if model == current:
             return
-
-        width = self.size.width
-        # 小于 100 列自动折叠边栏
-        if width < 100 and not self._sidebar_collapsed:
-            self._collapse_sidebar()
-        elif width >= 120 and self._sidebar_collapsed and self._sidebar_visible:
-            self._expand_sidebar()
-
-    def _collapse_sidebar(self) -> None:
-        """折叠边栏到最小宽度"""
-        self._sidebar.add_class("collapsed")
-        self._sidebar.remove_class("hidden")
-        self._sidebar_collapsed = True
-        self._sidebar_toggle.label = "▶"
-
-    def _expand_sidebar(self) -> None:
-        """展开边栏到完整宽度"""
-        self._sidebar.remove_class("collapsed")
-        self._sidebar.remove_class("hidden")
-        self._sidebar_collapsed = False
-        self._sidebar_toggle.label = "◀"
-
-    def _hide_sidebar(self) -> None:
-        """完全隐藏边栏"""
-        self._sidebar.add_class("hidden")
-        self._sidebar.remove_class("collapsed")
-        self._sidebar_visible = False
-        self._sidebar_toggle.label = "▶"
-
-    def _show_sidebar(self) -> None:
-        """显示边栏"""
-        self._sidebar.remove_class("hidden")
-        self._sidebar.remove_class("collapsed")
-        self._sidebar_visible = True
-        self._sidebar_collapsed = False
-        self._sidebar_toggle.label = "◀"
-
-    def action_toggle_sidebar(self) -> None:
-        """切换边栏显示/隐藏"""
-        if self._sidebar_visible:
-            if self._sidebar_collapsed:
-                self._expand_sidebar()
-            else:
-                self._collapse_sidebar()
-        else:
-            self._show_sidebar()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """处理按钮点击"""
-        if event.button.id == "sidebar-toggle":
-            self.action_toggle_sidebar()
-            event.stop()
-        elif event.button.id == "status-model":
-            self.action_show_model_overlay()
-            event.stop()
-        elif event.button.id == "status-perm":
-            modes = ["bypass", "auto", "ask"]
-            current = self._session.permission_mode
+        self._last_model = current
+        try:
+            self._agent._model_type = model
+            self._agent._init_model()
+            actual = self._agent._model_type
+            self._session.model_name = actual
+            self._status_bar.model_name = actual
+            # 持久化默认模型, 重启后仍保持选择
             try:
-                idx = modes.index(current)
-                next_mode = modes[(idx + 1) % len(modes)]
-            except ValueError:
-                next_mode = "bypass"
-            self._session.permission_mode = next_mode
-            if self._status_bar:
-                self._status_bar.permission_mode = next_mode
-            self._mount_message(Message.system(f"✓ 权限模式: **{next_mode}**"))
-            event.stop()
+                save_default_model(actual)
+            except Exception as save_err:
+                logger.debug(f"save_default_model failed: {save_err}")
+            self._notification_bar.show(f"Model: {actual}")
+        except Exception as e:
+            self._agent._model_type = current
+            self._notification_bar.show(f"Switch failed: {e}")
+
+    def _apply_model_config(self, new_default: str) -> None:
+        """ModelConfigOverlay 保存后的回调：重新加载并应用模型配置."""
+        if not new_default:
+            return
+        try:
+            config = get_config()
+            actual = config.models.default_model or new_default
+            current = getattr(self._agent, "_model_type", "opencode")
+            # 总是重新初始化以应用新的 api_key/base_url/model_name
+            self._last_model = current
+            try:
+                self._agent._model_type = actual
+                self._agent._init_model()
+                actual = self._agent._model_type
+            except Exception as e:
+                self._agent._model_type = current
+                self._notification_bar.show(f"Model init failed: {e}")
+                return
+            self._session.model_name = actual
+            self._notification_bar.show(f"Config saved · model: {actual}")
+        except Exception as e:
+            self._notification_bar.show(f"Config reload failed: {e}")
+
+    # ============================================================
+    # Permission Binding
+    # ============================================================
 
     def _bind_permissions(self) -> None:
         try:
@@ -453,28 +689,24 @@ class HakusApp(App):
                 args = {"reason": reason}
                 if len(parts) > 1:
                     args["detail"] = parts[1]
-
-                # Use a future to wait for the modal result
-                future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+                future = asyncio.get_running_loop().create_future()
 
                 def _on_result(result: str) -> None:
                     if not future.done():
                         future.set_result(result)
 
-                # Push the screen and wait for dismissal
-                screen = PermissionDialog(tool_name, args)
-                self.push_screen(screen, _on_result)
-                # Wait for user response — event loop processes the screen
+                self.push_screen(PermissionDialog(tool_name, args), _on_result)
                 return await future
 
             perm.set_async_confirm_callback(async_confirm)
         except Exception as e:
             logger.debug(f"Permission binding failed: {e}")
 
-    # ----- Message API (兼容 streaming.py) -----
+    # ============================================================
+    # Message API
+    # ============================================================
 
     def _mount_message(self, message: Message) -> None:
-        """挂载消息到 MessageList (streaming.py 调用)."""
         if self._message_list is None:
             return
         if message.role == "error" or message.is_error:
@@ -487,52 +719,45 @@ class HakusApp(App):
             self._message_list.add_message(message)
 
     def get_available_tools(self) -> list[str]:
-        """获取可用工具列表 (streaming.py 调用)."""
         try:
             return self._agent._tool_registry.list_tools()
         except Exception:
             return []
 
-    # ----- Input Handling -----
+    # ============================================================
+    # Input Handling
+    # ============================================================
 
     async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
-        """处理 PromptInput 提交."""
         text = event.value
         attachments = event.attachments or []
         editor_context = event.editor_context or ""
-        
+
         if not text and not attachments and not editor_context:
             return
         if self._streaming_in_progress:
-            self._mount_message(Message.error("当前回复尚未完成，请先等待或按 Esc 取消"))
+            self._mount_message(Message.error("Reply in progress — Esc to cancel"))
             return
 
-        # 构建用户消息 (Part-based)
-        from ..messages import Message, Part, PartType
         parts = []
         if text:
             parts.append(Part(type=PartType.TEXT, text=text))
         if editor_context:
-            parts.append(Part(type=PartType.TEXT, text=f"\n\n[编辑器上下文]\n{editor_context}", synthetic=True))
+            parts.append(Part(type=PartType.TEXT, text=f"\n\n[Editor context]\n{editor_context}", synthetic=True))
         for att in attachments:
-            if att.is_image:
-                parts.append(Part(type=PartType.IMAGE, file_path=att.name, file_mime=att.mime, file_data=att.data, file_size=len(att.data)))
-            elif att.is_pdf:
-                parts.append(Part(type=PartType.FILE, file_path=att.name, file_mime=att.mime, file_data=att.data, file_size=len(att.data)))
-            elif att.is_text:
-                parts.append(Part(type=PartType.FILE, file_path=att.name, file_mime=att.mime, file_data=att.data, file_size=len(att.data)))
-            else:
-                parts.append(Part(type=PartType.FILE, file_path=att.name, file_mime=att.mime, file_data=att.data, file_size=len(att.data)))
-        
+            ptype = PartType.IMAGE if att.is_image else PartType.FILE
+            parts.append(Part(type=ptype, file_path=att.name, file_mime=att.mime, file_data=att.data, file_size=len(att.data)))
+
         user_msg = Message.user_with_parts(parts)
         self._mount_message(user_msg)
 
-        # Slash 命令
         if text.startswith("/"):
             await self._handle_slash(text)
             return
 
-        # 运行流式
+        if self._agent_mode == "plan":
+            text = f"[PLAN MODE — read-only]\n{text}"
+
         await self._run_stream(text)
 
     async def _run_stream(self, user_input: str) -> None:
@@ -541,7 +766,7 @@ class HakusApp(App):
         try:
             await self._sink.run(user_input, self._agent.run_turn)
         except Exception as e:
-            self._mount_message(Message.error(f"执行错误: {e}"))
+            self._mount_message(Message.error(f"Error: {e}"))
         finally:
             self._streaming_in_progress = False
             self._sink = None
@@ -552,91 +777,40 @@ class HakusApp(App):
         args = parts[1] if len(parts) > 1 else ""
         cmd = self._command_registry.get(cmd_name)
         if cmd is None:
-            self._mount_message(Message.error(f"未知命令: `/{cmd_name}`\n输入 `/help` 查看所有命令"))
+            self._mount_message(Message.error(f"Unknown: /{cmd_name} — /help for list"))
             return
         ctx = CommandContext(app=self, args=args, parts=args.split() if args else [], raw=raw)
         try:
             await cmd.execute(ctx)
         except Exception as e:
-            self._mount_message(Message.error(f"命令执行错误: {e}"))
+            self._mount_message(Message.error(f"Error: {e}"))
 
-    # ----- Actions -----
+    # ============================================================
+    # Other Actions
+    # ============================================================
+
     def action_quit_or_cancel(self) -> None:
         if self._streaming_in_progress and self._sink:
             self._sink.cancel()
-            self._mount_message(Message.system("⏹ 已中断"))
+            self._mount_message(Message.system("Cancelled"))
         else:
             self.exit()
 
     def action_clear_screen(self) -> None:
         if self._message_list:
             self._message_list.clear_messages()
-        self._mount_message(Message.system("✓ 屏幕已清除"))
+        self._mount_message(Message.system("Cleared"))
 
     def action_cancel_streaming(self) -> None:
         if self._streaming_in_progress and self._sink:
             self._sink.cancel()
-            self._mount_message(Message.system("⏹ 已中断"))
-
-    def action_show_model_overlay(self) -> None:
-        from .overlays import ModelOverlay
-        current = getattr(self._agent, "_model_type", "deepseek")
-
-        def on_select(model: str) -> None:
-            if model and model != current:
-                try:
-                    self._agent._model_type = model
-                    self._agent._init_model()
-                    actual = self._agent._model_type
-                    self._session.model_name = actual
-                    if self._status_bar:
-                        self._status_bar.model_name = actual
-                    self._mount_message(Message.system(f"✓ 已切换到 **{actual}**"))
-                except Exception as e:
-                    self._mount_message(Message.error(f"切换模型失败: {e}"))
-
-        self.push_screen(ModelOverlay(current), on_select)
-
-    def action_show_help(self) -> None:
-        from .overlays import HelpOverlay
-        self.push_screen(HelpOverlay())
-
-    def action_show_command_palette(self) -> None:
-        """显示命令面板 (^p)."""
-        from .overlays import CommandPalette
-        self.push_screen(
-            CommandPalette(self._command_registry),
-            callback=self._on_palette_command
-        )
+            self._mount_message(Message.system("Cancelled"))
 
     def _on_palette_command(self, cmd: str) -> None:
-        """命令面板选择后的回调."""
         if cmd:
-            self._mount_message(Message.system(f"执行命令: {cmd}"))
             asyncio.create_task(self._handle_slash(cmd))
 
-    # ----- Status Bar Actions -----
 
-    def on_status_bar_model_clicked(self, event: StatusBar.ModelClicked) -> None:
-        """点击状态栏模型按钮 → 切换模型."""
-        self.action_show_model_overlay()
-
-    def on_status_bar_perm_clicked(self, event: StatusBar.PermClicked) -> None:
-        """点击状态栏权限按钮 → 切换权限模式."""
-        modes = ["bypass", "auto", "ask"]
-        current = self._session.permission_mode
-        try:
-            idx = modes.index(current)
-            next_mode = modes[(idx + 1) % len(modes)]
-        except ValueError:
-            next_mode = "bypass"
-        self._session.permission_mode = next_mode
-        if self._status_bar:
-            self._status_bar.permission_mode = next_mode
-        self._mount_message(Message.system(f"✓ 权限模式: **{next_mode}**"))
-
-
-# 顶层入口
 def run(agent: Any, voice_enabled: bool = False, session_id: Optional[str] = None) -> None:
     app = HakusApp(agent, voice_enabled=voice_enabled, session_id=session_id)
     app.run()

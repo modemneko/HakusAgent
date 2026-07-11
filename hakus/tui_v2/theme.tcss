@@ -1,5 +1,6 @@
-/* HakusAI TUI v2 — OpenCode 风格样式表
- * 参考 OpenCode 默认主题设计
+/* HakusAI TUI v2 — OpenCode 源码级精确风格
+ * 基于 packages/tui/src/routes/session/index.tsx 分析
+ * 深色背景、低对比度边框、最小视觉噪音
  */
 
 Screen {
@@ -7,17 +8,119 @@ Screen {
     color: #eeeeee;
 }
 
-/* === Status Bar (输入框上方) === */
-#status-bar {
-    height: 1;
-    background: #141414;
-    color: #eeeeee;
-    padding: 0 1;
-    dock: bottom;
-    border-top: solid #3c3c3c;
+/* === OpenCode Session 水平分屏布局 === */
+/* flexDirection="row": 左侧 flexGrow=1 + 右侧 width=42 */
+#top-pane {
+    height: 1fr;
+    background: #0a0a0a;
 }
 
-/* === Activity Strip (活动指示, 状态栏下方) === */
+/* 左侧内容区: flexGrow=1, paddingLeft=2, paddingRight=2, paddingBottom=1 */
+#messages-pane {
+    width: 1fr;
+    background: #0a0a0a;
+    padding: 0 2 1 2;
+    overflow: hidden;
+}
+
+/* 右侧侧边栏: width=42, paddingTop/Bottom=1, paddingLeft/Right=2 */
+#sidebar {
+    width: 42;
+    background: #0a0a0a;
+    border-left: solid #1e1e1e;
+    padding: 1 2;
+    overflow: auto;
+}
+
+/* 窄屏隐藏侧边栏 (width <= 120) */
+#sidebar.hidden {
+    display: none;
+}
+
+/* === Message List (scrollbox, flexGrow=1) === */
+#message-list {
+    padding: 0;
+    background: #0a0a0a;
+    scrollbar-size: 1 0;
+    height: 1fr;
+    overflow: auto;
+}
+
+#message-list > .scrollbar {
+    background: #0a0a0a;
+}
+
+#message-list > .scrollbar > .scrollbar-thumb {
+    background: #282828;
+    min-height: 1;
+}
+
+#message-list > .scrollbar > .scrollbar-thumb:hover {
+    background: #3c3c3c;
+}
+
+/* === User Bubble === */
+UserBubble {
+    background: #0a0a0a;
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+    border-left: tall #3c3c3c;
+}
+
+/* === Assistant Text === */
+AssistantText {
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+    background: transparent;
+}
+
+/* === Tool Result (紧凑) === */
+ToolResult {
+    margin: 0;
+    padding: 0 1;
+    height: auto;
+    background: transparent;
+    border-left: tall #1e1e1e;
+}
+
+ToolResult.expanded {
+    border-left: tall #e5c07b;
+}
+
+ToolResult.error {
+    border-left: tall #e06c75;
+}
+
+/* === Command Result === */
+CommandResult {
+    margin: 0;
+    padding: 0 1;
+    background: transparent;
+    border-left: tall #282828;
+    height: auto;
+}
+
+/* === Error Block === */
+ErrorBlock {
+    margin: 1 0;
+    padding: 0 1;
+    background: transparent;
+    border-left: tall #e06c75;
+    height: auto;
+}
+
+/* === Welcome Panel === */
+WelcomePanel {
+    background: transparent;
+    padding: 1 2;
+    height: auto;
+    max-width: 75;
+    margin: 1 0;
+}
+
+/* === Activity Strip === */
 #activity-strip {
     height: 1;
     background: #0a0a0a;
@@ -31,204 +134,50 @@ Screen {
     display: block;
 }
 
-/* === Sidebar (左侧边栏) === */
-#sidebar {
-    width: 42;
-    background: #141414;
-    border-right: solid #3c3c3c;
-    padding: 1 2;
-    overflow: auto;
-    transition: width 150ms in_out_cubic;
-}
-
-#sidebar.hidden {
-    width: 0;
-    padding: 1 0;
-    border-right: none;
-    overflow: hidden;
-}
-
-#sidebar.collapsed {
-    width: 1;
-    padding: 1 0;
-    border-right: none;
-    overflow: hidden;
-}
-
-#sidebar .section-title {
-    color: #fab283; text-style: bold; margin: 1 0 0 0;
-}
-#sidebar .session-title { color: #eeeeee; text-style: bold; }
-#sidebar .session-meta { color: #808080; margin-top: 1; }
-#sidebar .tool-item { color: #eeeeee; margin: 0 0 0 1; }
-#sidebar .tool-item:hover { color: #fab283; }
-
-/* === Main Content Area === */
-#main-content {
-    width: 1fr;
-    height: 1fr;
-    background: #0a0a0a;
-}
-
-/* === Message List (可滚动消息区) === */
-#message-list {
-    padding: 1 2;
-    background: #0a0a0a;
-    scrollbar-size: 1 0;
-    height: 1fr;
-    overflow: auto;
-}
-
-/* 自定义滚动条样式 */
-#message-list > .scrollbar {
-    background: #1e1e1e;
-}
-
-#message-list > .scrollbar > .scrollbar-thumb {
-    background: #9d7cd8;
-    min-height: 1;
-}
-
-#message-list > .scrollbar > .scrollbar-thumb:hover {
-    background: #fab283;
-}
-
-/* === User Bubble (用户消息) === */
-UserBubble {
-    background: #1e1e1e;
-    margin: 1 0;
-    padding: 0 1;
-    height: auto;
-    border-left: thick #5c9cf5;
-}
-
-/* === Assistant Text (助手消息) === */
-AssistantText {
-    margin: 1 0;
-    padding: 0 1;
-    height: auto;
-    background: transparent;
-}
-
-/* === Tool Result (工具结果) === */
-ToolResult {
-    margin: 1 0;
-    padding: 0 1;
-    height: auto;
-    background: #141414;
-    border-left: thick #3c3c3c;
-}
-
-ToolResult > CollapsibleTitle {
-    background: #0a0a0a;
-    color: #e5c07b;
-    padding: 0 1;
-}
-
-/* === Command Result === */
-CommandResult {
-    margin: 1 0;
-    padding: 0 1;
-    background: #141414;
-    border-left: thick #9d7cd8;
-    height: auto;
-}
-
-/* === Error Block === */
-ErrorBlock {
-    margin: 1 0;
-    padding: 0 1;
-    background: #141414;
-    border-left: thick #e06c75;
-    height: auto;
-}
-
-/* === Welcome Panel === */
-WelcomePanel {
-    background: #141414;
-    border: thick #9d7cd8;
-    padding: 1 2;
-    height: 34;
-    max-height: 36;
-    max-width: 100;
-    margin: 1 0;
-}
-
-/* === Prompt Input (底部固定) === */
+/* === Prompt Input (flexShrink=0, 底部固定) === */
+/* OpenCode: Prompt = textarea + agent/model行 + 底部提示行 */
 #prompt-input {
     dock: bottom;
     height: auto;
     min-height: 3;
-    background: #141414;
-    border-top: solid #3c3c3c;
+    max-height: 24;
+    background: #0a0a0a;
+    border-top: solid #1e1e1e;
 }
 
 /* === Notification Bar === */
 #notification-bar {
     height: 1;
-    background: #1e1e1e;
+    background: #0a0a0a;
     color: #56b6c2;
     padding: 0 1;
 }
 
-/* === Footer === */
-Footer {
-    height: 1;
-    background: #0a0a0a;
-    color: #606060;
-}
-
-/* === Permission Dialog === */
-PermissionDialog {
-    background: #0a0a0a;
-}
-
-PermissionDialog .modal {
-    background: #141414;
-    border: tall #fab283;
-}
-
-/* === Keyboard Shortcuts === */
-.keybinding {
-    color: #9d7cd8;
-    text-style: bold;
-}
-
-/* === Sidebar Toggle Button === */
-#sidebar-toggle {
-    width: 1;
-    height: 1;
-    background: #1e1e1e;
-    color: #808080;
-    border: none;
-    margin: 0;
-    padding: 0;
-}
-
-#sidebar-toggle:hover {
-    background: #3c3c3c;
-    color: #fab283;
-}
-
 /* === Thinking Block === */
 ThinkingBlock {
-    margin: 1 0;
+    margin: 0;
     padding: 0 1;
-    background: #141414;
-    border-left: thick #9d7cd8;
+    background: transparent;
+    border-left: tall #1e1e1e;
     height: auto;
 }
 
-ThinkingBlock.collapsed {
-    background: #0a0a0a;
-}
-
 ThinkingBlock .thinking-summary {
-    color: #808080;
+    color: #606060;
     text-style: italic;
 }
 
 ThinkingBlock .thinking-content {
-    color: #eeeeee;
+    color: #808080;
     padding-left: 2;
+}
+
+/* === Permission Dialog === */
+PermissionDialog {
+    background: #0a0a0a 90%;
+}
+
+PermissionDialog .modal {
+    background: #0a0a0a;
+    border: tall #5c9cf5;
 }

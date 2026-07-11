@@ -107,12 +107,24 @@ def test_format_help_contains_all_commands():
 
 # ===== 命令解析 + 执行 =====
 
+class _FakeStatusBar:
+    def __init__(self):
+        self.model_name = "opencode"
+        self.context_pct = 0
+        self.context_tokens = 0
+        self.context_max = 0
+        self.total_tokens = 0
+        self.permission_mode = "auto"
+        self.voice_enabled = False
+
+
 class FakeApp:
     """模拟 HakusApp, 只挂 mount_message."""
 
     def __init__(self):
         self.messages = []
         self._message_list = _FakeMessageList()
+        self._status_bar = _FakeStatusBar()
 
     def _mount_message(self, msg):
         self.messages.append(msg)
@@ -206,3 +218,69 @@ def test_exit_command_metadata():
     cmd = ExitCommand()
     assert "q" in cmd.get_aliases()
     assert "quit" in cmd.get_aliases()
+
+
+@pytest.mark.asyncio
+async def test_model_command_saves_default_model():
+    """/model <provider> 应切换模型并持久化默认模型."""
+    import os
+    import tempfile
+    import shutil
+    from pathlib import Path
+
+    from hakus.tui_v2.commands import CommandContext
+    from hakus.tui_v2.commands.model import ModelCommand
+    from utils.hakus_config import reload_config
+
+    # Backup real user config
+    real_user = Path.home() / ".hakus" / "config.yaml"
+    backup = None
+    if real_user.exists():
+        backup = tempfile.mktemp(suffix=".yaml")
+        shutil.copy2(real_user, backup)
+
+    try:
+        home = tempfile.mkdtemp()
+        os.environ["HOME"] = home
+        os.environ["USERPROFILE"] = home
+        # Force re-read of config with new HOME
+        reload_config()
+
+        app = FakeApp()
+        cmd = ModelCommand()
+        ctx = CommandContext(app=app, args="deepseek", parts=["deepseek"], raw="/model deepseek")
+        await cmd.execute(ctx)
+
+        assert app._agent._model_type == "deepseek"
+        assert app._status_bar.model_name == "deepseek"
+        assert any("已切换到 **deepseek**" in m.content for m in app.messages)
+
+        from utils.hakus_config import get_config
+        cfg = get_config()
+        assert cfg.models.default_model == "deepseek"
+    finally:
+        if backup:
+            real_user.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, real_user)
+        reload_config()
+
+
+@pytest.mark.asyncio
+async def test_verify_command_runs_stream():
+    """/verify 应调用 _run_stream 而不触发 AttributeError."""
+    from hakus.tui_v2.commands import CommandContext
+    from hakus.tui_v2.commands.verify import VerifyCommand
+
+    class _RunStreamApp(FakeApp):
+        def __init__(self):
+            super().__init__()
+            self.ran_stream = False
+        async def _run_stream(self, prompt: str):
+            self.ran_stream = True
+            self._mount_message(type("Msg", (), {"content": prompt})())
+
+    app = _RunStreamApp()
+    cmd = VerifyCommand()
+    ctx = CommandContext(app=app, args="", parts=[], raw="/verify")
+    await cmd.execute(ctx)
+    assert app.ran_stream

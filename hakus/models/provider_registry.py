@@ -12,6 +12,7 @@ from typing import Dict, List
 # 顺序即 UI 中的显示顺序
 
 PROVIDERS: List[Dict[str, str]] = [
+    {"id": "opencode",   "name": "OpenCode",     "desc": "Zen · 免费模型"},
     {"id": "deepseek",   "name": "DeepSeek",     "desc": "默认 · 性价比高"},
     {"id": "openai",     "name": "OpenAI",       "desc": "GPT-4o / o3"},
     {"id": "anthropic",  "name": "Anthropic",    "desc": "Claude Sonnet / Opus"},

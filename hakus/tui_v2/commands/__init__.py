@@ -8,8 +8,8 @@ Slash Command 注册中心 (借鉴 Claude Code src/commands/)
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ..app import HakusApp
@@ -65,6 +65,10 @@ class SlashCommand:
         from ..messages import Message
         ctx.mount_message(Message.error(content))
 
+    def _warn(self, ctx: CommandContext, content: str) -> None:
+        from ..messages import Message
+        ctx.mount_message(Message.command(self.name, f"⚠ {content}"))
+
 
 class SlashCommandRegistry:
     """Slash 命令注册表."""
@@ -104,6 +108,7 @@ class SlashCommandRegistry:
 def build_default_registry() -> SlashCommandRegistry:
     from .help import HelpCommand
     from .model import ModelCommand
+    from .config_cmd import ConfigCommand
     from .permission_cmd import PermissionCommand
     from .clear import ClearCommand
     from .compact import CompactCommand
@@ -132,7 +137,7 @@ def build_default_registry() -> SlashCommandRegistry:
 
     reg = SlashCommandRegistry()
     for cmd_cls in [
-        HelpCommand, ModelCommand, PermissionCommand, ClearCommand,
+        HelpCommand, ModelCommand, ConfigCommand, PermissionCommand, ClearCommand,
         CompactCommand, CostCommand, ContextCommand, VerifyCommand,
         BtwCommand, CheckpointCommand, RollbackCommand, TaskCommand,
         InitCommand, MemoryCommand, PlanCommand, ApproveCommand, RejectCommand,

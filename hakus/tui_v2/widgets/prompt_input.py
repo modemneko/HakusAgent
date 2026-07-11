@@ -268,10 +268,10 @@ class PromptInput(Container):
 
     DEFAULT_CSS = """
     PromptInput {
-        background: #141414;
-        border-top: solid #3c3c3c;
+        background: #0a0a0a;
+        border-top: solid #1e1e1e;
         height: auto;
-        min-height: 3;
+        min-height: 1;
         max-height: 24;
         padding: 0 1;
     }
@@ -307,7 +307,7 @@ class PromptInput(Container):
     }
 
     PromptInput TextArea {
-        background: #141414;
+        background: #0a0a0a;
         color: #eeeeee;
         border: none;
         width: 1fr;
@@ -325,21 +325,34 @@ class PromptInput(Container):
 
     PromptInput TextArea .cursor {
         background: #9d7cd8;
-        color: #141414;
+        color: #0a0a0a;
     }
 
     PromptInput .hint {
         color: #606060;
-        height: 1;
+        height: 0;
         width: 100%;
+        display: none;
+    }
+
+    PromptInput .hint.visible {
+        height: 1;
+        display: block;
     }
 
     /* 附件预览区 */
     PromptInput .attachments-bar {
-        height: auto;
+        height: 0;
         min-height: 0;
-        padding: 0 1;
+        padding: 0;
         margin: 0;
+        display: none;
+    }
+
+    PromptInput .attachments-bar.has-attachments {
+        height: auto;
+        padding: 0 1;
+        display: block;
     }
 
     PromptInput .attachment-item {
@@ -367,12 +380,18 @@ class PromptInput(Container):
 
     /* 编辑器上下文显示 */
     PromptInput .editor-context {
+        height: 0;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        color: #56b6c2;
+        display: none;
+    }
+
+    PromptInput .editor-context.visible {
         height: 1;
         padding: 0 1;
-        margin: 0 1 0 0;
-        background: #1e1e1e;
-        border: solid #5c9cf5;
-        color: #56b6c2;
+        display: block;
     }
 
     PromptInput .editor-context.dismiss {
@@ -381,9 +400,16 @@ class PromptInput(Container):
 
     /* 占位符提示 */
     PromptInput .placeholder-hints {
-        height: 1;
+        height: 0;
         color: #606060;
+        padding: 0;
+        display: none;
+    }
+
+    PromptInput .placeholder-hints.visible {
+        height: 1;
         padding: 0 1;
+        display: block;
     }
 
     /* Shell 模式指示器 */
@@ -485,16 +511,7 @@ class PromptInput(Container):
         self._load_history()
 
     def compose(self):
-        # 编辑器上下文栏 (如果有)
-        yield Static("", classes="editor-context", id="editor-context-bar")
-        
-        # 附件预览栏
-        yield Horizontal(classes="attachments-bar", id="attachments-bar")
-        
-        # 提示行 (Shell 模式指示器 / 占位符提示)
-        yield Static("", classes="placeholder-hints", id="placeholder-hints")
-        
-        # 主输入行
+        # 主输入行 (紧贴 > 号，无多余元素)
         yield Horizontal(
             Static("> ", classes="prompt-prefix", id="prompt-prefix"),
             Static("", classes="shell-indicator", id="shell-indicator"),
@@ -503,11 +520,6 @@ class PromptInput(Container):
             Static("", classes="mode-badge", id="mode-badge"),
             _PromptTextArea("", id="prompt-area"),
             classes="prompt-row",
-        )
-        
-        yield Static(
-            "Enter 发送 · Shift+Enter 换行 · Esc 中断 · Ctrl+C 退出 · ! Shell · @Agent · /Command",
-            classes="hint",
         )
         
         # 斜杠命令补全 — Claude Code 风格纯净下拉

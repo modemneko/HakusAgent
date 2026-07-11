@@ -15,4 +15,4 @@ class VerifyCommand(SlashCommand):
             "请简洁回答 (不超过 200 字)。"
         )
         # 走用户输入通道
-        await ctx.app._process_user_input(prompt)
+        await ctx.app._run_stream(prompt)

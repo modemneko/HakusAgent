@@ -19,11 +19,14 @@ api_keys:
   
   # 小米 MiMo API
   mimo_api_key: ${MIMO_API_KEY:}
+  
+  # OpenCode Zen API
+  opencode_api_key: ${OPENCODE_API_KEY:***REMOVED***}
 
 # ==================== 模型配置 ====================
 models:
-  # 默认使用的模型类型: gemini, qwen, deepseek, glm, mimo
-  default_model: ${DEFAULT_MODEL:deepseek}
+  # 默认使用的模型类型: gemini, qwen, deepseek, glm, mimo, opencode
+  default_model: ${DEFAULT_MODEL:opencode}
   
   # Gemini 模型设置
   gemini:
@@ -51,6 +54,11 @@ models:
   ollama:
     model_name: ${OLLAMA_MODEL_NAME:gemma4}
     base_url: ${OLLAMA_BASE_URL:http://localhost:11434/v1}
+  
+  # OpenCode Zen 模型设置 (免费模型)
+  opencode:
+    model_name: ${OPENCODE_MODEL_NAME:deepseek-v4-flash-free}
+    base_url: ${OPENCODE_BASE_URL:https://opencode.ai/zen/v1}
 
 # ==================== Embedding 配置 ====================
 embedding:

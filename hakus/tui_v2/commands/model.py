@@ -1,6 +1,7 @@
 """/model — 切换模型"""
 from . import SlashCommand, CommandContext
 from hakus.models.provider_registry import get_provider_ids, is_valid_provider
+from utils.hakus_config import save_default_model
 
 
 class ModelCommand(SlashCommand):
@@ -27,6 +28,11 @@ class ModelCommand(SlashCommand):
             actual = ctx.app._agent._model_type
             ctx.app._session.model_name = actual
             ctx.app._status_bar.model_name = actual
+            # 持久化默认模型，确保重启后仍保持选择
+            try:
+                save_default_model(actual)
+            except Exception as save_err:
+                self._warn(ctx, f"模型已切换，但保存默认配置失败: {save_err}")
             if actual != new_model:
                 self._warn(ctx, f"⚠ `{new_model}` 不可用，已回退到 **{actual}**")
             else:

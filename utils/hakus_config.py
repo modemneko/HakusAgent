@@ -18,9 +18,15 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import yaml
+
+# 向后兼容: 同步更新旧版 BASE_CONFIG (如果存在)
+try:
+    from utils.config import BASE_CONFIG
+except Exception:
+    BASE_CONFIG = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,7 @@ class ProviderConfig:
 @dataclass
 class ModelsConfig:
     """模型配置段."""
-    default_model: str = "deepseek"
+    default_model: str = "opencode"
     deepseek: ProviderConfig = field(default_factory=lambda: ProviderConfig(
         provider="deepseek",
         model_name="deepseek-chat",
@@ -89,6 +95,11 @@ class ModelsConfig:
         provider="anthropic",
         model_name="claude-sonnet-4-20250514",
         base_url="https://api.anthropic.com",
+    ))
+    opencode: ProviderConfig = field(default_factory=lambda: ProviderConfig(
+        provider="opencode",
+        model_name="deepseek-v4-flash-free",
+        base_url="https://opencode.ai/zen/v1",
     ))
 
     def get_provider(self, name: str) -> Optional[ProviderConfig]:
@@ -162,14 +173,41 @@ def _resolve_env_vars(value: Any) -> Any:
     return value
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """深度合并两个字典，override 的值覆盖 base."""
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def _load_yaml() -> Dict[str, Any]:
-    """加载并解析 config.yaml."""
-    config_path = Path(__file__).parent.parent / "config.yaml"
-    if not config_path.exists():
-        logger.warning(f"config.yaml not found at {config_path}, using defaults")
-        return {}
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    """加载并解析 config.yaml.
+
+    优先级: ~/.hakus/config.yaml 覆盖项目目录 config.yaml > 默认值.
+    用户配置与项目配置深度合并，确保 save_default_model 写入的局部
+    配置不会丢失 api_keys 等其他项目级设置.
+    """
+    project_config = Path(__file__).parent.parent / "config.yaml"
+    project_raw: Dict[str, Any] = {}
+    if project_config.exists():
+        with open(project_config, "r", encoding="utf-8") as f:
+            project_raw = yaml.safe_load(f) or {}
+
+    user_config = Path(os.path.expanduser("~/.hakus/config.yaml"))
+    if user_config.exists():
+        with open(user_config, "r", encoding="utf-8") as f:
+            user_raw = yaml.safe_load(f) or {}
+        return _deep_merge(project_raw, user_raw)
+
+    if project_raw:
+        return project_raw
+
+    logger.warning("config.yaml not found, using defaults")
+    return {}
 
 
 def _build_config(raw: Dict[str, Any]) -> HakusConfig:
@@ -182,7 +220,7 @@ def _build_config(raw: Dict[str, Any]) -> HakusConfig:
     # Models
     models_raw = resolved.get("models", {})
     models = ModelsConfig(
-        default_model=models_raw.get("default_model", "deepseek"),
+        default_model=models_raw.get("default_model", "opencode"),
     )
 
     # 填充各 Provider 配置
@@ -195,6 +233,7 @@ def _build_config(raw: Dict[str, Any]) -> HakusConfig:
         "glm": {"base_url": "https://open.bigmodel.cn/api/paas/v4/"},
         "mimo": {"base_url": "https://api.xiaomimimo.com/v1"},
         "ollama": {"base_url": "http://localhost:11434/v1", "api_key": "ollama"},
+        "opencode": {"base_url": "https://opencode.ai/zen/v1"},
     }
     _api_key_map = {
         "deepseek": api_keys.get("deepseek_api_key", ""),
@@ -205,6 +244,7 @@ def _build_config(raw: Dict[str, Any]) -> HakusConfig:
         "glm": api_keys.get("glm_api_key", ""),
         "mimo": api_keys.get("mimo_api_key", ""),
         "ollama": "ollama",
+        "opencode": api_keys.get("opencode_api_key", ""),
     }
 
     for name, defaults in _provider_defaults.items():
@@ -275,16 +315,44 @@ def reload_config() -> HakusConfig:
     return config
 
 
+def save_default_model(provider_id: str) -> None:
+    """将默认模型持久化到 ~/.hakus/config.yaml 并热重载.
+
+    用于 /model 命令或 ModelOverlay 切换模型后, 确保重启仍保持选择.
+    """
+    import yaml
+    config_dir = Path(os.path.expanduser("~/.hakus"))
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.yaml"
+
+    raw: Dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            raw = {}
+
+    raw.setdefault("models", {})
+    raw["models"]["default_model"] = provider_id
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    reload_config()
+
+
 def _sync_base_config(config: HakusConfig) -> None:
     """将 HakusConfig 同步回 BASE_CONFIG (向后兼容)."""
     global BASE_CONFIG
+    if BASE_CONFIG is None:
+        return
     BASE_CONFIG["DEFAULT_MODEL"] = config.models.default_model
     BASE_CONFIG["DEBUG"] = config.debug
 
-    for name in ["deepseek", "openai", "anthropic", "qwen", "gemini", "glm", "mimo", "ollama"]:
+    for name in ["deepseek", "openai", "anthropic", "qwen", "gemini", "glm", "mimo", "ollama", "opencode"]:
         prov = config.models.get_provider(name)
         if prov:
-            key_prefix = name.upper()
             if name == "qwen":
                 # Qwen uses DASHSCOPE for API key, QWEN for model info
                 BASE_CONFIG["DASHSCOPE_API_KEY"] = prov.api_key
@@ -321,4 +389,9 @@ def _sync_base_config(config: HakusConfig) -> None:
             elif name == "ollama":
                 BASE_CONFIG["OLLAMA_BASE_URL"] = prov.base_url
                 BASE_CONFIG["OLLAMA_MODEL_NAME"] = prov.model_name
+                continue
+            elif name == "opencode":
+                BASE_CONFIG["OPENCODE_API_KEY"] = prov.api_key
+                BASE_CONFIG["OPENCODE_BASE_URL"] = prov.base_url
+                BASE_CONFIG["OPENCODE_MODEL_NAME"] = prov.model_name
                 continue

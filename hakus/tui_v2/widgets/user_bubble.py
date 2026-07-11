@@ -22,11 +22,11 @@ class UserBubble(Container):
 
     DEFAULT_CSS = """
     UserBubble {
-        background: #1e1e1e;
-        margin: 1 0;
+        background: transparent;
+        margin: 0;
         padding: 0 1;
         height: auto;
-        border-left: thick #5c9cf5;
+        border-left: tall #3c3c3c;
     }
 
     UserBubble .bubble-prefix {
@@ -57,13 +57,12 @@ class UserBubble(Container):
         self._message = message
 
     def compose(self):
-        yield Static("┃ 用户:", classes="bubble-prefix")
-        
-        # 支持 Part-based 渲染
+        yield Static("用户:", classes="bubble-prefix")
+
+        # 支持 Part-based 渲染 (直接 yield, 避免中间容器被拉伸)
         if self._message.parts:
-            with Vertical():
-                for part in self._message.parts:
-                    yield from self._render_part(part)
+            for part in self._message.parts:
+                yield from self._render_part(part)
         else:
             # 向后兼容: 纯文本
             text = self._message.content

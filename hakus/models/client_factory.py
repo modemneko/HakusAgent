@@ -17,6 +17,7 @@ from .gemini_client import GeminiClient
 from .glm_client import GLMClient
 from .mimo_client import MiMoClient
 from .ollama_client import OllamaClient
+from .opencode_client import OpenCodeClient
 
 # 可选: litellm (pip install litellm 启用)
 try:
@@ -36,6 +37,7 @@ _PROVIDER_CLIENT_MAP: dict[LLMProvider, type[BaseLLMClient]] = {
     LLMProvider.GLM: GLMClient,
     LLMProvider.MIMO: MiMoClient,
     LLMProvider.OLLAMA: OllamaClient,
+    LLMProvider.OPENCODE: OpenCodeClient,
 }
 
 # Fallback 顺序: 首选 → 备选

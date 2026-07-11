@@ -214,7 +214,7 @@ BASE_CONFIG: Dict[str, Any] = {
     "CUSTOM_API_KEY": _resolved_config["api_keys"].get("custom_api_key", ""),
 
     # ---- Models ----
-    "DEFAULT_MODEL": _resolved_config["models"].get("default_model", "deepseek-chat"),
+    "DEFAULT_MODEL": _resolved_config["models"].get("default_model", "opencode"),
 
     # OpenAI
     "OPENAI_MODEL_NAME": _resolved_config["models"].get("openai", {}).get("model_name", "gpt-4o"),

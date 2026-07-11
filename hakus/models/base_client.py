@@ -24,6 +24,7 @@ class LLMProvider(Enum):
     GLM = "glm"
     MIMO = "mimo"
     OLLAMA = "ollama"
+    OPENCODE = "opencode"
 
 
 @dataclass

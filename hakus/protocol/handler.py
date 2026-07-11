@@ -165,6 +165,14 @@ class DefaultEventHandler(EventHandler):
             activity.set_phase("thinking")
         except Exception:
             pass
+        # 重置 inline activity block
+        try:
+            ml = self._app.query_one("#message-list")
+            streaming_widget = ml._streaming_widget
+            if streaming_widget is not None and hasattr(streaming_widget, "update_activity"):
+                streaming_widget.update_activity("Thinking...")
+        except Exception:
+            pass
 
     def _on_text_delta(self, event: TextDelta) -> None:
         if not event.text:
@@ -227,19 +235,38 @@ class DefaultEventHandler(EventHandler):
         else:
             phase = "tool_use"
 
+        # 优先显示工具名 (如 "Read"), detail 显示文件路径或参数简述
+        detail = ""
+        if event.arguments and isinstance(event.arguments, dict):
+            for k in ("file_path", "path", "filepath", "url", "query", "command", "cmd"):
+                if k in event.arguments and event.arguments[k]:
+                    val = str(event.arguments[k])
+                    if len(val) > 60:
+                        val = val[:57] + "..."
+                    detail = val
+                    break
         try:
             activity = self._app.query_one("#activity-strip")
-            # 优先显示工具名 (如 "Read"), detail 显示文件路径或参数简述
-            detail = ""
-            if event.arguments and isinstance(event.arguments, dict):
-                for k in ("file_path", "path", "filepath", "url", "query", "command", "cmd"):
-                    if k in event.arguments and event.arguments[k]:
-                        val = str(event.arguments[k])
-                        if len(val) > 60:
-                            val = val[:57] + "..."
-                        detail = val
-                        break
             activity.set_phase(phase, detail=detail, tool_name=event.name)
+        except Exception:
+            pass
+        # 同步更新 AssistantText 内的 inline activity scroller
+        try:
+            ml = self._app.query_one("#message-list")
+            streaming_widget = ml._streaming_widget
+            if streaming_widget is not None and hasattr(streaming_widget, "update_activity"):
+                label = f"{event.name}"
+                if detail:
+                    label = f"{label} · {detail}"
+                phase_label = {
+                    "fetching": "Fetching",
+                    "searching": "Searching",
+                    "reading": "Reading",
+                    "writing": "Writing",
+                    "executing": "Executing",
+                    "tool_use": "Tool",
+                }.get(phase, "Tool")
+                streaming_widget.update_activity(f"{phase_label}: {label}")
         except Exception:
             pass
 
@@ -338,10 +365,20 @@ class DefaultEventHandler(EventHandler):
         # Future: auto-show DiffOverlay with accept/reject buttons
         pass
 
+    def _hide_inline_activity(self) -> None:
+        try:
+            ml = self._app.query_one("#message-list")
+            streaming_widget = ml._streaming_widget
+            if streaming_widget is not None and hasattr(streaming_widget, "hide_activity"):
+                streaming_widget.hide_activity()
+        except Exception:
+            pass
+
     def _on_turn_completed(self, event: TurnCompleted) -> None:
         # If we got text deltas, the streaming widget already has the
         # content. Replace it with the canonical (full) response so
         # the user sees the final cleaned text.
+        self._hide_inline_activity()
         if event.content and self._has_text:
             try:
                 ml = self._app.query_one("#message-list")
@@ -368,6 +405,7 @@ class DefaultEventHandler(EventHandler):
             pass
 
     def _on_turn_failed(self, event: TurnFailed) -> None:
+        self._hide_inline_activity()
         try:
             from hakus.tui_v2.messages import Message  # type: ignore
             self._app._mount_message(
@@ -382,6 +420,7 @@ class DefaultEventHandler(EventHandler):
             pass
 
     def _on_cancelled(self, event: Cancelled) -> None:
+        self._hide_inline_activity()
         partial = event.partial_content or self._clean_content
         if partial:
             try:

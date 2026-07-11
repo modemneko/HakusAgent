@@ -28,12 +28,10 @@ class WelcomePanel(Container):
 
     DEFAULT_CSS = """
     WelcomePanel {
-        background: #141414;
-        border: thick #9d7cd8;
+        background: transparent;
         padding: 1 2;
-        height: 24;
-        max-height: 33;
-        max-width: 100;
+        height: auto;
+        max-width: 75;
     }
 
     WelcomePanel .welcome-left {

@@ -209,6 +209,81 @@ class CompactionBlock(Container):
         yield Markdown(self._part.text or "", classes="compaction-content")
 
 
+class ActivityBlock(Static):
+    """AI 执行状态滚动块 — 嵌在 AssistantText 顶部.
+
+    视觉风格 (参照 OpenCode inline activity):
+    - 高度固定 3 行, 新活动从底部进入, 旧活动向上滚动
+    - 上下边框极暗, 仿佛融入黑色背景 (渐变感)
+    - 3 行文字亮度从上到下递减: 旧活动暗, 当前活动最亮
+    - Turn 结束后自动收起
+    """
+
+    DEFAULT_CSS = """
+    ActivityBlock {
+        dock: top;
+        height: 0;
+        min-height: 0;
+        max-height: 3;
+        background: #0a0a0a;
+        color: #808080;
+        border-top: none;
+        border-bottom: none;
+        margin: 0 0 0 0;
+        padding: 0 1;
+        overflow: hidden;
+    }
+
+    ActivityBlock.active {
+        height: 3;
+        min-height: 3;
+        border-top: solid #0f0f0f;
+        border-bottom: solid #0f0f0f;
+        margin: 0 0 1 0;
+    }
+    """
+
+    VISIBLE_LINES = 3
+
+    # 亮度梯度: 最旧 -> 最新 (Rich markup 颜色)
+    _LINE_TONES = ["#303030", "#707070", "#eeeeee"]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__("", markup=True, **kwargs)
+        self._lines: List[str] = []
+
+    def show(self) -> None:
+        self.add_class("active")
+        self.styles.height = "3"
+        self.styles.min_height = "3"
+        self.refresh(layout=True)
+
+    def hide(self) -> None:
+        self.remove_class("active")
+        self.styles.height = "0"
+        self.styles.min_height = "0"
+        self._lines.clear()
+        self.update("")
+        self.refresh(layout=True)
+
+    def add_activity(self, text: str) -> None:
+        self._lines.append(text)
+        self.show()
+        # 取最后 VISIBLE_LINES 行, 最新的在最下面
+        visible = self._lines[-self.VISIBLE_LINES:]
+        # 补齐空行以保持 3 行固定高度
+        while len(visible) < self.VISIBLE_LINES:
+            visible.insert(0, "")
+        # 应用亮度渐变: 越新越亮
+        rendered: List[str] = []
+        for i, line in enumerate(visible):
+            tone = self._LINE_TONES[i]
+            safe = (line or "").replace("[", "[[").replace("]", "]]")
+            rendered.append(f"[{tone}]{safe}[/{tone}]")
+        self.update("\n".join(rendered))
+
+
+
 class AssistantText(Container):
     """助手消息 — Part-based 渲染
 
@@ -245,22 +320,29 @@ class AssistantText(Container):
         self._message = message
         self._streaming_buffer: str = ""
         self._md_view: Optional[Markdown] = None
+        self._activity_block: Optional[ActivityBlock] = None
         self._last_render_ts: float = 0.0
         self._pending_render: bool = False
         self._finalized: bool = False
 
     def compose(self):
         yield Static("● HakusAI", classes="assistant-dot")
+        self._activity_block = ActivityBlock(id="assistant-activity")
+        yield self._activity_block
         if self._message and self._message.parts:
             # Part-based 渲染
             with Vertical(classes="part-container"):
                 for part in self._message.parts:
                     yield self._create_part_widget(part)
             self._finalized = True
+            if self._activity_block is not None:
+                self._activity_block.hide()
         elif self._message and self._message.content:
             # 向后兼容: 纯文本内容
             yield Markdown(self._message.content, classes="assistant-content")
             self._finalized = True
+            if self._activity_block is not None:
+                self._activity_block.hide()
         else:
             # 流式开始
             md = Markdown("", classes="assistant-content")
@@ -287,6 +369,14 @@ class AssistantText(Container):
                 self._md_view = self.query_one(".assistant-content", Markdown)
             except Exception:
                 self._md_view = None
+
+    def update_activity(self, text: str) -> None:
+        if self._activity_block is not None:
+            self._activity_block.add_activity(text)
+
+    def hide_activity(self) -> None:
+        if self._activity_block is not None:
+            self._activity_block.hide()
 
     def append_delta(self, token: str) -> None:
         """流式追加文本 — 实时渲染 Markdown (节流 100ms)."""
