@@ -137,7 +137,7 @@ def convert_value(value: str, key: str) -> Any:
     """根据 key 转换配置值为正确的类型."""
     bool_keys = [
         "ENABLED", "AUDIO_OUTPUT", "ENABLE_IMAGE_GENERATION",
-        "STREAMING", "DEBUG",
+        "STREAMING", "DEBUG", "MEMORY_ENABLED",
     ]
     if any(key.endswith(bk) for bk in bool_keys):
         return str(value).lower() in ("true", "1", "yes", "on")
@@ -258,6 +258,9 @@ BASE_CONFIG: Dict[str, Any] = {
     "EMBEDDING_BATCH_SIZE": convert_value(_resolved_config.get("embedding", {}).get("batch_size", 8), "BATCH_SIZE"),
 
     # ---- Memory ----
+    "MEMORY_ENABLED": convert_value(
+        _resolved_config.get("memory", {}).get("enabled", False), "MEMORY_ENABLED"
+    ),
     "SHORT_TERM_MEMORY_MAX_LENGTH": convert_value(
         _resolved_config.get("memory", {}).get("short_term_max_length", 20), "SHORT_TERM_MAX_LENGTH"
     ),

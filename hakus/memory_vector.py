@@ -73,13 +73,17 @@ _EMBEDDING_LOCK = threading.Lock()
 def get_embedding() -> Any:
     """获取全局嵌入模型实例 - 支持多平台"""
     global _GLOBAL_EMBEDDING
-    
+
+    if not BASE_CONFIG.get("MEMORY_ENABLED", False):
+        logger.debug("Memory disabled; skipping embedding initialization")
+        raise ImportError("Memory system is disabled in config")
+
     with _EMBEDDING_LOCK:
         if _GLOBAL_EMBEDDING is None:
             embedding_type = BASE_CONFIG.get("EMBEDDING_TYPE", "google").lower()
             logger.info(f"正在加载 Embedding 模型，类型: {embedding_type}")
             start_time = time.time()
-            
+
             try:
                 if embedding_type == "google":
                     _GLOBAL_EMBEDDING = _init_google_embedding()
@@ -93,13 +97,13 @@ def get_embedding() -> Any:
                     # 默认使用Google
                     logger.warning(f"未知的Embedding类型: {embedding_type}，使用默认的Google Embedding")
                     _GLOBAL_EMBEDDING = _init_google_embedding()
-                
+
                 elapsed = time.time() - start_time
                 logger.info(f"✓ Embedding 模型加载完成 (类型: {embedding_type}, 耗时: {elapsed:.2f}秒)")
             except Exception as e:
-                logger.error(f"Embedding 模型加载失败: {e}")
+                logger.debug(f"Embedding 模型加载失败: {e}")
                 raise ImportError(f"无法加载 Embedding 模型: {e}")
-    
+
     return _GLOBAL_EMBEDDING
 
 

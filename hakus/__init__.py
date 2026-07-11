@@ -33,10 +33,6 @@ from .computer_control import ComputerController
 from .workspace import Workspace
 from .task_board import TaskBoard, TaskStatus, TaskPriority
 
-# Restore stdout/stderr
-sys.stdout = _orig_out
-sys.stderr = _orig_err
-
 try:
     from .cli import HakusCLI
 except ImportError:
@@ -56,6 +52,10 @@ try:
     from .voice_bridge import VoiceBridge
 except ImportError:
     VoiceBridge = None
+
+# Restore stdout/stderr after all noisy third-party imports are done
+sys.stdout = _orig_out
+sys.stderr = _orig_err
 
 __all__ = [
     "AgentCore",

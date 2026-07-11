@@ -141,6 +141,21 @@ class Tool(ABC):
         """
         raise NotImplementedError
 
+    def get_metadata(self) -> "ToolMetadata":
+        """Return plugin-style metadata for this tool.
+
+        Provides a uniform metadata interface so the ``/tools`` command and
+        other consumers can read category/tags regardless of whether the tool
+        inherits from ``Tool`` or ``ToolPlugin``.
+        """
+        from .plugin import ToolMetadata
+        return ToolMetadata(
+            name=self.name,
+            description=self.description,
+            category="general",
+            parameters_schema=self.parameters_schema,
+        )
+
     def to_openai_schema(self) -> Dict[str, Any]:
         """Serialize this tool into the OpenAI function-calling format.
 

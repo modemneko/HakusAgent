@@ -127,7 +127,7 @@ _HAKUS_INTERNAL_LOGGERS = [
     "hakus.cli", "hakus.tui", "hakus.tool_system", "hakus.builtin_tools",
     "hakus.dev_tools", "hakus.computer_control", "hakus.voice_bridge",
     "hakus.sub_agents", "hakus.orchestrator", "hakus.context",
-    "hakus.checkpoint", "hakus.permission", "hakus.memory",
+    "hakus.checkpoint", "hakus.permission", "hakus.memory", "hakus.memory_vector",
     "hakus.session_store", "hakus.plan_mode", "hakus.task_board",
     "hakus.workspace", "hakus.multi_dim_test", "hakus.long_task_tools",
     "core", "core.tools", "core.tools.base", "core.task_templates",

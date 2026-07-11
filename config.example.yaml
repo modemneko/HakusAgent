@@ -115,6 +115,7 @@ embedding:
 
 # ==================== 记忆系统 ====================
 memory:
+  enabled: ${MEMORY_ENABLED:false}
   short_term_max_length: 50
   long_term_max_length: 500
   state_dir: ${HAKUS_STATE_DIR:~/.hakus/user_states}

@@ -179,15 +179,18 @@ def _init_components(args: argparse.Namespace) -> AgentCore:
     except Exception as e:
         logger.warning(f"Failed to register db tools: {e}")
 
-    try:
-        from .memory_vector import MemoryManager
-        memory = MemoryManager(uid="default")
-        agent.set_memory(memory)
-        logger.info("Memory manager initialized")
-    except ImportError:
-        logger.info("Memory manager not available")
-    except Exception as e:
-        logger.warning(f"Failed to initialize memory: {e}")
+    if BASE_CONFIG.get("MEMORY_ENABLED", False):
+        try:
+            from .memory_vector import MemoryManager
+            memory = MemoryManager(uid="default")
+            agent.set_memory(memory)
+            logger.info("Memory manager initialized")
+        except ImportError:
+            logger.info("Memory manager not available")
+        except Exception as e:
+            logger.debug(f"Failed to initialize memory: {e}")
+    else:
+        logger.debug("Memory manager disabled by config (memory.enabled=false)")
 
     project_memory = ProjectMemory(working_dir)
     memory_content = project_memory.load()

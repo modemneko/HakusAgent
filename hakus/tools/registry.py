@@ -51,6 +51,9 @@ class _PluginAdapter(Tool):
     async def execute(self, **kwargs) -> str:
         return await self._plugin.execute(**kwargs)
 
+    def get_metadata(self):
+        return self._plugin.get_metadata()
+
     def to_openai_schema(self) -> Dict:
         return self._plugin.to_openai_schema()
 

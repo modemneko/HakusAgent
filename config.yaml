@@ -82,6 +82,8 @@ embedding:
 
 # ==================== 记忆系统配置 ====================
 memory:
+  # 是否启用长期记忆 / Embedding 向量检索
+  enabled: false
   # 短期记忆最大长度
   short_term_max_length: 50
   
