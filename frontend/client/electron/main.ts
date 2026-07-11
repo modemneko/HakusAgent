@@ -1,11 +1,10 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
-import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
 import Store from 'electron-store'
 import { startSidecar, stopSidecar, isSidecarAvailable } from './sidecar'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+// In CommonJS context, __dirname is a Node global (declared by @types/node).
+// vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
 
 // Type for our persisted store schema
 interface PersistedSettings {
@@ -59,7 +58,7 @@ function createWindow() {
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },

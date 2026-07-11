@@ -28,6 +28,15 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron', 'electron-store'],
+              output: {
+                // Preload 脚本在 Electron 沙箱中运行, 必须 CommonJS (不能用 ESM import)
+                // 用 .cjs 后缀避免被 package.json 的 "type": "module" 影响
+                format: 'cjs',
+                entryFileNames: 'preload.cjs',
+              },
+            },
           },
         },
       },
