@@ -68,6 +68,51 @@ npm run dist:linux  # → release/HakusAI-x.y.z.AppImage + .deb
 
 产物位于 `frontend/client/release/`。
 
+### 6. 自定义图标
+
+替换 `build-resources/icon.png`（建议 ≥ 512×512 PNG，带透明背景），然后重新生成多尺寸：
+
+```bash
+python3 scripts/make-icon.py
+```
+
+脚本支持三种模式：
+- **从源图生成**（默认）：检测到 `icon.png` 存在时，自动用 LANCZOS 重采样生成 16/32/64/128/256/512/1024 七个尺寸
+- **强制占位符**：`--generate` 参数，画一个 violet→fuchsia 渐变 + 白色 "H" 字母的占位图标
+- **指定源图**：`--from path/to/master.png`，从指定文件生成
+
+> ⚠️ macOS 要求图标必须是带圆角的方形，不能是全透明圆形，否则 Dock 上会显示异常。
+
+### 7. GitHub Actions 自动构建（推荐）
+
+仓库已配置 `.github/workflows/release.yml`，支持三平台自动打包：
+
+```bash
+# 触发正式发布 (会自动创建 GitHub Release)
+git tag v0.1.0
+git push origin v0.1.0
+
+# 或在 Actions 页面手动 "Run workflow" (仅构建, 不发布 Release)
+```
+
+构建矩阵：
+| 平台 | Runner | 产物 |
+|---|---|---|
+| Windows | `windows-latest` | `HakusAI-Setup-x.y.z.exe` |
+| macOS | `macos-latest` | `HakusAI-x.y.z.dmg` (x64 + arm64) |
+| Linux | `ubuntu-latest` | `HakusAI-x.y.z.AppImage` + `.deb` |
+
+每个平台 job 的流程：
+1. checkout 代码
+2. setup Node 20 + Python 3.11
+3. `pip install -r requirements.txt pyinstaller`
+4. `bash scripts/build-sidecar.sh` — 构建 PyInstaller sidecar
+5. `npm ci` — 装前端依赖
+6. `python3 scripts/make-icon.py` — 生成图标集
+7. `npm run dist:PLATFORM` — electron-builder 打包
+
+产物先上传到 Actions artifacts（保留 30 天），推 tag 时还会自动汇总到 GitHub Release。
+
 ## 🔌 连接 HakusAI 后端
 
 客户端默认连接 `http://localhost:8080`（HakusAI server 默认端口）。两种运行模式：

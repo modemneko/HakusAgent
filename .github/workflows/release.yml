@@ -1,0 +1,225 @@
+name: Release
+
+# =====================================================================
+# HakusAI Desktop Client — 三平台自动打包 + GitHub Release 发布
+# =====================================================================
+#
+# 触发方式:
+#   1. 推 tag (v0.1.0, v1.2.3, ...) → 自动构建三平台并发布 Release
+#   2. Actions 页面手动点 "Run workflow" → 仅构建, 不发布 Release (产物在 Actions artifacts)
+#
+# 产物 (每个平台一份):
+#   - Windows: HakusAI-Setup-x.y.z.exe           (NSIS 安装程序)
+#   - macOS:   HakusAI-x.y.z.dmg + .dmg.blockmap  (DMG 镜像, x64 + arm64)
+#   - Linux:   HakusAI-x.y.z.AppImage + .deb      (AppImage + Debian 包)
+#
+# 工作流:
+#   setup-node → setup-python → pip install → build-sidecar.sh → npm ci → npm run dist:PLATFORM
+#
+# 注意:
+#   - PyInstaller 不能交叉编译, 所以三平台必须分别在三台 runner 上构建
+#   - 每个 job 都先构建 sidecar (当前平台原生二进制), 再打 Electron 包
+#   - sidecar 会被 electron-builder 通过 extraResources 字段嵌入到安装包
+#   - 用户安装后无需任何额外配置, 双击即用
+# =====================================================================
+
+on:
+  push:
+    tags:
+      - 'v*'           # 推 v 开头的 tag 触发正式发布
+  workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow)
+
+permissions:
+  contents: write      # 发布 Release 需要写权限
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }} / ${{ matrix.platform }})
+    strategy:
+      fail-fast: false  # 一个平台失败不影响其他平台继续构建
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            artifact_name: hakusai-windows
+            asset_ext: exe
+          - os: macos-latest
+            platform: mac
+            artifact_name: hakusai-macos
+            asset_ext: dmg
+          - os: ubuntu-latest
+            platform: linux
+            artifact_name: hakusai-linux
+            asset_ext: AppImage
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      # ============ 1. Checkout ============
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ============ 2. Setup Node.js ============
+      - name: 📦 Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/client/package-lock.json
+
+      # ============ 3. Setup Python ============
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ============ 4. Install Python deps + PyInstaller ============
+      - name: 🔧 Install Python dependencies
+        working-directory: .
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # ============ 5. Build HakusAI sidecar (PyInstaller) ============
+      # 生成 frontend/client/sidecar/dist/hakusai-server 二进制
+      # 这一步必须和目标平台原生构建 (PyInstaller 不能交叉编译)
+      - name: 🔨 Build HakusAI server sidecar
+        working-directory: frontend/client
+        run: bash scripts/build-sidecar.sh
+
+      # ============ 6. Verify sidecar binary exists ============
+      - name: ✅ Verify sidecar binary
+        working-directory: frontend/client
+        shell: bash
+        run: |
+          echo "Sidecar dist contents:"
+          ls -la sidecar/dist/ || true
+          if [ ! -f sidecar/dist/hakusai-server ] && [ ! -f sidecar/dist/hakusai-server.exe ]; then
+            echo "⚠️  Warning: sidecar binary not found. Build will continue without bundled Python backend."
+            echo "    Users will need to run HakusAI server separately."
+          else
+            echo "✓ Sidecar binary present"
+          fi
+
+      # ============ 7. Install npm dependencies ============
+      - name: 📥 Install npm dependencies
+        working-directory: frontend/client
+        run: npm ci
+
+      # ============ 8. Generate icon set ============
+      - name: 🎨 Generate icon set
+        working-directory: frontend/client
+        run: python3 scripts/make-icon.py
+
+      # ============ 9. Build & package Electron app ============
+      - name: 📦 Build Electron app (${{ matrix.platform }})
+        working-directory: frontend/client
+        run: npm run dist:${{ matrix.platform }}
+        env:
+          # GitHub Actions 默认 CI=true, electron-builder 会据此启用更详细的日志
+          CI: true
+          # macOS 签名 (可选 — 没有证书就跳过, 用户首次启动需右键打开)
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Linux: 关掉 fpm 的某些坑
+          USE_SYSTEM_FPM: false
+
+      # ============ 10. List build artifacts ============
+      - name: 📋 List build artifacts
+        working-directory: frontend/client
+        shell: bash
+        run: |
+          echo "=== release/ contents ==="
+          ls -la release/ || true
+          echo ""
+          echo "=== File sizes ==="
+          du -h release/* 2>/dev/null || true
+
+      # ============ 11. Upload artifacts to Actions (always) ============
+      # 即使没推 tag, 也能从 Actions 页面下载产物
+      - name: 📤 Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            frontend/client/release/*.exe
+            frontend/client/release/*.dmg
+            frontend/client/release/*.AppImage
+            frontend/client/release/*.deb
+            frontend/client/release/*.snap
+            frontend/client/release/*.blockmap
+            frontend/client/release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 30
+
+  # =====================================================================
+  # Release job — 只在推 tag 时运行
+  # 等所有平台构建完成后, 把产物汇总到 GitHub Release
+  # =====================================================================
+  release:
+    name: 📢 Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 📋 List downloaded artifacts
+        run: |
+          echo "=== All downloaded artifacts ==="
+          find artifacts -type f | sort
+          echo ""
+          echo "=== Moving to release/ ==="
+          mkdir -p release
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.snap" -o -name "*.blockmap" -o -name "latest*.yml" \) -exec cp -v {} release/ \;
+          echo ""
+          echo "=== release/ contents ==="
+          ls -la release/
+
+      - name: 📢 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HakusAI ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: release/*
+          body: |
+            # HakusAI Desktop Client ${{ github.ref_name }}
+
+            ## 📦 下载
+
+            | 平台 | 文件 | 说明 |
+            |---|---|---|
+            | **Windows** | `HakusAI-Setup-*.exe` | NSIS 安装程序, 双击即装 |
+            | **macOS (Intel)** | `HakusAI-*-x64.dmg` | Intel Mac |
+            | **macOS (Apple Silicon)** | `HakusAI-*-arm64.dmg` | M1/M2/M3 Mac |
+            | **Linux** | `HakusAI-*.AppImage` | 直接运行, 无需安装 |
+            | **Linux** | `hakusai-client_*.deb` | Debian/Ubuntu 安装包 |
+
+            ## ✨ 特性
+
+            - 🎨 Cherry Studio 风格 UI, 暗色主题
+            - 🤖 完整 AgentEvent 协议支持 (流式文本, 工具调用, 思维链)
+            - 💬 多会话管理, 本地持久化
+            - 🔌 内嵌 Python 后端 (sidecar), **开箱即用, 无需额外配置**
+            - 📝 Markdown 渲染 + 代码高亮
+            - 🛠️ 可视化工具调用卡片
+
+            ## 🚀 使用
+
+            1. 下载对应平台的安装包
+            2. 安装并启动
+            3. 在「设置 → 连接」里配置你的 LLM API Key (DeepSeek / GLM / Qwen 等)
+            4. 开始对话
+
+            > 💡 macOS 用户首次启动如果提示"无法验证开发者", 请右键 → 打开
+
+            ## 📝 完整变更日志
+
+            见下方自动生成的 Release Notes。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

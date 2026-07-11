@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "description": "HakusAI Desktop Client - Cherry Studio inspired AI chat client for HakusAgent",
   "main": "dist-electron/main.js",
-  "author": "HakusAI",
+  "author": {
+    "name": "Lightneko",
+    "email": "107292546+modemneko@users.noreply.github.com"
+  },
   "license": "MIT",
+  "homepage": "https://github.com/modemneko/HakusAgent",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -99,7 +103,8 @@
         { "target": "deb", "arch": ["x64"] }
       ],
       "icon": "build-resources/icon.png",
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "Lightneko <107292546+modemneko@users.noreply.github.com>"
     },
     "nsis": {
       "oneClick": false,
