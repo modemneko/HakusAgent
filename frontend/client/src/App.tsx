@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/layout/TopBar'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
+import { SidecarErrorBanner } from '@/components/SidecarErrorBanner'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
@@ -74,6 +75,7 @@ function App() {
             onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
             onOpenSettings={() => setSettingsOpen(true)}
           />
+          <SidecarErrorBanner onRetry={() => window.location.reload()} />
           <ChatView />
         </div>
 

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import Store from 'electron-store'
-import { startSidecar, stopSidecar, isSidecarAvailable } from './sidecar'
+import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer } from './sidecar'
 
 // In CommonJS context, __dirname is a Node global (declared by @types/node).
 // vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
@@ -110,18 +110,33 @@ app.whenReady().then(async () => {
   // If a bundled sidecar exists, start it and update the default server URL
   if (isSidecarAvailable()) {
     console.log('[main] Bundled sidecar detected — starting...')
-    const port = await startSidecar()
-    if (port) {
-      const sidecarUrl = `http://127.0.0.1:${port}`
+    const result = await startSidecar()
+    if (result.port) {
+      const sidecarUrl = `http://127.0.0.1:${result.port}`
       console.log(`[main] Sidecar URL: ${sidecarUrl}`)
       // Only set as default if user hasn't customized
       const current = store.get('serverUrl', sidecarUrl)
       if (!current || current === 'http://localhost:8080') {
         store.set('serverUrl', sidecarUrl)
       }
+    } else {
+      console.error(`[main] Sidecar failed to start: ${result.error}`)
+      console.error(`[main] Sidecar log: ${result.logPath}`)
     }
+  } else {
+    console.warn('[main] No bundled sidecar detected — using external server URL')
   }
   createWindow()
+})
+
+// IPC: query sidecar status (for renderer to show startup errors)
+ipcMain.handle('sidecar:status', () => {
+  return getSidecarStatus()
+})
+
+// IPC: get sidecar log buffer (recent stdout/stderr lines)
+ipcMain.handle('sidecar:logs', () => {
+  return getSidecarLogBuffer()
 })
 
 // Stop sidecar on quit

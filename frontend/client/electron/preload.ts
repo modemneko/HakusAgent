@@ -8,6 +8,10 @@ const api = {
     set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),
     getAll: () => ipcRenderer.invoke('store:getAll'),
   },
+  sidecar: {
+    status: () => ipcRenderer.invoke('sidecar:status'),
+    logs: () => ipcRenderer.invoke('sidecar:logs'),
+  },
   platform: process.platform,
   versions: {
     electron: process.versions.electron,
