@@ -207,9 +207,12 @@ hidden_imports = [
     "hakusai_core.memory",
     "hakusai_core.voice.tts",
     "hakusai_core.utils.events",
-    # watchdog — used by hakusai_core.config.manager for hot-reload.
-    # Must be listed here because PyInstaller's static analysis can't
-    # trace the `from watchdog.observers import Observer` dynamic import.
+    # =====================================================================
+    # 核心第三方依赖 (pyproject.toml [project.dependencies])
+    # 这些模块在 sidecar 启动链的顶层 import 里被引用，必须显式列出。
+    # 历史上漏列 watchdog / numpy 导致 sidecar 启动崩溃。
+    # =====================================================================
+    # --- watchdog (config/manager.py 顶层 import, 热重载) ---
     "watchdog",
     "watchdog.observers",
     "watchdog.observers.polling",
@@ -220,7 +223,52 @@ hidden_imports = [
     "watchdog.utils.dirsnapshot",
     "watchdog.utils.platform",
     "watchdog.utils.patterns",
+    # --- numpy (voice_agent.py / voice/pipeline.py 顶层 import) ---
+    "numpy",
+    "numpy.core",
+    "numpy.core._multiarray_umath",
+    "numpy.core._multiarray_tests",
+    # --- pyyaml (config/manager.py 顶层 import) ---
+    "yaml",
+    # --- python-dotenv (config 加载 .env) ---
+    "dotenv",
+    # --- pydantic + pydantic-settings (config/schema.py, server.py) ---
+    "pydantic",
+    "pydantic._internal._core_utils",
+    "pydantic_settings",
+    # --- FastAPI / Starlette ---
+    "fastapi",
+    "fastapi.responses",
+    "fastapi.middleware",
+    "fastapi.middleware.cors",
+    "fastapi.staticfiles",
+    "starlette.responses",
+    "starlette.middleware",
+    "starlette.middleware.cors",
+    "starlette.staticfiles",
+    # --- multipart (FastAPI File uploads) ---
+    "multipart",
+    # --- HTTP clients ---
+    "httpx",
+    "httpx._transports",
+    "httpx._transports.default",
+    "aiohttp",
+    # --- websockets (vtuber_websocket.py) ---
+    "websockets",
+    "websockets.legacy",
+    "websockets.legacy.auth",
+    # --- rich / textual (hakusai_core 内部) ---
+    "rich",
+    "rich.console",
+    "rich.theme",
+    "textual",
+    "textual.app",
+    # --- Python typing / email / etc. sometimes missed ---
+    "email.utils",
+    "email.message",
+    # =====================================================================
     # uvicorn extras — without these, uvicorn falls back to slow asyncio loop
+    # =====================================================================
     "uvicorn.logging",
     "uvicorn.protocols.http.auto",
     "uvicorn.protocols.http.h11_impl",
@@ -232,25 +280,6 @@ hidden_imports = [
     "uvicorn.loops",
     "uvicorn.loops.auto",
     "uvicorn.loops.asyncio",
-    # FastAPI / Starlette / Pydantic internals commonly missed
-    "fastapi",
-    "fastapi.responses",
-    "fastapi.middleware",
-    "fastapi.middleware.cors",
-    "fastapi.staticfiles",
-    "starlette.responses",
-    "starlette.middleware",
-    "starlette.middleware.cors",
-    "starlette.staticfiles",
-    "pydantic",
-    "pydantic._internal._core_utils",
-    # YAML config loader
-    "yaml",
-    # multipart form parsing (FastAPI File uploads)
-    "multipart",
-    # Python typing / email / etc. sometimes missed
-    "email.utils",
-    "email.message",
 ]
 
 a = Analysis(

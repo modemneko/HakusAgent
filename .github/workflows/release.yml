@@ -75,15 +75,27 @@ jobs:
           python-version: '3.11'
 
       # ============ 4. Install Python deps + PyInstaller + Pillow ============
-      # - requirements.txt: HakusAI backend runtime deps
-      # - pyinstaller:       needed to bundle the backend as a sidecar binary
-      # - pillow:            needed by scripts/make-icon.py to generate icon sizes
+      # 用 `pip install -e .` 而不是 `pip install -r requirements.txt`：
+      # pyproject.toml 是依赖清单的单一来源 (source of truth)，requirements.txt
+      # 历史上曾漏装 numpy / httpx / python-dotenv / pydantic-settings / rich /
+      # textual，导致 PyInstaller 打出来的 exe 在用户机器上 "No module named xxx"。
       - name: 🔧 Install Python dependencies
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e .
           pip install pyinstaller pillow
+
+      # ============ 4.5. Import smoke test (sidecar 启动链预检) ============
+      # 在 PyInstaller 之前验证 sidecar 启动时的完整 import 链能跑通。
+      # 如果这里失败，CI 立即终止，不会打出一个用户一跑就崩的 exe。
+      # 历史上 "No module named 'watchdog'" / "No module named 'numpy'"
+      # 都是因为缺这一步，PyInstaller 静态分析看不出来运行时 import 失败。
+      - name: 🧪 Sidecar import smoke test
+        working-directory: .
+        run: |
+          python -c "from hakusai_server.server import HakusAIServer; print('sidecar import chain OK')"
+          python -c "import numpy, watchdog, fastapi, uvicorn, pydantic, httpx, aiohttp, websockets, dotenv, pydantic_settings, rich, textual, yaml, multipart; print('all required 3rd-party modules importable')"
 
       # ============ 5. Build HakusAI sidecar (PyInstaller) ============
       # 生成 frontend/client/sidecar/dist/hakusai-server 二进制

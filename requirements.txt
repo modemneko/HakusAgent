@@ -1,27 +1,51 @@
 # HakusAI Chat 核心依赖
-# 其他依赖根据配置自动安装
+#
+# ⚠️ 这是 pyproject.toml [project.dependencies] 的镜像，**单一来源是 pyproject.toml**。
+# 本文件保留是为了 backwards-compat（README / 老文档 / 开发者习惯）。
+# 修改依赖时请同时改 pyproject.toml 和本文件，避免脱节。
+#
+# 历史教训：本文件曾把 numpy 注释掉（第 24 行），但 voice_agent.py 和
+# voice/pipeline.py 顶层 `import numpy as np`，导致 PyInstaller 打出来的
+# sidecar exe 在用户机器上 "No module named 'numpy'" 崩溃。CI 已改用
+# `pip install -e .`（pyproject.toml）作为依赖安装方式。
+
+# ============== 核心依赖（必须，sidecar 启动时顶层 import 触发）==============
 
 pyyaml>=6.0
-aiohttp>=3.8.0
-fastapi>=0.100.0
-uvicorn>=0.23.0
-uvicorn[standard]>=0.23.0
-websockets>=11.0
-pydantic>=2.0.0
+python-dotenv>=1.0.0
 watchdog>=3.0.0
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
 python-multipart>=0.0.6
+
+# 数据验证
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# HTTP 客户端
+aiohttp>=3.9.0
+httpx>=0.25.0
+
+# 终端 UI（hakusai_core 内部有用到）
+rich>=13.0.0
+textual>=0.85.0
+
+# 数值计算（voice_agent.py / voice/pipeline.py 顶层 import）
+numpy>=1.24.0
+
+# ============== 可选依赖（try/except 或 delayed import，不影响 sidecar 启动）==============
 
 # 默认模型依赖 (deepseek/glm/qwen 使用 OpenAI 兼容接口)
 openai>=1.0.0
-
-# ==================== 可选依赖 ====================
 
 # 桌宠功能 (可选)
 # PyQt5>=5.15.0
 # PyOpenGL>=3.1.0
 # PyOpenGL-accelerate>=3.1.0
 # pyglm>=2.7.0
-# numpy>=1.20.0
 
 # 3D 模型加载 (可选)
 # pygltflib>=1.16.0
@@ -32,7 +56,4 @@ openai>=1.0.0
 # TTS 语音合成 (可选)
 # sherpa-onnx>=1.10.0
 # dashscope>=1.20.0  # 百炼CosyVoice TTS API
-
-# Embedding 向量检索 (可选)
-# chromadb>=0.4.0
-# sentence-transformers>=2.2.0
+# edge-tts>=6.1.0
