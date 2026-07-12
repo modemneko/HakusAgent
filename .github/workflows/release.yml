@@ -27,6 +27,8 @@ on:
   push:
     tags:
       - 'v*'           # 推 v 开头的 tag 触发正式发布
+    branches:
+      - master         # 推 master 也触发构建 (产物上传到 Actions artifacts, 不发 Release)
   workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow)
 
 permissions:
