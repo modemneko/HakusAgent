@@ -129,13 +129,24 @@ def main():
     port = find_free_port(int(os.environ.get("HAKUSAI_PORT", "8080")))
     logger.info("Starting HakusAI server on http://127.0.0.1:%d", port)
 
+    # Pre-flight: try importing the server module BEFORE printing HAKUSAI_PORT.
+    # If imports fail (e.g. PyInstaller missed a hidden_import), we want the
+    # traceback to be the LAST thing on stderr, not a misleading "started on port" message.
+    try:
+        logger.info("Pre-flight import check...")
+        from hakusai_server.server import HakusAIServer
+        logger.info("Pre-flight OK")
+    except Exception as e:
+        logger.exception("Pre-flight import failed: %s", e)
+        # Still print HAKUSAI_PORT so Electron's sidecar.ts can parse it
+        # (it will then time out on /health and surface the error to the UI)
+        print(f"HAKUSAI_PORT={port}", flush=True)
+        sys.exit(1)
+
     # Print the chosen port to stdout so the Electron main process can parse it
     print(f"HAKUSAI_PORT={port}", flush=True)
 
     try:
-        # Import after port is decided so any import errors are visible
-        from hakusai_server.server import HakusAIServer
-
         server = HakusAIServer()
         # Force loopback-only binding for security when bundled
         if hasattr(server, "config") and hasattr(server.config, "server"):
@@ -196,12 +207,50 @@ hidden_imports = [
     "hakusai_core.memory",
     "hakusai_core.voice.tts",
     "hakusai_core.utils.events",
+    # watchdog — used by hakusai_core.config.manager for hot-reload.
+    # Must be listed here because PyInstaller's static analysis can't
+    # trace the `from watchdog.observers import Observer` dynamic import.
+    "watchdog",
+    "watchdog.observers",
+    "watchdog.observers.polling",
+    "watchdog.events",
+    "watchdog.utils",
+    "watchdog.utils.bricks",
+    "watchdog.utils.delayed_queue",
+    "watchdog.utils.dirsnapshot",
+    "watchdog.utils.platform",
+    "watchdog.utils.patterns",
+    # uvicorn extras — without these, uvicorn falls back to slow asyncio loop
     "uvicorn.logging",
     "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets.auto",
+    "uvicorn.protocols.websockets.wsproto_impl",
+    "uvicorn.protocols.websockets.websockets_impl",
     "uvicorn.lifespan.on",
+    "uvicorn.lifespan.off",
+    "uvicorn.loops",
+    "uvicorn.loops.auto",
+    "uvicorn.loops.asyncio",
+    # FastAPI / Starlette / Pydantic internals commonly missed
     "fastapi",
+    "fastapi.responses",
+    "fastapi.middleware",
+    "fastapi.middleware.cors",
+    "fastapi.staticfiles",
+    "starlette.responses",
+    "starlette.middleware",
+    "starlette.middleware.cors",
+    "starlette.staticfiles",
     "pydantic",
+    "pydantic._internal._core_utils",
+    # YAML config loader
+    "yaml",
+    # multipart form parsing (FastAPI File uploads)
+    "multipart",
+    # Python typing / email / etc. sometimes missed
+    "email.utils",
+    "email.message",
 ]
 
 a = Analysis(
