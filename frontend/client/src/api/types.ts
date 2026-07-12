@@ -67,6 +67,103 @@ export interface CharacterInfo {
   avatar_type: string
 }
 
+// ========== Provider / Model 配置 ==========
+
+export interface ProviderInfo {
+  id: string
+  display_name: string
+  has_url: boolean
+  has_api_key: boolean
+  masked_api_key: string
+  model_name: string
+  base_url: string
+  is_default: boolean
+}
+
+export interface ProvidersResponse {
+  providers: ProviderInfo[]
+  default_model: string
+}
+
+export interface UpdateProviderBody {
+  provider: string
+  model_name?: string
+  base_url?: string
+  api_key?: string
+  set_as_default?: boolean
+}
+
+export interface UpdateCharacterBody {
+  name?: string
+  nickname?: string
+  personality?: string
+  scenario?: string
+  first_message?: string
+  system_prompt?: string
+}
+
+// ========== 工具与权限 ==========
+
+export interface ToolInfo {
+  id: string
+  name: string
+  desc: string
+  dangerous: boolean
+  enabled: boolean
+}
+
+export interface ToolsResponse {
+  tools: ToolInfo[]
+}
+
+export type PermissionMode = 'auto' | 'ask' | 'bypass'
+
+export interface PermissionInfo {
+  mode: PermissionMode
+  available_modes: string[]
+}
+
+// ========== 记忆系统 ==========
+
+export interface MemoryDetails {
+  enabled: boolean
+  long_term_enabled: boolean
+  short_term_max: number
+  auto_summary: boolean
+  summary_interval: number
+  stats: Record<string, any>
+}
+
+// ========== 诊断 ==========
+
+export interface DiagnosticsInfo {
+  status: string
+  version: string
+  ready: boolean
+  error?: string
+  components: Record<string, string>
+  registered_providers: string[]
+  configured_provider: string
+  configured_model_name?: string
+  init_started_at?: string
+  init_finished_at?: string
+  // 兼容字段
+  model_loaded?: boolean
+  agent_ready?: boolean
+}
+
+// ========== TTS ==========
+
+export interface TtsVoicesResponse {
+  voices: string[]
+}
+
+// ========== 配置导出/导入 ==========
+
+export interface ExportConfigResponse {
+  config: Record<string, any>
+}
+
 // ========== SSE 流式事件 ==========
 
 /** SSE 流中的单条数据 */
@@ -303,6 +400,10 @@ export interface AppSettings {
   autoScroll: boolean
   // Font size in chat (px)
   fontSize: number
+  // TTS (本地控制开关，与 server TTS 配置独立)
+  ttsEnabled: boolean
+  ttsVoice: string
+  ttsSpeed: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -317,4 +418,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showReasoning: true,
   autoScroll: true,
   fontSize: 14,
+  ttsEnabled: false,
+  ttsVoice: 'zh-CN-XiaoxiaoNeural',
+  ttsSpeed: 1.0,
 }

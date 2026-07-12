@@ -780,7 +780,384 @@ class HakusAIServer:
             """重新加载配置"""
             await config_manager.reload()
             return {"message": "Config reloaded"}
-        
+
+        # ========== 模型 provider 配置 API ==========
+        # 这些端点让桌面客户端能编辑 ~/.hakus/config.yaml 里的 model_name / base_url / api_key,
+        # 不需要用户手动改文件。对应 TUI 的 ModelConfigOverlay。
+
+        @app.get("/api/config/providers")
+        async def list_providers():
+            """列出所有支持的 AI provider 及当前配置状态（隐藏 api_key 明文）"""
+            # 与 TUI model_config_overlay.py 的 _PROVIDER_META 保持一致
+            PROVIDER_META = {
+                "opencode":   {"key_name": "opencode_api_key",   "has_url": True,  "display": "OpenCode"},
+                "deepseek":   {"key_name": "deepseek_api_key",   "has_url": True,  "display": "DeepSeek"},
+                "openai":     {"key_name": "openai_api_key",     "has_url": True,  "display": "OpenAI"},
+                "anthropic":  {"key_name": "anthropic_api_key",  "has_url": True,  "display": "Anthropic Claude"},
+                "qwen":       {"key_name": "dashscope_api_key",  "has_url": False, "display": "Qwen (通义千问)"},
+                "gemini":     {"key_name": "gemini_api_key",     "has_url": False, "display": "Gemini"},
+                "glm":        {"key_name": "glm_api_key",        "has_url": False, "display": "GLM (智谱)"},
+                "mimo":       {"key_name": "mimo_api_key",       "has_url": True,  "display": "MiMo (小米)"},
+                "ollama":     {"key_name": "",                  "has_url": True,  "display": "Ollama (本地)"},
+            }
+            # 读取 ~/.hakus/config.yaml
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            api_keys = raw.get("api_keys", {}) or {}
+            models_cfg = raw.get("models", {}) or {}
+            default_model = models_cfg.get("default_model", "deepseek")
+
+            providers = []
+            for pid, meta in PROVIDER_META.items():
+                prov_cfg = models_cfg.get(pid, {}) or {}
+                key_name = meta["key_name"]
+                has_key = bool(key_name) and bool(api_keys.get(key_name))
+                # mask key for display
+                masked = ""
+                if has_key:
+                    k = api_keys.get(key_name, "")
+                    masked = (k[:4] + "..." + k[-4:]) if len(k) > 8 else "*" * len(k)
+                providers.append({
+                    "id": pid,
+                    "display_name": meta["display"],
+                    "has_url": meta["has_url"],
+                    "has_api_key": has_key,
+                    "masked_api_key": masked,
+                    "model_name": prov_cfg.get("model_name", ""),
+                    "base_url": prov_cfg.get("base_url", ""),
+                    "is_default": pid == default_model,
+                })
+            return {"providers": providers, "default_model": default_model}
+
+        @app.post("/api/config/providers")
+        async def update_provider(request: dict):
+            """
+            更新某个 provider 的配置（model_name / base_url / api_key），并热重载。
+
+            请求体:
+            {
+                "provider": "deepseek",
+                "model_name": "deepseek-chat",   // 可选, 留空不变
+                "base_url": "https://...",       // 可选, 留空不变
+                "api_key": "sk-xxx",             // 可选, 留空表示清除
+                "set_as_default": true           // 可选, 把这个 provider 设为默认
+            }
+            """
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+
+            provider_id = request.get("provider", "").lower()
+            if not provider_id:
+                raise HTTPException(status_code=400, detail="provider is required")
+
+            PROVIDER_META = {
+                "opencode": "opencode_api_key", "deepseek": "deepseek_api_key",
+                "openai": "openai_api_key", "anthropic": "anthropic_api_key",
+                "qwen": "dashscope_api_key", "gemini": "gemini_api_key",
+                "glm": "glm_api_key", "mimo": "mimo_api_key", "ollama": "",
+            }
+            if provider_id not in PROVIDER_META:
+                raise HTTPException(status_code=400, detail=f"unknown provider: {provider_id}")
+
+            config_dir = _Path(os.path.expanduser("~/.hakus"))
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / "config.yaml"
+
+            # 读取现有配置
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            raw.setdefault("api_keys", {})
+            raw.setdefault("models", {})
+
+            # 应用 model_name / base_url
+            prov_raw: dict = raw["models"].setdefault(provider_id, {})
+            if "model_name" in request and request["model_name"]:
+                prov_raw["model_name"] = request["model_name"]
+            if "base_url" in request:
+                if request["base_url"]:
+                    prov_raw["base_url"] = request["base_url"]
+                else:
+                    prov_raw.pop("base_url", None)
+
+            # 应用 api_key
+            key_name = PROVIDER_META[provider_id]
+            if key_name and "api_key" in request:
+                if request["api_key"]:
+                    raw["api_keys"][key_name] = request["api_key"]
+                else:
+                    raw["api_keys"].pop(key_name, None)
+
+            # 设为默认
+            if request.get("set_as_default"):
+                raw["models"]["default_model"] = provider_id
+
+            # 写回
+            try:
+                config_path.write_text(
+                    _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+
+            # 热重载
+            try:
+                await config_manager.reload()
+            except Exception as e:
+                logger.warning(f"Config saved but reload failed: {e}")
+            return {"message": "Provider config saved", "provider": provider_id}
+
+        @app.post("/api/config/default-model")
+        async def set_default_model(request: dict):
+            """切换默认模型 provider"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+
+            provider_id = request.get("provider", "").lower()
+            if not provider_id:
+                raise HTTPException(status_code=400, detail="provider is required")
+
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            raw.setdefault("models", {})
+            raw["models"]["default_model"] = provider_id
+            try:
+                config_path.write_text(
+                    _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+            try:
+                await config_manager.reload()
+            except Exception as e:
+                logger.warning(f"Default model saved but reload failed: {e}")
+            return {"message": "Default model updated", "default_model": provider_id}
+
+        @app.post("/api/character/update")
+        async def update_character_full(request: dict):
+            """
+            更新角色信息。请求体可包含 name / nickname / personality / scenario / first_message / system_prompt。
+            写入 ~/.hakus/config.yaml 并热重载。
+            """
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            char = raw.setdefault("character", {})
+            for field in ("name", "nickname", "personality", "scenario", "first_message", "system_prompt"):
+                if field in request:
+                    char[field] = request[field]
+            try:
+                config_path.write_text(
+                    _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+            try:
+                await config_manager.reload()
+            except Exception as e:
+                logger.warning(f"Character saved but reload failed: {e}")
+            return {"message": "Character updated"}
+
+        # ========== 记忆系统扩展 API ==========
+
+        @app.get("/api/memory/details")
+        async def get_memory_details():
+            """获取记忆系统详细状态（短期/长期条数、配置开关等）"""
+            cfg = config_manager.config.memory
+            data = {
+                "enabled": cfg.enabled,
+                "long_term_enabled": cfg.long_term_enabled,
+                "short_term_max": cfg.short_term_max,
+                "auto_summary": cfg.auto_summary,
+                "summary_interval": cfg.summary_interval,
+                "stats": {},
+            }
+            if self.memory:
+                try:
+                    data["stats"] = self.memory.stats or {}
+                except Exception:
+                    pass
+            return data
+
+        # ========== 工具与权限 API ==========
+
+        @app.get("/api/tools")
+        async def list_tools():
+            """列出 hakus/tools/builtin/ 下所有内置工具及开关状态"""
+            import os
+            from pathlib import Path as _Path
+            tools_dir = _Path(os.path.dirname(__file__)).parent.parent / "hakus" / "tools" / "builtin"
+            tools = []
+            # 静态清单（与 hakus/tools/builtin/ 下的 .py 文件对应）
+            builtin = [
+                {"id": "shell",    "name": "Shell 命令",      "desc": "执行 shell 命令（受权限模式控制）",   "dangerous": True},
+                {"id": "file",     "name": "文件读写",        "desc": "读取/写入/编辑本地文件",            "dangerous": False},
+                {"id": "directory","name": "目录浏览",        "desc": "列目录、查找文件",                  "dangerous": False},
+                {"id": "web",      "name": "网页抓取",        "desc": "抓取网页内容",                      "dangerous": False},
+                {"id": "search",   "name": "网络搜索",        "desc": "搜索引擎查询",                      "dangerous": False},
+                {"id": "browser",  "name": "浏览器自动化",    "desc": "Playwright 浏览器操作",             "dangerous": True},
+                {"id": "task",     "name": "任务管理",        "desc": "创建/查看子任务",                   "dangerous": False},
+                {"id": "task_done","name": "任务完成",        "desc": "标记任务完成",                      "dangerous": False},
+            ]
+            # 读 ~/.hakus/config.yaml 里的 tools 段, 看哪些被禁用
+            import os as _os, yaml as _yaml
+            from pathlib import Path as _Path2
+            config_path = _Path2(_os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            disabled = set(raw.get("tools", {}).get("disabled", []) or [])
+            for t in builtin:
+                t["enabled"] = t["id"] not in disabled
+                tools.append(t)
+            return {"tools": tools}
+
+        @app.post("/api/tools/toggle")
+        async def toggle_tool(request: dict):
+            """开关某个工具。请求体: {tool_id: "shell", enabled: false}"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            tool_id = request.get("tool_id")
+            enabled = request.get("enabled")
+            if not tool_id or enabled is None:
+                raise HTTPException(status_code=400, detail="tool_id and enabled are required")
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            tools_cfg = raw.setdefault("tools", {})
+            disabled = set(tools_cfg.get("disabled", []) or [])
+            if enabled:
+                disabled.discard(tool_id)
+            else:
+                disabled.add(tool_id)
+            tools_cfg["disabled"] = sorted(disabled)
+            try:
+                config_path.write_text(
+                    _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+            return {"tool_id": tool_id, "enabled": enabled}
+
+        @app.get("/api/permission")
+        async def get_permission():
+            """获取当前权限模式"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            mode = raw.get("permission", {}).get("mode", "ask")
+            return {"mode": mode, "available_modes": ["auto", "ask", "bypass"]}
+
+        @app.post("/api/permission")
+        async def set_permission(request: dict):
+            """设置权限模式。请求体: {mode: "auto"|"ask"|"bypass"}"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            mode = request.get("mode")
+            if mode not in ("auto", "ask", "bypass"):
+                raise HTTPException(status_code=400, detail="mode must be auto/ask/bypass")
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            perm_cfg = raw.setdefault("permission", {})
+            perm_cfg["mode"] = mode
+            try:
+                config_path.write_text(
+                    _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+            return {"mode": mode}
+
+        # ========== 配置导出/导入 ==========
+
+        @app.get("/api/config/export")
+        async def export_config():
+            """导出完整配置（脱敏：api_key 用 mask 显示）"""
+            import os, yaml as _yaml, copy as _copy
+            from pathlib import Path as _Path
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            if not config_path.exists():
+                return {"config": {}}
+            try:
+                raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to read config: {e}")
+            # 脱敏
+            safe = _copy.deepcopy(raw)
+            api_keys = safe.get("api_keys", {}) or {}
+            for k, v in list(api_keys.items()):
+                if v and isinstance(v, str):
+                    api_keys[k] = (v[:4] + "..." + v[-4:]) if len(v) > 8 else "*" * len(v)
+            return {"config": safe}
+
+        @app.post("/api/config/import")
+        async def import_config(request: dict):
+            """导入配置（覆盖 ~/.hakus/config.yaml）。请求体: {config: {...}}"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            new_config = request.get("config")
+            if not isinstance(new_config, dict):
+                raise HTTPException(status_code=400, detail="config must be an object")
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                config_path.write_text(
+                    _yaml.dump(new_config, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
+            try:
+                await config_manager.reload()
+            except Exception as e:
+                logger.warning(f"Config imported but reload failed: {e}")
+            return {"message": "Config imported"}
+
         # ========== 角色API ==========
         
         @app.get("/api/character")
@@ -795,12 +1172,6 @@ class HakusAIServer:
                 "first_message": char.first_message,
                 "avatar_type": config_manager.config.avatar.type,
             }
-        
-        @app.post("/api/character/update")
-        async def update_character(request: dict):
-            """更新角色信息"""
-            # TODO: 实现配置更新
-            return {"message": "Character updated"}
         
         # ========== 记忆API ==========
         

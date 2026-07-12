@@ -11,6 +11,7 @@ const api = {
   sidecar: {
     status: () => ipcRenderer.invoke('sidecar:status'),
     logs: () => ipcRenderer.invoke('sidecar:logs'),
+    restart: () => ipcRenderer.invoke('sidecar:restart'),
   },
   platform: process.platform,
   versions: {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Toaster } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/layout/TopBar'
@@ -81,6 +82,9 @@ function App() {
 
         {/* Settings dialog */}
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+        {/* Global toaster */}
+        <Toaster />
       </div>
     </TooltipProvider>
   )

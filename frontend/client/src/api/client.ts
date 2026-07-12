@@ -24,6 +24,16 @@ import type {
   HealthResponse,
   WSIncomingMessage,
   WSOutgoingMessage,
+  ProvidersResponse,
+  UpdateProviderBody,
+  UpdateCharacterBody,
+  ToolsResponse,
+  PermissionInfo,
+  PermissionMode,
+  MemoryDetails,
+  DiagnosticsInfo,
+  TtsVoicesResponse,
+  ExportConfigResponse,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -78,6 +88,62 @@ export class HakusAIClient {
     return res.json()
   }
 
+  async updateCharacter(body: UpdateCharacterBody): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/character/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Update character failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  // ============ Provider / Model 配置 ============
+
+  async getProviders(): Promise<ProvidersResponse> {
+    const res = await fetch(`${this.baseUrl}/api/config/providers`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get providers failed: ${res.status}`)
+    return res.json()
+  }
+
+  async updateProvider(body: UpdateProviderBody): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/config/providers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Update provider failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  async setDefaultModel(provider: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/config/default-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Set default model failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  // ============ 记忆系统 ============
+
+  async getMemoryDetails(): Promise<MemoryDetails> {
+    const res = await fetch(`${this.baseUrl}/api/memory/details`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get memory details failed: ${res.status}`)
+    return res.json()
+  }
+
   async clearMemory(): Promise<void> {
     await fetch(`${this.baseUrl}/api/memory/clear`, { method: 'POST' })
   }
@@ -87,9 +153,85 @@ export class HakusAIClient {
     return res.json()
   }
 
+  // ============ 工具与权限 ============
+
+  async getTools(): Promise<ToolsResponse> {
+    const res = await fetch(`${this.baseUrl}/api/tools`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get tools failed: ${res.status}`)
+    return res.json()
+  }
+
+  async toggleTool(tool_id: string, enabled: boolean): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/tools/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_id, enabled }),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Toggle tool failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  async getPermission(): Promise<PermissionInfo> {
+    const res = await fetch(`${this.baseUrl}/api/permission`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get permission failed: ${res.status}`)
+    return res.json()
+  }
+
+  async setPermission(mode: PermissionMode): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/permission`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Set permission failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  // ============ 配置导出/导入 / 重载 ============
+
   async reloadConfig(): Promise<void> {
     await fetch(`${this.baseUrl}/api/config/reload`, { method: 'POST' })
   }
+
+  async exportConfig(): Promise<ExportConfigResponse> {
+    const res = await fetch(`${this.baseUrl}/api/config/export`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Export config failed: ${res.status}`)
+    return res.json()
+  }
+
+  async importConfig(config: Record<string, any>): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/config/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) {
+      throw new HakusAIError(`Import config failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
+  // ============ 诊断 ============
+
+  async getDiagnostics(): Promise<DiagnosticsInfo> {
+    const res = await fetch(`${this.baseUrl}/api/diagnostics`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get diagnostics failed: ${res.status}`)
+    return res.json()
+  }
+
+  // ============ TTS ============
 
   async textToSpeech(text: string, voice?: string, speed?: number): Promise<Blob> {
     const res = await fetch(`${this.baseUrl}/api/tts`, {
@@ -99,6 +241,14 @@ export class HakusAIClient {
     })
     if (!res.ok) throw new HakusAIError(`TTS failed: ${res.status}`)
     return res.blob()
+  }
+
+  async getTtsVoices(): Promise<TtsVoicesResponse> {
+    const res = await fetch(`${this.baseUrl}/api/tts/voices`, {
+      signal: AbortSignal.timeout(this.timeout),
+    })
+    if (!res.ok) throw new HakusAIError(`Get TTS voices failed: ${res.status}`)
+    return res.json()
   }
 
   // ============ Non-streaming chat ============

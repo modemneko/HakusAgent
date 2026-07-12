@@ -4,15 +4,23 @@
  */
 
 import { create } from 'zustand'
-import { DEFAULT_SETTINGS, type AppSettings } from '@/api/types'
+import { DEFAULT_SETTINGS, type AppSettings, type ProviderInfo } from '@/api/types'
 import { applyTheme } from '@/lib/utils'
+import { apiClient } from '@/api/client'
 
 interface SettingsStore extends AppSettings {
   loaded: boolean
+  // Provider 列表（与 server /api/config/providers 同步），供 TopBar 快速切换与 SettingsDialog 编辑共用
+  providers: ProviderInfo[]
+  defaultModel: string
+  providersLoading: boolean
+  providersError: string | null
   load: () => Promise<void>
   update: (patch: Partial<AppSettings>) => Promise<void>
   setServerUrl: (url: string) => Promise<void>
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>
+  loadProviders: () => Promise<void>
+  setDefaultModel: (provider: string) => Promise<void>
 }
 
 // Persistence layer
@@ -33,6 +41,9 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       showReasoning: all?.showReasoning ?? DEFAULT_SETTINGS.showReasoning,
       autoScroll: all?.autoScroll ?? DEFAULT_SETTINGS.autoScroll,
       fontSize: all?.fontSize ?? DEFAULT_SETTINGS.fontSize,
+      ttsEnabled: all?.ttsEnabled ?? DEFAULT_SETTINGS.ttsEnabled,
+      ttsVoice: all?.ttsVoice || DEFAULT_SETTINGS.ttsVoice,
+      ttsSpeed: all?.ttsSpeed ?? DEFAULT_SETTINGS.ttsSpeed,
     }
   }
   // Browser dev fallback — localStorage
@@ -59,6 +70,9 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('showReasoning', settings.showReasoning)
     await api.set('autoScroll', settings.autoScroll)
     await api.set('fontSize', settings.fontSize)
+    await api.set('ttsEnabled', settings.ttsEnabled)
+    await api.set('ttsVoice', settings.ttsVoice)
+    await api.set('ttsSpeed', settings.ttsSpeed)
     return
   }
   localStorage.setItem('hakusai-settings', JSON.stringify(settings))
@@ -67,6 +81,10 @@ async function saveSettings(settings: AppSettings): Promise<void> {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...DEFAULT_SETTINGS,
   loaded: false,
+  providers: [],
+  defaultModel: 'deepseek',
+  providersLoading: false,
+  providersError: null,
 
   load: async () => {
     const loaded = await loadSettings()
@@ -96,5 +114,40 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set(next)
     await saveSettings(next)
     applyTheme(theme)
+  },
+
+  loadProviders: async () => {
+    set({ providersLoading: true, providersError: null })
+    try {
+      const resp = await apiClient.getProviders()
+      set({
+        providers: resp.providers,
+        defaultModel: resp.default_model,
+        providersLoading: false,
+      })
+    } catch (e: any) {
+      set({
+        providersLoading: false,
+        providersError: e?.message || 'Failed to load providers',
+      })
+    }
+  },
+
+  setDefaultModel: async (provider) => {
+    // optimistic update
+    const prev = get().providers
+    set({
+      defaultModel: provider,
+      providers: prev.map((p) => ({ ...p, is_default: p.id === provider })),
+    })
+    try {
+      await apiClient.setDefaultModel(provider)
+      // reload providers to confirm
+      await get().loadProviders()
+    } catch (e: any) {
+      // rollback
+      set({ providers: prev, defaultModel: get().defaultModel })
+      throw e
+    }
   },
 }))

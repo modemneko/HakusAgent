@@ -92,6 +92,19 @@
   background: hsl(var(--muted-foreground) / 0.5);
 }
 
+/* Settings dialog: prefer rounded-xl + transitions for cards/borders */
+@layer components {
+  .hk-card {
+    @apply rounded-xl border border-border bg-card/50 backdrop-blur-sm transition-all duration-200;
+  }
+  .hk-card-hover {
+    @apply hover:border-violet-500/50 hover:bg-accent/50;
+  }
+  .hk-input {
+    @apply rounded-lg border border-input bg-transparent transition-all duration-200 focus-visible:border-violet-500/50;
+  }
+}
+
 /* Markdown rendering styles */
 .markdown-body {
   @apply text-sm leading-relaxed;

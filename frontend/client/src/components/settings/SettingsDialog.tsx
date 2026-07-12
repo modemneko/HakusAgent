@@ -1,5 +1,31 @@
-import { useState, useEffect } from 'react'
-import { Server, Palette, Sliders, Info } from 'lucide-react'
+/**
+ * Settings Dialog — 左侧分类列表 + 右侧表单的现代留白布局.
+ *
+ * 9 个分类:
+ *   1. 模型配置 (Bot)
+ *   2. 角色 (User)
+ *   3. 对话 (MessageSquare)
+ *   4. 语音 TTS (Volume2)
+ *   5. 记忆 (Brain)
+ *   6. 工具与权限 (Shield)
+ *   7. 外观 (Palette)
+ *   8. 连接 (Server)
+ *   9. 高级 (Settings)
+ */
+
+import { useState } from 'react'
+import {
+  Bot,
+  User,
+  MessageSquare,
+  Volume2,
+  Brain,
+  Shield,
+  Palette,
+  Server,
+  Settings as SettingsIcon,
+  Info,
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -7,15 +33,47 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
-import { useSettingsStore } from '@/store/settings'
-import { useConnectionStore } from '@/store/connection'
-import { apiClient } from '@/api/client'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
+import { ModelPanel } from './panels/ModelPanel'
+import { CharacterPanel } from './panels/CharacterPanel'
+import { ChatPanel } from './panels/ChatPanel'
+import { TtsPanel } from './panels/TtsPanel'
+import { MemoryPanel } from './panels/MemoryPanel'
+import { ToolsPanel } from './panels/ToolsPanel'
+import { AppearancePanel } from './panels/AppearancePanel'
+import { ConnectionPanel } from './panels/ConnectionPanel'
+import { AdvancedPanel } from './panels/AdvancedPanel'
+
+type CategoryId =
+  | 'model'
+  | 'character'
+  | 'chat'
+  | 'tts'
+  | 'memory'
+  | 'tools'
+  | 'appearance'
+  | 'connection'
+  | 'advanced'
+
+interface Category {
+  id: CategoryId
+  label: string
+  desc: string
+  icon: typeof Bot
+}
+
+const CATEGORIES: Category[] = [
+  { id: 'model', label: '模型配置', desc: 'AI Provider 与 API Key', icon: Bot },
+  { id: 'character', label: '角色', desc: '人格与开场白', icon: User },
+  { id: 'chat', label: '对话', desc: '发送行为与显示', icon: MessageSquare },
+  { id: 'tts', label: '语音 TTS', desc: '语音合成与试听', icon: Volume2 },
+  { id: 'memory', label: '记忆', desc: '短期与长期记忆', icon: Brain },
+  { id: 'tools', label: '工具与权限', desc: '工具开关与权限模式', icon: Shield },
+  { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
+  { id: 'connection', label: '连接', desc: '服务地址与超时', icon: Server },
+  { id: 'advanced', label: '高级', desc: '诊断 / 导入导出 / 重启', icon: SettingsIcon },
+]
 
 interface SettingsDialogProps {
   open: boolean
@@ -23,212 +81,87 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const settings = useSettingsStore()
-  const connCheck = useConnectionStore((s) => s.check)
-  const connState = useConnectionStore((s) => s.state)
-  const connError = useConnectionStore((s) => s.error)
-
-  const [serverUrl, setServerUrl] = useState(settings.connection.serverUrl)
-  const [useWebSocket, setUseWebSocket] = useState(settings.connection.useWebSocket)
-  const [timeout, setTimeout] = useState(settings.connection.timeout)
-  const [testing, setTesting] = useState(false)
-
-  useEffect(() => {
-    if (open) {
-      setServerUrl(settings.connection.serverUrl)
-      setUseWebSocket(settings.connection.useWebSocket)
-      setTimeout(settings.connection.timeout)
-    }
-  }, [open])
-
-  const handleSaveConnection = async () => {
-    await settings.update({
-      connection: { serverUrl, useWebSocket, timeout },
-    })
-    apiClient.setBaseUrl(serverUrl)
-    apiClient.setTimeout(timeout)
-    await connCheck(serverUrl)
-  }
-
-  const handleTestConnection = async () => {
-    setTesting(true)
-    apiClient.setBaseUrl(serverUrl)
-    await connCheck(serverUrl)
-    setTesting(false)
-  }
+  const [active, setActive] = useState<CategoryId>('model')
+  const activeCat = CATEGORIES.find((c) => c.id === active) || CATEGORIES[0]
+  const ActiveIcon = activeCat.icon
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>
-            Configure connection, appearance, and chat behavior.
-          </DialogDescription>
+      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0 sm:rounded-xl">
+        <DialogHeader className="border-b border-border px-6 py-4">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <ActiveIcon className="h-4 w-4 text-violet-500" />
+            设置 · {activeCat.label}
+          </DialogTitle>
+          <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="connection" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="connection" className="gap-1.5">
-              <Server className="h-3.5 w-3.5" /> Connection
-            </TabsTrigger>
-            <TabsTrigger value="appearance" className="gap-1.5">
-              <Palette className="h-3.5 w-3.5" /> Appearance
-            </TabsTrigger>
-            <TabsTrigger value="chat" className="gap-1.5">
-              <Sliders className="h-3.5 w-3.5" /> Chat
-            </TabsTrigger>
-          </TabsList>
+        <div className="grid grid-cols-[200px_1fr] gap-0" style={{ height: 'min(70vh, 640px)' }}>
+          {/* Left: categories */}
+          <nav
+            className="border-r border-border bg-muted/30 p-2"
+            aria-label="设置分类"
+          >
+            <ul className="space-y-0.5">
+              {CATEGORIES.map((c) => {
+                const Icon = c.icon
+                const isActive = c.id === active
+                return (
+                  <li key={c.id}>
+                    <button
+                      onClick={() => setActive(c.id)}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-all duration-200',
+                        isActive
+                          ? 'bg-violet-500/15 font-medium text-violet-500'
+                          : 'text-foreground/80 hover:bg-accent/60 hover:text-foreground',
+                      )}
+                      aria-current={isActive ? 'page' : undefined}
+                    >
+                      <Icon
+                        className={cn(
+                          'h-4 w-4 shrink-0',
+                          isActive ? 'text-violet-500' : 'text-muted-foreground',
+                        )}
+                      />
+                      <span className="truncate">{c.label}</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </nav>
 
-          {/* Connection tab */}
-          <TabsContent value="connection" className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="server-url">HakusAI Server URL</Label>
-              <Input
-                id="server-url"
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="http://localhost:8080"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                The URL of your HakusAI backend (FastAPI server from <code>src/hakusai_server/</code>).
-                Defaults to <code>http://localhost:8080</code>.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="timeout">Request timeout (ms)</Label>
-              <Input
-                id="timeout"
-                type="number"
-                value={timeout}
-                onChange={(e) => setTimeout(Number(e.target.value) || 30000)}
-                min={5000}
-                max={300000}
-                step={1000}
-              />
-            </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="ws-toggle">Use WebSocket (experimental)</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Use full-duplex WebSocket instead of SSE. Enables mid-stream interruption.
-                </p>
+          {/* Right: panel */}
+          <div className="relative">
+            <ScrollArea className="h-full">
+              <div className="p-6">
+                {active === 'model' && <ModelPanel />}
+                {active === 'character' && <CharacterPanel />}
+                {active === 'chat' && <ChatPanel />}
+                {active === 'tts' && <TtsPanel />}
+                {active === 'memory' && <MemoryPanel />}
+                {active === 'tools' && <ToolsPanel />}
+                {active === 'appearance' && <AppearancePanel />}
+                {active === 'connection' && <ConnectionPanel />}
+                {active === 'advanced' && <AdvancedPanel />}
               </div>
-              <Switch
-                id="ws-toggle"
-                checked={useWebSocket}
-                onCheckedChange={setUseWebSocket}
-              />
-            </div>
+            </ScrollArea>
+          </div>
+        </div>
 
-            <div className="flex items-center gap-2">
-              <Button onClick={handleSaveConnection} size="sm">Save</Button>
-              <Button onClick={handleTestConnection} variant="outline" size="sm" disabled={testing}>
-                {testing ? 'Testing...' : 'Test connection'}
-              </Button>
-              {connState === 'connected' && (
-                <span className="text-xs text-emerald-500">● Connected</span>
-              )}
-              {connState === 'error' && (
-                <span className="text-xs text-destructive" title={connError || ''}>
-                  ✕ {connError?.slice(0, 40) || 'Failed'}
-                </span>
-              )}
-            </div>
-          </TabsContent>
-
-          {/* Appearance tab */}
-          <TabsContent value="appearance" className="space-y-4">
-            <div className="space-y-2">
-              <Label>Theme</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['light', 'dark', 'system'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => settings.setTheme(t)}
-                    className={`rounded-md border p-3 text-sm capitalize transition-colors ${
-                      settings.theme === t
-                        ? 'border-violet-500 bg-violet-500/10 text-foreground'
-                        : 'border-border hover:bg-accent'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="space-y-2">
-              <Label htmlFor="font-size">Chat font size: {settings.fontSize}px</Label>
-              <input
-                id="font-size"
-                type="range"
-                min={12}
-                max={20}
-                step={1}
-                value={settings.fontSize}
-                onChange={(e) => settings.update({ fontSize: Number(e.target.value) })}
-                className="w-full"
-              />
-            </div>
-          </TabsContent>
-
-          {/* Chat tab */}
-          <TabsContent value="chat" className="space-y-4">
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="enter-toggle">Send on Enter</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Press Enter to send. Shift+Enter inserts a newline. When off, use Ctrl/Cmd+Enter.
-                </p>
-              </div>
-              <Switch
-                id="enter-toggle"
-                checked={settings.sendOnEnter}
-                onCheckedChange={(v) => settings.update({ sendOnEnter: v })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="reasoning-toggle">Show reasoning</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Display the model's chain-of-thought (Claude / O-series) when available.
-                </p>
-              </div>
-              <Switch
-                id="reasoning-toggle"
-                checked={settings.showReasoning}
-                onCheckedChange={(v) => settings.update({ showReasoning: v })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="autoscroll-toggle">Auto-scroll</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Automatically scroll to the latest message while streaming.
-                </p>
-              </div>
-              <Switch
-                id="autoscroll-toggle"
-                checked={settings.autoScroll}
-                onCheckedChange={(v) => settings.update({ autoScroll: v })}
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
-
-        <Separator />
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <Info className="h-3 w-3" /> Settings are stored locally via electron-store.
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-border bg-muted/30 px-6 py-3">
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Info className="h-3 w-3" />
+            客户端设置本地持久化；模型/角色/工具配置写入 ~/.hakus/config.yaml
           </span>
-          <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            关闭
+          </button>
         </div>
       </DialogContent>
     </Dialog>

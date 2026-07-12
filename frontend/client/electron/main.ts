@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import Store from 'electron-store'
-import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer } from './sidecar'
+import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
 
 // In CommonJS context, __dirname is a Node global (declared by @types/node).
 // vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
@@ -18,6 +18,9 @@ interface PersistedSettings {
   showReasoning: boolean
   autoScroll: boolean
   fontSize: number
+  ttsEnabled: boolean
+  ttsVoice: string
+  ttsSpeed: number
 }
 
 const store = new Store<PersistedSettings>({
@@ -32,6 +35,9 @@ const store = new Store<PersistedSettings>({
     showReasoning: true,
     autoScroll: true,
     fontSize: 14,
+    ttsEnabled: false,
+    ttsVoice: 'zh-CN-XiaoxiaoNeural',
+    ttsSpeed: 1.0,
   },
 })
 
@@ -137,6 +143,16 @@ ipcMain.handle('sidecar:status', () => {
 // IPC: get sidecar log buffer (recent stdout/stderr lines)
 ipcMain.handle('sidecar:logs', () => {
   return getSidecarLogBuffer()
+})
+
+// IPC: restart the sidecar (stop + spawn fresh)
+ipcMain.handle('sidecar:restart', async () => {
+  try {
+    const result = await restartSidecar()
+    return { ok: !result.error, port: result.port, error: result.error, logPath: result.logPath }
+  } catch (e: any) {
+    return { ok: false, port: null, error: e?.message || String(e), logPath: null }
+  }
 })
 
 // Stop sidecar on quit

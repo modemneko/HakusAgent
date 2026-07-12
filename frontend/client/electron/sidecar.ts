@@ -327,6 +327,22 @@ export function stopSidecar(): void {
   }
 }
 
+/** Restart the sidecar: stop the current process (if any) and start a fresh one. */
+export async function restartSidecar(): Promise<{
+  port: number | null
+  error: string | null
+  logPath: string
+}> {
+  writeLog('Restart requested...')
+  stopSidecar()
+  // Give the OS a moment to release the port
+  await new Promise((r) => setTimeout(r, 500))
+  lastError = null
+  lastExitCode = null
+  detectedPort = null
+  return startSidecar()
+}
+
 export function getDetectedPort(): number | null {
   return detectedPort
 }

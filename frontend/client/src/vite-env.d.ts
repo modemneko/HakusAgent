@@ -6,6 +6,11 @@ interface ElectronAPI {
     set: (key: string, value: unknown) => Promise<void>
     getAll: () => Promise<Record<string, any>>
   }
+  sidecar: {
+    status: () => Promise<any>
+    logs: () => Promise<string[]>
+    restart: () => Promise<{ ok: boolean; port: number | null; error: string | null; logPath: string | null }>
+  }
   platform: NodeJS.Platform
   versions: {
     electron: string
