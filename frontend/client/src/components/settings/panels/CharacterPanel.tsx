@@ -41,10 +41,21 @@ export function CharacterPanel() {
 
   useEffect(() => {
     let cancelled = false
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
     ;(async () => {
       setLoading(true)
       try {
-        const ch: CharacterInfo = await apiClient.getCharacter()
+        // 硬超时 12s — 防止 fetch 永远挂起（Windows localhost IPv6 防火墙问题）
+        const fetchPromise = apiClient.getCharacter()
+        timeoutHandle = setTimeout(() => {
+          if (!cancelled) {
+            console.error('[CharacterPanel] getCharacter timed out after 12s')
+            setLoading(false)
+            toast.error('加载角色信息超时（10s），请检查 sidecar 是否正常')
+          }
+        }, 12000)
+        const ch: CharacterInfo = await fetchPromise
+        if (timeoutHandle) clearTimeout(timeoutHandle)
         if (cancelled) return
         const next: FormState = {
           name: ch.name || '',
@@ -57,6 +68,9 @@ export function CharacterPanel() {
         setForm(next)
         setOriginal(next)
       } catch (e: any) {
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+        if (cancelled) return
+        console.error('[CharacterPanel] getCharacter failed:', e)
         toast.error(`加载角色信息失败：${e?.message || e}`)
       } finally {
         if (!cancelled) setLoading(false)
@@ -64,6 +78,7 @@ export function CharacterPanel() {
     })()
     return () => {
       cancelled = true
+      if (timeoutHandle) clearTimeout(timeoutHandle)
     }
   }, [toast])
 
@@ -105,9 +120,14 @@ export function CharacterPanel() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center py-12 text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        加载角色信息...
+      <div className="space-y-3 py-12">
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          加载角色信息...
+        </div>
+        <div className="text-center text-[11px] text-muted-foreground">
+          如果超过 10s 未响应，将自动显示错误信息
+        </div>
       </div>
     )
   }

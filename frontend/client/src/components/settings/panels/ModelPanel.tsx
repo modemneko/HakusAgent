@@ -47,6 +47,7 @@ export function ModelPanel() {
   const providersLoading = useSettingsStore((s) => s.providersLoading)
   const providersError = useSettingsStore((s) => s.providersError)
   const loadProviders = useSettingsStore((s) => s.loadProviders)
+  const resetProvidersLoading = useSettingsStore((s) => s.resetProvidersLoading)
   const defaultModel = useSettingsStore((s) => s.defaultModel)
 
   const [selectedId, setSelectedId] = useState<string>('')
@@ -58,11 +59,22 @@ export function ModelPanel() {
   const [saving, setSaving] = useState(false)
 
   // 初次加载拉 provider 列表
+  // 关键修复：如果上一次 loadProviders 卡死（providersLoading=true 超过 15s），
+  // 先 reset 再重新加载，避免永远卡在 loading 状态。
   useEffect(() => {
-    if (providers.length === 0 && !providersLoading) {
+    const state = useSettingsStore.getState()
+    if (state.providersLoading && state.providersLoadingSince) {
+      const elapsed = Date.now() - state.providersLoadingSince
+      if (elapsed > 12000) {
+        // 视为卡死，强制重置
+        console.warn(`[ModelPanel] resetting stuck providersLoading (elapsed=${elapsed}ms)`)
+        resetProvidersLoading()
+      }
+    }
+    if (useSettingsStore.getState().providers.length === 0 && !useSettingsStore.getState().providersLoading) {
       loadProviders()
     }
-  }, [providers.length, providersLoading, loadProviders])
+  }, [loadProviders, resetProvidersLoading])
 
   // 默认选中 is_default 或第一个
   useEffect(() => {
@@ -122,9 +134,14 @@ export function ModelPanel() {
 
   if (providersLoading && providers.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center py-12 text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        加载 provider 列表...
+      <div className="space-y-3 py-12">
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          加载 provider 列表...
+        </div>
+        <div className="text-center text-[11px] text-muted-foreground">
+          如果超过 10s 未响应，将自动显示错误信息
+        </div>
       </div>
     )
   }
@@ -133,7 +150,12 @@ export function ModelPanel() {
     return (
       <div className="space-y-3 py-6">
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
-          加载失败：{providersError}
+          <div className="mb-1 font-medium">加载 Provider 列表失败</div>
+          <div className="break-all text-[12px] text-red-500/80">{providersError}</div>
+          <div className="mt-2 text-[11px] text-muted-foreground">
+            请确认 sidecar 已启动且 /api/config/providers 可访问。
+            可尝试「高级 → 重启 Sidecar」或在「连接」页检查服务地址。
+          </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => loadProviders()}>
           重试

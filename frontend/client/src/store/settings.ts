@@ -15,11 +15,15 @@ interface SettingsStore extends AppSettings {
   defaultModel: string
   providersLoading: boolean
   providersError: string | null
+  // 上一次 loadProviders 开始的时间戳（ms），用于检测卡死的 loading 状态
+  providersLoadingSince: number | null
   load: () => Promise<void>
   update: (patch: Partial<AppSettings>) => Promise<void>
   setServerUrl: (url: string) => Promise<void>
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>
   loadProviders: () => Promise<void>
+  /** 强制重置 provider 加载状态（用于从卡死的 loading 中恢复） */
+  resetProvidersLoading: () => void
   setDefaultModel: (provider: string) => Promise<void>
 }
 
@@ -85,6 +89,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   defaultModel: 'deepseek',
   providersLoading: false,
   providersError: null,
+  providersLoadingSince: null,
 
   load: async () => {
     const loaded = await loadSettings()
@@ -116,19 +121,36 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     applyTheme(theme)
   },
 
+  resetProvidersLoading: () => {
+    set({ providersLoading: false, providersError: null, providersLoadingSince: null })
+  },
+
   loadProviders: async () => {
-    set({ providersLoading: true, providersError: null })
+    // 防止重复调用：如果已经在 loading 且不超过 15s，跳过
+    const state = get()
+    if (state.providersLoading && state.providersLoadingSince) {
+      const elapsed = Date.now() - state.providersLoadingSince
+      if (elapsed < 15000) {
+        return // 另一个调用正在进行
+      }
+      // 超过 15s 视为卡死，继续重新加载
+      console.warn(`[settings] providers loading stuck for ${elapsed}ms, force-reloading`)
+    }
+    set({ providersLoading: true, providersError: null, providersLoadingSince: Date.now() })
     try {
       const resp = await apiClient.getProviders()
       set({
-        providers: resp.providers,
-        defaultModel: resp.default_model,
+        providers: resp.providers || [],
+        defaultModel: resp.default_model || 'deepseek',
         providersLoading: false,
+        providersLoadingSince: null,
       })
     } catch (e: any) {
+      console.error('[settings] loadProviders failed:', e)
       set({
         providersLoading: false,
         providersError: e?.message || 'Failed to load providers',
+        providersLoadingSince: null,
       })
     }
   },

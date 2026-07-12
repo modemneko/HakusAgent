@@ -66,35 +66,70 @@ export class HakusAIClient {
     this.timeout = timeout
   }
 
+  /**
+   * 带硬超时的 fetch — 即使 AbortSignal.timeout 因平台 bug 不触发，
+   * Promise.race 也会在 hardTimeoutMs 后强制 reject。
+   *
+   * 这解决了 Windows 上 fetch 到 localhost（可能解析到 IPv6 ::1）被
+   * 防火墙 stealth-drop 导致无限挂起的问题。
+   */
+  private async fetchWithHardTimeout(
+    url: string,
+    init: RequestInit = {},
+    hardTimeoutMs: number = 12000,
+  ): Promise<Response> {
+    const abortCtrl = new AbortController()
+    const signalTimeout = AbortSignal.timeout(hardTimeoutMs)
+    // 任一信号 abort 都会 abort 请求
+    const onSignalAbort = () => abortCtrl.abort()
+    if (signalTimeout.aborted) abortCtrl.abort()
+    else signalTimeout.addEventListener('abort', onSignalAbort, { once: true })
+
+    const hardTimeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        abortCtrl.abort()
+        reject(new HakusAIError(`Request timed out after ${hardTimeoutMs}ms: ${url}`, 'TIMEOUT'))
+      }, hardTimeoutMs + 500) // 比 AbortSignal.timeout 晚 500ms，作为兜底
+    })
+
+    const fetchPromise = fetch(url, {
+      ...init,
+      signal: abortCtrl.signal,
+    })
+
+    try {
+      return await Promise.race([fetchPromise, hardTimeoutPromise])
+    } finally {
+      signalTimeout.removeEventListener('abort', onSignalAbort)
+    }
+  }
+
   // ============ REST endpoints ============
 
   async health(): Promise<HealthResponse> {
-    const res = await fetch(`${this.baseUrl}/health`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/health`, {}, 8000)
     if (!res.ok) throw new HakusAIError(`Health check failed: ${res.status}`)
     return res.json()
   }
 
   async getConfig(): Promise<AppConfig> {
-    const res = await fetch(`${this.baseUrl}/api/config`)
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get config failed: ${res.status}`)
     return res.json()
   }
 
   async getCharacter(): Promise<CharacterInfo> {
-    const res = await fetch(`${this.baseUrl}/api/character`)
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get character failed: ${res.status}`)
     return res.json()
   }
 
   async updateCharacter(body: UpdateCharacterBody): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/character/update`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Update character failed: ${res.status} ${await res.text()}`)
     }
@@ -103,32 +138,28 @@ export class HakusAIClient {
   // ============ Provider / Model 配置 ============
 
   async getProviders(): Promise<ProvidersResponse> {
-    const res = await fetch(`${this.baseUrl}/api/config/providers`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get providers failed: ${res.status}`)
     return res.json()
   }
 
   async updateProvider(body: UpdateProviderBody): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/config/providers`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Update provider failed: ${res.status} ${await res.text()}`)
     }
   }
 
   async setDefaultModel(provider: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/config/default-model`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/default-model`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Set default model failed: ${res.status} ${await res.text()}`)
     }
@@ -137,59 +168,51 @@ export class HakusAIClient {
   // ============ 记忆系统 ============
 
   async getMemoryDetails(): Promise<MemoryDetails> {
-    const res = await fetch(`${this.baseUrl}/api/memory/details`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/memory/details`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get memory details failed: ${res.status}`)
     return res.json()
   }
 
   async clearMemory(): Promise<void> {
-    await fetch(`${this.baseUrl}/api/memory/clear`, { method: 'POST' })
+    await this.fetchWithHardTimeout(`${this.baseUrl}/api/memory/clear`, { method: 'POST' }, 10000)
   }
 
   async getMemoryStats(): Promise<Record<string, any>> {
-    const res = await fetch(`${this.baseUrl}/api/memory/stats`)
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/memory/stats`, {}, 10000)
     return res.json()
   }
 
   // ============ 工具与权限 ============
 
   async getTools(): Promise<ToolsResponse> {
-    const res = await fetch(`${this.baseUrl}/api/tools`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tools`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get tools failed: ${res.status}`)
     return res.json()
   }
 
   async toggleTool(tool_id: string, enabled: boolean): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/tools/toggle`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tools/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tool_id, enabled }),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Toggle tool failed: ${res.status} ${await res.text()}`)
     }
   }
 
   async getPermission(): Promise<PermissionInfo> {
-    const res = await fetch(`${this.baseUrl}/api/permission`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/permission`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get permission failed: ${res.status}`)
     return res.json()
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/permission`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/permission`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Set permission failed: ${res.status} ${await res.text()}`)
     }
@@ -198,24 +221,21 @@ export class HakusAIClient {
   // ============ 配置导出/导入 / 重载 ============
 
   async reloadConfig(): Promise<void> {
-    await fetch(`${this.baseUrl}/api/config/reload`, { method: 'POST' })
+    await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/reload`, { method: 'POST' }, 10000)
   }
 
   async exportConfig(): Promise<ExportConfigResponse> {
-    const res = await fetch(`${this.baseUrl}/api/config/export`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/export`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Export config failed: ${res.status}`)
     return res.json()
   }
 
   async importConfig(config: Record<string, any>): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/config/import`, {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config }),
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    }, 10000)
     if (!res.ok) {
       throw new HakusAIError(`Import config failed: ${res.status} ${await res.text()}`)
     }
@@ -224,9 +244,7 @@ export class HakusAIClient {
   // ============ 诊断 ============
 
   async getDiagnostics(): Promise<DiagnosticsInfo> {
-    const res = await fetch(`${this.baseUrl}/api/diagnostics`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/diagnostics`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get diagnostics failed: ${res.status}`)
     return res.json()
   }
@@ -244,9 +262,7 @@ export class HakusAIClient {
   }
 
   async getTtsVoices(): Promise<TtsVoicesResponse> {
-    const res = await fetch(`${this.baseUrl}/api/tts/voices`, {
-      signal: AbortSignal.timeout(this.timeout),
-    })
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tts/voices`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get TTS voices failed: ${res.status}`)
     return res.json()
   }

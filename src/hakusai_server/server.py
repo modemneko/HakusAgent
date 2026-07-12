@@ -528,6 +528,26 @@ class HakusAIServer:
     def _register_routes(self, app: FastAPI):
         """注册API路由"""
         
+        # 中间件：记录所有 /api/ 请求的耗时和状态码，方便诊断"卡住"问题
+        @app.middleware("http")
+        async def log_api_requests(request, call_next):
+            path = request.url.path
+            if path.startswith("/api/") or path == "/health":
+                t0 = time.time()
+                try:
+                    response = await call_next(request)
+                    dt = (time.time() - t0) * 1000
+                    if dt > 1000:  # 超过 1s 的请求记 warning
+                        logger.warning(f"SLOW {request.method} {path} -> {response.status_code} in {dt:.0f}ms")
+                    else:
+                        logger.info(f"{request.method} {path} -> {response.status_code} in {dt:.0f}ms")
+                    return response
+                except Exception as e:
+                    dt = (time.time() - t0) * 1000
+                    logger.error(f"ERROR {request.method} {path} -> {e} in {dt:.0f}ms")
+                    raise
+            return await call_next(request)
+        
         @app.get("/")
         async def root():
             """根路径"""
@@ -1162,15 +1182,31 @@ class HakusAIServer:
         
         @app.get("/api/character")
         async def get_character():
-            """获取角色信息"""
-            char = config_manager.config.character
+            """获取角色信息 — 直接从 ~/.hakus/config.yaml 读取，确保返回用户实际配置而非默认值"""
+            import os, yaml as _yaml
+            from pathlib import Path as _Path
+            config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+            raw: dict = {}
+            if config_path.exists():
+                try:
+                    raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    raw = {}
+            char = raw.get("character", {}) or {}
+            # 同时获取 avatar_type（兼容旧逻辑）
+            avatar_type = "live2d"
+            try:
+                av = config_manager.config.avatar.type
+                avatar_type = av.value if hasattr(av, "value") else str(av)
+            except Exception:
+                pass
             return {
-                "name": char.name,
-                "nickname": char.nickname,
-                "personality": char.personality,
-                "scenario": char.scenario,
-                "first_message": char.first_message,
-                "avatar_type": config_manager.config.avatar.type,
+                "name": char.get("name", "小雪"),
+                "nickname": char.get("nickname"),
+                "personality": char.get("personality", "你是一个温柔善良的AI助手"),
+                "scenario": char.get("scenario"),
+                "first_message": char.get("first_message"),
+                "avatar_type": avatar_type,
             }
         
         # ========== 记忆API ==========
