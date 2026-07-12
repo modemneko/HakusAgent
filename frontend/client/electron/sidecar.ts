@@ -157,11 +157,21 @@ export function startSidecar(): Promise<{
         detectedPort = Number(m[1])
         writeLog(`Detected port: ${detectedPort}`)
         // Now wait for /health to actually respond before resolving.
-        waitForHealth(detectedPort!, 30000).then((ok) => {
+        // Phase 1: timeout reduced from 30s → 15s, because /health now returns
+        // 200 within ~1s of the Python process starting (AI init is async).
+        // If we get to 15s without healthy/degraded/failed, something is
+        // genuinely wrong (e.g. Python crash, port conflict).
+        waitForHealth(detectedPort!, 15000).then((ok) => {
           if (ok) {
-            finish(detectedPort, null)
+            // Even if status=failed, we still resolve OK so the UI can load
+            // and surface /api/diagnostics. lastError is preserved for
+            // getSidecarStatus() to expose.
+            finish(detectedPort, lastError)
           } else {
-            lastError = `Sidecar started on port ${detectedPort} but /health did not respond within 30s`
+            // True timeout — /health never reached a terminal state.
+            lastError = lastError
+              ? `Sidecar health check failed: ${lastError}`
+              : `Sidecar started on port ${detectedPort} but /health did not reach a terminal state within 15s. Check ${getLogPath()} for details.`
             writeLog(lastError)
             finish(null, lastError)
           }
@@ -219,25 +229,74 @@ export function startSidecar(): Promise<{
   })
 }
 
-/** Poll /health until it returns 200 or timeout. */
+/** Poll /health until it returns a terminal status (healthy|degraded|failed) or timeout.
+ *
+ * Phase 1 change: server now always returns 200 with a `status` field:
+ *   - "starting" | "initializing": keep polling (AI init still in progress)
+ *   - "healthy" | "degraded":      success — core chat is usable
+ *   - "failed":                    success — HTTP is up, but AI init failed
+ *                                  (e.g. missing API key). The UI can still
+ *                                  load; it should query /api/diagnostics
+ *                                  and show a configuration dialog so the
+ *                                  user can fix the issue without restarting.
+ *
+ * This means the sidecar will be detected as ready within ~1s of the Python
+ * process starting, regardless of AI init outcome. The 30s timeout is gone.
+ */
 async function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
   const url = `http://127.0.0.1:${port}/health`
   const deadline = Date.now() + timeoutMs
   writeLog(`Waiting for ${url} to respond...`)
+  let lastStatus: string | null = null
+  let lastError: string | null = null
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(2000),
       })
       if (res.ok) {
-        writeLog(`Health check OK (${res.status})`)
-        return true
+        const body = (await res.json().catch(() => ({}))) as {
+          status?: string
+          error?: string
+          ready?: boolean
+        }
+        const status = body.status ?? 'unknown'
+        if (status !== lastStatus) {
+          writeLog(`Health status: ${status}${body.error ? ` (error: ${body.error})` : ''}`)
+          lastStatus = status
+          if (body.error) lastError = body.error
+        }
+        // healthy / degraded: HTTP & core components are usable
+        if (status === 'healthy' || status === 'degraded') {
+          writeLog(`Health check OK (status=${status})`)
+          return true
+        }
+        // failed: HTTP is up but AI components couldn't init. We still return
+        // true so the UI can load and show /api/diagnostics to the user —
+        // they can then configure API key from inside the app instead of
+        // staring at a "sidecar 30s timeout" error.
+        if (status === 'failed') {
+          writeLog(`Health check: sidecar HTTP up but AI init FAILED — letting UI load so user can see diagnostics.`)
+          if (body.error) lastError = body.error
+          // Stash the structured error so getSidecarStatus() can expose it
+          lastError = `[status=failed] ${body.error || 'AI init failed — see /api/diagnostics'}`
+          return true
+        }
+        // starting / initializing / unknown: keep polling
+      } else {
+        // Non-200 — server is up but returned an error code. Keep polling,
+        // since this can happen briefly during startup.
+        writeLog(`Health check returned ${res.status}, retrying...`)
       }
-      writeLog(`Health check returned ${res.status}, retrying...`)
     } catch (e: any) {
       // Connection refused is expected during startup; only log every 5th attempt
     }
     await new Promise((r) => setTimeout(r, 500))
+  }
+  if (lastError) {
+    writeLog(`Health check timed out after ${timeoutMs}ms. Last status: ${lastStatus}, last error: ${lastError}`)
+  } else {
+    writeLog(`Health check timed out after ${timeoutMs}ms. Last status: ${lastStatus ?? 'never responded'}`)
   }
   return false
 }

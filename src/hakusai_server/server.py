@@ -4,7 +4,9 @@ HakusAI 2.0 FastAPI服务器
 """
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
+from enum import Enum
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
@@ -26,6 +28,19 @@ from hakusai_core.voice.tts import tts_registry
 from .vtuber_websocket import vtuber_handler
 
 logger = logging.getLogger(__name__)
+
+
+# ========== 服务器状态机 ==========
+# /health 在 lifespan 起飞后立即返回 200，并通过 status 字段告诉客户端当前真实状态。
+# 这样 sidecar 健康检查不再因 AI 组件初始化失败而 30s 超时。
+
+class ServerState(str, Enum):
+    """服务器生命周期状态"""
+    STARTING = "starting"           # 进程刚启动，lifespan 还没跑
+    INITIALIZING = "initializing"   # lifespan 已 yield，AI 组件正在后台初始化
+    HEALTHY = "healthy"             # 所有关键组件就绪
+    DEGRADED = "degraded"           # 关键组件就绪，但部分可选组件（TTS/Memory）失败
+    FAILED = "failed"               # 关键组件（model/agent）初始化失败，但 HTTP 仍可响应
 
 
 # ========== 请求/响应模型 ==========
@@ -74,8 +89,37 @@ class HakusAIServer:
         # TTS组件
         self.tts_engine = None
         
+        # ---- 服务器状态机（Phase 1: /health 异步化）----
+        # /health 在 lifespan yield 后立即可用，并通过 self._state 暴露真实状态。
+        # AI 组件在后台 task 中初始化，失败不会阻塞 HTTP 服务。
+        self._state: ServerState = ServerState.STARTING
+        self._init_error: Optional[str] = None
+        self._init_started_at: Optional[float] = None
+        self._init_finished_at: Optional[float] = None
+        # 每个组件的初始化状态: {"model_adapter": "ok"|"failed: <msg>", "agent": "...", ...}
+        self._component_status: Dict[str, str] = {}
+        # 后台初始化任务
+        self._init_task: Optional[asyncio.Task] = None
+        # init 完成事件（无论成功失败都会 set），供 chat 端点等待
+        self._init_event: asyncio.Event = asyncio.Event()
+        
     async def _init_ai_components(self):
-        """初始化AI组件"""
+        """
+        初始化 AI 组件 — 故障容忍版本。
+        
+        Phase 1 关键改动：
+        - 每个组件单独 try/except，失败只记录不抛
+        - 关键组件（model_adapter / agent）失败 → state=FAILED
+        - 可选组件（memory / TTS / vtuber）失败 → state=DEGRADED
+        - 全部成功 → state=HEALTHY
+        - 无论结果如何，最后一定 set _init_event（让 chat 端点能感知"初始化已结束"）
+        """
+        self._init_started_at = time.time()
+        self._state = ServerState.INITIALIZING
+        logger.info("Starting AI components initialization (background)")
+        
+        critical_failure: Optional[str] = None
+        
         try:
             # 获取模型配置
             model_config = self.config.model.model_dump()
@@ -137,88 +181,198 @@ class HakusAIServer:
                     if api_key:
                         logger.info(f"Using API key from environment variable: {env_var}")
             
-            if api_key:
-                model_config["api_key"] = api_key
+            # Phase 1: 缺 API key 不再让 lifespan 失败，而是优雅降级到 FAILED 状态
+            # HTTP /health 仍然能响应，前端可以读到具体错误并提示用户配置
+            if not api_key:
+                env_var_map = {
+                    "deepseek": "DEEPSEEK_API_KEY",
+                    "gemini": "GEMINI_API_KEY",
+                    "openai": "OPENAI_API_KEY",
+                    "qwen": "DASHSCOPE_API_KEY",
+                    "glm": "GLM_API_KEY",
+                }
+                critical_failure = (
+                    f"Missing API key for provider '{provider}'. "
+                    f"Set {env_var_map.get(provider, 'API_KEY')} env var "
+                    f"or add api_keys.{provider}_api_key to config.yaml."
+                )
+                self._component_status["model_adapter"] = "failed: missing API key"
+                self._component_status["agent"] = "skipped: model_adapter unavailable"
+                self._component_status["memory"] = "skipped: not yet initialized"
+                self._component_status["tts_engine"] = "skipped: not yet initialized"
+                self._component_status["vtuber_handler"] = "skipped: agent unavailable"
+                self._component_status["agent_hooks"] = "skipped: agent or memory unavailable"
+                logger.error(critical_failure)
+                # 直接跳到收尾，不再尝试创建 model_adapter
+                raise RuntimeError(critical_failure)
+            
+            model_config["api_key"] = api_key
             
             # 创建模型适配器
             self.model_adapter = model_registry.create_adapter(provider, model_config)
             await self.model_adapter.initialize()
+            self._component_status["model_adapter"] = "ok"
             logger.info(f"Model adapter initialized: {provider}")
             
             # 创建Agent
             self.agent = BaseAgent(self.model_adapter)
+            self._component_status["agent"] = "ok"
             logger.info("BaseAgent initialized")
             
             # 初始化记忆系统
-            memory_config = MemoryStorage(
-                max_short_term=self.config.memory.short_term_max,
-                enable_long_term=self.config.memory.long_term_enabled,
-                auto_summary=self.config.memory.auto_summary,
-                summary_interval=self.config.memory.summary_interval,
-            )
-            self.memory = MemoryManager(memory_config)
-            await self.memory.initialize()
-            logger.info("Memory system initialized")
+            try:
+                memory_config = MemoryStorage(
+                    max_short_term=self.config.memory.short_term_max,
+                    enable_long_term=self.config.memory.long_term_enabled,
+                    auto_summary=self.config.memory.auto_summary,
+                    summary_interval=self.config.memory.summary_interval,
+                )
+                self.memory = MemoryManager(memory_config)
+                await self.memory.initialize()
+                self._component_status["memory"] = "ok"
+                logger.info("Memory system initialized")
+            except Exception as e:
+                self._component_status["memory"] = f"failed: {e}"
+                logger.warning(f"Memory init failed (degraded mode): {e}")
             
             # 初始化TTS引擎
-            if self.config.voice.enabled and str(self.config.voice.tts.provider) == "edge":
-                try:
+            try:
+                if self.config.voice.enabled and str(self.config.voice.tts.provider) == "edge":
                     tts_config = self.config.voice.tts.model_dump()
                     self.tts_engine = tts_registry.create_engine("edge", tts_config)
                     await self.tts_engine.initialize()
+                    self._component_status["tts_engine"] = "ok"
                     logger.info("TTS engine initialized")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize TTS: {e}")
-            
-            tts_config = {
-                "type": str(self.config.voice.tts.provider) if self.config.voice.enabled else "edge",
-            }
-            try:
-                import yaml
-                import re
-                import os
-
-                def _resolve_env_vars(obj):
-                    if isinstance(obj, str):
-                        def _replacer(m):
-                            var_name = m.group(1)
-                            default_val = m.group(2)
-                            return os.environ.get(var_name, default_val or '')
-                        return re.sub(r'\$\{(\w+)(?::([^}]*))?\}', _replacer, obj)
-                    elif isinstance(obj, dict):
-                        return {k: _resolve_env_vars(v) for k, v in obj.items()}
-                    elif isinstance(obj, list):
-                        return [_resolve_env_vars(item) for item in obj]
-                    return obj
-
-                with open("config.yaml", "r", encoding="utf-8") as f:
-                    old_config = yaml.safe_load(f)
-                old_config = _resolve_env_vars(old_config)
-                if old_config and "tts" in old_config:
-                    tts_config.update(old_config["tts"])
-                    tts_type = tts_config.get("type", "")
-                    if tts_type == "cosyvoice" and old_config.get("tts", {}).get("cosyvoice"):
-                        tts_config.update(old_config["tts"]["cosyvoice"])
-                    elif tts_type == "voxcpm":
-                        logger.info("TTS config: using VoxCPM engine")
+                else:
+                    self._component_status["tts_engine"] = "skipped: not edge provider or disabled"
             except Exception as e:
-                logger.warning(f"Failed to load TTS config: {e}")
+                self._component_status["tts_engine"] = f"failed: {e}"
+                logger.warning(f"TTS init failed (degraded mode): {e}")
+            
+            # 初始化 VTuber handler
+            try:
+                tts_config = {
+                    "type": str(self.config.voice.tts.provider) if self.config.voice.enabled else "edge",
+                }
+                try:
+                    import yaml
+                    import re
+                    import os
 
-            await vtuber_handler.initialize(
-                agent=self.agent,
-                model_adapter=self.model_adapter,
-                tts_config=tts_config
-            )
-            logger.info("VTuber WebSocket handler initialized")
+                    def _resolve_env_vars(obj):
+                        if isinstance(obj, str):
+                            def _replacer(m):
+                                var_name = m.group(1)
+                                default_val = m.group(2)
+                                return os.environ.get(var_name, default_val or '')
+                            return re.sub(r'\$\{(\w+)(?::([^}]*))?\}', _replacer, obj)
+                        elif isinstance(obj, dict):
+                            return {k: _resolve_env_vars(v) for k, v in obj.items()}
+                        elif isinstance(obj, list):
+                            return [_resolve_env_vars(item) for item in obj]
+                        return obj
+
+                    with open("config.yaml", "r", encoding="utf-8") as f:
+                        old_config = yaml.safe_load(f)
+                    old_config = _resolve_env_vars(old_config)
+                    if old_config and "tts" in old_config:
+                        tts_config.update(old_config["tts"])
+                        tts_type = tts_config.get("type", "")
+                        if tts_type == "cosyvoice" and old_config.get("tts", {}).get("cosyvoice"):
+                            tts_config.update(old_config["tts"]["cosyvoice"])
+                        elif tts_type == "voxcpm":
+                            logger.info("TTS config: using VoxCPM engine")
+                except Exception as e:
+                    logger.warning(f"Failed to load TTS config: {e}")
+
+                await vtuber_handler.initialize(
+                    agent=self.agent,
+                    model_adapter=self.model_adapter,
+                    tts_config=tts_config
+                )
+                self._component_status["vtuber_handler"] = "ok"
+                logger.info("VTuber WebSocket handler initialized")
+            except Exception as e:
+                self._component_status["vtuber_handler"] = f"failed: {e}"
+                logger.warning(f"VTuber handler init failed (degraded mode): {e}")
             
             # 设置Agent记忆钩子
-            if self.memory:
-                self.agent.add_hook("before_chat", self._before_chat_hook)
-                self.agent.add_hook("after_chat", self._after_chat_hook)
-                
+            if self.memory and self.agent:
+                try:
+                    self.agent.add_hook("before_chat", self._before_chat_hook)
+                    self.agent.add_hook("after_chat", self._after_chat_hook)
+                    self._component_status["agent_hooks"] = "ok"
+                except Exception as e:
+                    self._component_status["agent_hooks"] = f"failed: {e}"
+                    logger.warning(f"Agent hook setup failed: {e}")
+            else:
+                self._component_status["agent_hooks"] = "skipped: agent or memory unavailable"
+            
         except Exception as e:
-            logger.error(f"Failed to initialize AI components: {e}")
-            raise
+            # 关键组件失败 — 记录但不抛
+            if not critical_failure:
+                critical_failure = f"AI init critical failure: {e}"
+                logger.error(f"AI init critical failure: {e}", exc_info=True)
+        finally:
+            # 状态收尾
+            if critical_failure is not None:
+                self._state = ServerState.FAILED
+                self._init_error = critical_failure
+                logger.error(f"AI initialization FAILED (critical): {critical_failure}")
+            elif any(v.startswith("failed") for v in self._component_status.values()):
+                self._state = ServerState.DEGRADED
+                failed_optional = [
+                    name for name, st in self._component_status.items()
+                    if st.startswith("failed") and name not in ("model_adapter", "agent")
+                ]
+                self._init_error = (
+                    f"Some optional components failed: {', '.join(failed_optional)}. "
+                    f"Core chat is available."
+                ) if failed_optional else None
+                logger.warning(f"AI initialization DEGRADED: {self._init_error}")
+            else:
+                self._state = ServerState.HEALTHY
+                self._init_error = None
+                logger.info("AI initialization HEALTHY — all components ready")
+            
+            self._init_finished_at = time.time()
+            duration = self._init_finished_at - (self._init_started_at or self._init_finished_at)
+            logger.info(f"AI init finished in {duration:.2f}s — state={self._state.value}")
+            # 无论成功失败都 set，让 chat 端点能感知初始化已结束
+            self._init_event.set()
+    
+    async def _ensure_ready(self, timeout: float = 10.0) -> bool:
+        """
+        等待 AI 初始化完成（成功或失败）。
+        
+        - 返回 True: 初始化已结束（不代表成功，调用方需再检查 self.agent）
+        - 返回 False: 超时仍未结束
+        """
+        try:
+            await asyncio.wait_for(self._init_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+    
+    def _build_health_payload(self) -> Dict[str, Any]:
+        """构造 /health 响应体（lifespan 起飞后任何时刻都可调用）"""
+        ready = self.agent is not None
+        duration = None
+        if self._init_started_at and self._init_finished_at:
+            duration = round(self._init_finished_at - self._init_started_at, 2)
+        elif self._init_started_at:
+            duration = round(time.time() - self._init_started_at, 2)
+        return {
+            "status": self._state.value,
+            "ready": ready,
+            "version": "2.0.0",
+            "model_loaded": self.model_adapter is not None,
+            "agent_ready": self.agent is not None,
+            "memory_ready": self.memory is not None,
+            "tts_ready": self.tts_engine is not None,
+            "error": self._init_error,
+            "init_duration_s": duration,
+        }
     
     async def _before_chat_hook(self, user_input: str, context: AgentContext):
         """对话前钩子 - 加载记忆上下文"""
@@ -260,19 +414,67 @@ class HakusAIServer:
         
         @asynccontextmanager
         async def lifespan(app: FastAPI):
-            """应用生命周期管理"""
+            """
+            应用生命周期管理 — Phase 1 异步化版本。
+            
+            关键改动：AI 组件初始化不再阻塞 lifespan。我们：
+            1. 启动 event_bus
+            2. 把 _init_ai_components 丢到后台 task
+            3. 立即 yield，让 FastAPI 开始服务（/health 此刻可响应 status=initializing）
+            4. 关闭时：先等/取消后台 task，再优雅关闭组件
+            """
             # 启动时
             logger.info("Starting HakusAI Server...")
             await event_bus.start()
-            await self._init_ai_components()
+            # 标记进入初始化中（_init_ai_components 内部也会设）
+            self._state = ServerState.INITIALIZING
+            # 后台启动 AI 初始化 — 不阻塞 lifespan
+            self._init_task = asyncio.create_task(self._init_ai_components())
+            # 添加 done 回调，记录未捕获异常
+            def _log_init_failure(fut: asyncio.Task):
+                if fut.cancelled():
+                    logger.warning("AI init task was cancelled.")
+                    return
+                exc = fut.exception()
+                if exc is not None:
+                    # _init_ai_components 内部已 try/except，这里只是兜底
+                    logger.error(f"AI init task crashed unexpectedly: {exc}", exc_info=exc)
+            self._init_task.add_done_callback(_log_init_failure)
+            
             yield
+            
             # 关闭时
             logger.info("Shutting down HakusAI Server...")
+            # 如果 init 还没完成，等它结束（最多 5s），避免资源没释放
+            if self._init_task is not None and not self._init_task.done():
+                logger.info("Waiting for in-flight AI init to finish before shutdown...")
+                try:
+                    await asyncio.wait_for(self._init_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("AI init still running after 5s, cancelling...")
+                    self._init_task.cancel()
+                    try:
+                        await self._init_task
+                    except asyncio.CancelledError:
+                        pass
+                except Exception as e:
+                    logger.warning(f"AI init task raised during shutdown: {e}")
+            
+            # 优雅关闭已初始化的组件
             if self.memory:
-                await self.memory.close()
+                try:
+                    await self.memory.close()
+                except Exception as e:
+                    logger.warning(f"Memory close failed: {e}")
             if self.model_adapter:
-                await self.model_adapter.close()
-            await event_bus.stop()
+                try:
+                    await self.model_adapter.close()
+                except Exception as e:
+                    logger.warning(f"Model adapter close failed: {e}")
+            try:
+                await event_bus.stop()
+            except Exception as e:
+                logger.warning(f"Event bus stop failed: {e}")
         
         app = FastAPI(
             title="HakusAI API",
@@ -337,13 +539,50 @@ class HakusAIServer:
         
         @app.get("/health")
         async def health_check():
-            """健康检查"""
-            return {
-                "status": "healthy",
-                "version": "2.0.0",
-                "model_loaded": self.model_adapter is not None,
-                "agent_ready": self.agent is not None,
-            }
+            """
+            健康检查 — Phase 1 三态版本。
+            
+            始终返回 200（只要 FastAPI 起来了就返回），通过 status 字段告诉客户端真实状态：
+            - starting:      进程刚启动
+            - initializing:  AI 组件正在后台初始化
+            - healthy:       所有关键组件就绪，可正常对话
+            - degraded:      关键组件就绪，TTS/Memory 等可选组件部分失败
+            - failed:        关键组件初始化失败（如 API key 缺失），chat 不可用
+            
+            sidecar.ts 应当：
+            - status == healthy 或 degraded: 视为可用，停止轮询
+            - status == starting 或 initializing: 继续轮询
+            - status == failed: 立即停止轮询，向用户展示 error
+            """
+            return self._build_health_payload()
+        
+        @app.get("/api/diagnostics")
+        async def diagnostics():
+            """
+            诊断端点 — 返回详细的初始化状态，方便前端展示具体错误。
+            
+            用于 sidecar 健康检查失败时，UI 可以直接拉这个端点告诉用户
+            "你的 DeepSeek API key 没配" 而不是只显示 "sidecar 30s 超时"。
+            """
+            payload = self._build_health_payload()
+            payload["components"] = dict(self._component_status)
+            payload["init_started_at"] = self._init_started_at
+            payload["init_finished_at"] = self._init_finished_at
+            # 列出已注册的模型 provider
+            try:
+                payload["registered_providers"] = model_registry.list_providers()
+            except Exception:
+                payload["registered_providers"] = []
+            # 当前 provider 配置
+            try:
+                model_config = self.config.model.model_dump()
+                provider_value = model_config.get("provider", "deepseek")
+                provider = provider_value.value if hasattr(provider_value, 'value') else str(provider_value)
+                payload["configured_provider"] = provider
+                payload["configured_model_name"] = model_config.get("model_name")
+            except Exception as e:
+                payload["configured_provider"] = f"<error: {e}>"
+            return payload
         
         # ========== 聊天API ==========
         
@@ -359,8 +598,18 @@ class HakusAIServer:
                 "stream": false
             }
             """
+            # Phase 1: 如果还在初始化中，先等一下（最多 10s）
+            if not await self._ensure_ready(timeout=10.0):
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI still initializing, please retry in a few seconds"
+                )
+            # 初始化已结束但 agent 仍为 None → 一定是关键组件失败
             if not self.agent:
-                raise HTTPException(status_code=503, detail="Agent not initialized")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Agent not initialized: {self._init_error or 'unknown reason'}"
+                )
             
             try:
                 logger.info(f"Chat request: {request.message}")
@@ -402,8 +651,17 @@ class HakusAIServer:
             
             返回SSE流
             """
+            # Phase 1: 等初始化完成，否则发 503
+            if not await self._ensure_ready(timeout=10.0):
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI still initializing, please retry in a few seconds"
+                )
             if not self.agent:
-                raise HTTPException(status_code=503, detail="Agent not initialized")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Agent not initialized: {self._init_error or 'unknown reason'}"
+                )
             
             async def generate():
                 try:
@@ -443,8 +701,18 @@ class HakusAIServer:
             简单聊天接口（兼容前端）
             返回JSON格式
             """
+            # Phase 1: 等初始化完成
+            if not await self._ensure_ready(timeout=10.0):
+                return {
+                    "error": "AI still initializing, please retry in a few seconds",
+                    "success": False,
+                    "retry_after_s": 2,
+                }
             if not self.agent:
-                return {"error": "Agent not initialized", "success": False}
+                return {
+                    "error": f"Agent not initialized: {self._init_error or 'unknown reason'}",
+                    "success": False,
+                }
             
             try:
                 context = AgentContext(
@@ -631,27 +899,40 @@ class HakusAIServer:
                             {"content": content, "websocket_id": id(websocket)}
                         )
                         
-                        if self.agent:
-                            context = AgentContext(session_id=session_id)
-                            
-                            async for response in self.agent.chat(content, context, stream=True):
-                                await websocket.send_json({
-                                    "type": "stream",
-                                    "content": response.content,
-                                    "emotion": response.emotion,
-                                    "done": False
-                                })
-                            
-                            await websocket.send_json({
-                                "type": "stream",
-                                "content": "",
-                                "done": True
-                            })
-                        else:
+                        # Phase 1: 等 AI 初始化完成（最多 10s），仍没好就发 init_pending
+                        if not await self._ensure_ready(timeout=10.0):
                             await websocket.send_json({
                                 "type": "error",
-                                "message": "Agent not ready"
+                                "message": "AI still initializing, please retry in a few seconds",
+                                "code": "init_pending",
+                                "retry_after_s": 2,
                             })
+                            continue
+                        
+                        if not self.agent:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Agent not initialized: {self._init_error or 'unknown reason'}",
+                                "code": "init_failed",
+                                "diagnostics_url": "/api/diagnostics",
+                            })
+                            continue
+                        
+                        context = AgentContext(session_id=session_id)
+                        
+                        async for response in self.agent.chat(content, context, stream=True):
+                            await websocket.send_json({
+                                "type": "stream",
+                                "content": response.content,
+                                "emotion": response.emotion,
+                                "done": False
+                            })
+                        
+                        await websocket.send_json({
+                            "type": "stream",
+                            "content": "",
+                            "done": True
+                        })
                     
                     elif message_type == "ping":
                         await websocket.send_json({"type": "pong"})
