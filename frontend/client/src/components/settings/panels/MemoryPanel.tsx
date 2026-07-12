@@ -10,7 +10,8 @@ import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
-import { apiClient } from '@/api/client'
+import { apiClient, SidecarOutdatedError } from '@/api/client'
+import { SidecarOutdatedBanner } from '@/components/settings/SidecarOutdatedBanner'
 import type { MemoryDetails } from '@/api/types'
 
 export function MemoryPanel() {
@@ -20,15 +21,22 @@ export function MemoryPanel() {
   const [clearing, setClearing] = useState(false)
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [longTermLocal, setLongTermLocal] = useState(false)
+  const [outdatedError, setOutdatedError] = useState<SidecarOutdatedError | null>(null)
 
   const refresh = async () => {
     setLoading(true)
+    setOutdatedError(null)
     try {
       const d = await apiClient.getMemoryDetails()
       setDetails(d)
       setLongTermLocal(d.long_term_enabled)
     } catch (e: any) {
-      toast.error(`加载记忆状态失败：${e?.message || e}`)
+      console.error('[MemoryPanel] getMemoryDetails failed:', e)
+      if (e instanceof SidecarOutdatedError) {
+        setOutdatedError(e)
+      } else {
+        toast.error(`加载记忆状态失败：${e?.message || e}`)
+      }
     } finally {
       setLoading(false)
     }
@@ -59,6 +67,16 @@ export function MemoryPanel() {
 
   const stats = details?.stats || {}
   const statEntries = Object.entries(stats).filter(([, v]) => v !== null && v !== undefined)
+
+  if (outdatedError) {
+    return (
+      <SidecarOutdatedBanner
+        message={outdatedError.message}
+        sidecarVersion={outdatedError.sidecarVersion}
+        onRetry={refresh}
+      />
+    )
+  }
 
   return (
     <div className="space-y-5">

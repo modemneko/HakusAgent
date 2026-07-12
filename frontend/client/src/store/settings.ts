@@ -14,7 +14,8 @@ interface SettingsStore extends AppSettings {
   providers: ProviderInfo[]
   defaultModel: string
   providersLoading: boolean
-  providersError: string | null
+  // 保留 Error 对象本身（而不是 string），方便 UI 用 instanceof 判断 SidecarOutdatedError
+  providersError: Error | null
   // 上一次 loadProviders 开始的时间戳（ms），用于检测卡死的 loading 状态
   providersLoadingSince: number | null
   load: () => Promise<void>
@@ -149,7 +150,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       console.error('[settings] loadProviders failed:', e)
       set({
         providersLoading: false,
-        providersError: e?.message || 'Failed to load providers',
+        // 保留 Error 对象本身，UI 用 instanceof SidecarOutdatedError 判断
+        providersError: e instanceof Error ? e : new Error(String(e?.message || e)),
         providersLoadingSince: null,
       })
     }

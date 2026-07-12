@@ -14,7 +14,8 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
 import { useSettingsStore } from '@/store/settings'
-import { apiClient } from '@/api/client'
+import { apiClient, SidecarOutdatedError } from '@/api/client'
+import { SidecarOutdatedBanner } from '@/components/settings/SidecarOutdatedBanner'
 import { cn } from '@/lib/utils'
 import type { ProviderInfo } from '@/api/types'
 
@@ -147,11 +148,21 @@ export function ModelPanel() {
   }
 
   if (providersError && providers.length === 0) {
+    // 如果是 SidecarOutdatedError，显示专门的"sidecar 版本过旧"横幅
+    if (providersError instanceof SidecarOutdatedError) {
+      return (
+        <SidecarOutdatedBanner
+          message={providersError.message}
+          sidecarVersion={providersError.sidecarVersion}
+          onRetry={() => loadProviders()}
+        />
+      )
+    }
     return (
       <div className="space-y-3 py-6">
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
           <div className="mb-1 font-medium">加载 Provider 列表失败</div>
-          <div className="break-all text-[12px] text-red-500/80">{providersError}</div>
+          <div className="break-all text-[12px] text-red-500/80">{providersError.message}</div>
           <div className="mt-2 text-[11px] text-muted-foreground">
             请确认 sidecar 已启动且 /api/config/providers 可访问。
             可尝试「高级 → 重启 Sidecar」或在「连接」页检查服务地址。

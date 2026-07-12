@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
-import { apiClient } from '@/api/client'
+import { apiClient, SidecarOutdatedError } from '@/api/client'
+import { SidecarOutdatedBanner } from '@/components/settings/SidecarOutdatedBanner'
 import type { CharacterInfo } from '@/api/types'
 
 interface FormState {
@@ -38,12 +39,14 @@ export function CharacterPanel() {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY)
   const [original, setOriginal] = useState<FormState>(EMPTY)
+  const [outdatedError, setOutdatedError] = useState<SidecarOutdatedError | null>(null)
 
   useEffect(() => {
     let cancelled = false
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
     ;(async () => {
       setLoading(true)
+      setOutdatedError(null)
       try {
         // 硬超时 12s — 防止 fetch 永远挂起（Windows localhost IPv6 防火墙问题）
         const fetchPromise = apiClient.getCharacter()
@@ -71,7 +74,12 @@ export function CharacterPanel() {
         if (timeoutHandle) clearTimeout(timeoutHandle)
         if (cancelled) return
         console.error('[CharacterPanel] getCharacter failed:', e)
-        toast.error(`加载角色信息失败：${e?.message || e}`)
+        // 检测 sidecar 过旧，显示专门横幅而不是 toast
+        if (e instanceof SidecarOutdatedError) {
+          setOutdatedError(e)
+        } else {
+          toast.error(`加载角色信息失败：${e?.message || e}`)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -117,6 +125,21 @@ export function CharacterPanel() {
   }
 
   const handleReset = () => setForm({ ...original })
+
+  if (outdatedError) {
+    return (
+      <SidecarOutdatedBanner
+        message={outdatedError.message}
+        sidecarVersion={outdatedError.sidecarVersion}
+        onRetry={() => {
+          setOutdatedError(null)
+          setLoading(true)
+          // 重新触发 useEffect
+          setTimeout(() => window.location.reload(), 100)
+        }}
+      />
+    )
+  }
 
   if (loading) {
     return (

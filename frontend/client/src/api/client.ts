@@ -34,6 +34,7 @@ import type {
   DiagnosticsInfo,
   TtsVoicesResponse,
   ExportConfigResponse,
+  SidecarVersionInfo,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -42,6 +43,25 @@ export class HakusAIError extends Error {
   constructor(message: string, public code?: string) {
     super(message)
     this.name = 'HakusAIError'
+  }
+}
+
+/**
+ * Error thrown when the running sidecar is too old to support the endpoint
+ * the client just called (HTTP 404 with sidecar_api_version_int < expected).
+ *
+ * The user-visible message should explicitly tell the user to reinstall the
+ * client, because the bundled sidecar.exe wasn't replaced during upgrade.
+ */
+export class SidecarOutdatedError extends Error {
+  public readonly sidecarVersion: number | null
+  public readonly path: string
+
+  constructor(message: string, opts: { sidecarVersion?: number | null; path?: string } = {}) {
+    super(message)
+    this.name = 'SidecarOutdatedError'
+    this.sidecarVersion = opts.sidecarVersion ?? null
+    this.path = opts.path ?? ''
   }
 }
 
@@ -104,6 +124,58 @@ export class HakusAIClient {
     }
   }
 
+  /**
+   * 当 fetch 收到非 2xx 响应时调用。如果响应是 404 + 端点是 v0.1.0-beta.3 之后新加的，
+   * 抛出 SidecarOutdatedError 让上层 UI 给出"重新安装客户端"的明确提示，而不是
+   * 让用户对着 "Get providers failed: 404" 一头雾水。
+   */
+  private async _throwForResponse(res: Response, url: string, fallbackMsg: string): Promise<never> {
+    let body: any = null
+    try {
+      const text = await res.text()
+      try { body = JSON.parse(text) } catch { body = { detail: text } }
+    } catch {
+      body = {}
+    }
+
+    if (res.status === 404) {
+      const path = (() => {
+        try { return new URL(url).pathname } catch { return url }
+      })()
+      // 这些端点都是 v0.1.0-beta.3 (commit 16bd779) 之后新加的。
+      // 如果 sidecar 是 beta.2 或更早，所有这些端点都会 404。
+      const knownNewEndpoints = [
+        '/api/config/providers',
+        '/api/config/default-model',
+        '/api/character',
+        '/api/character/update',
+        '/api/memory/details',
+        '/api/tools',
+        '/api/tools/toggle',
+        '/api/permission',
+        '/api/config/export',
+        '/api/config/import',
+        '/api/version',
+      ]
+      const isNewEndpoint = knownNewEndpoints.some((p) => path.endsWith(p))
+      const sidecarVersion = typeof body?.sidecar_api_version_int === 'number'
+        ? body.sidecar_api_version_int
+        : null
+
+      if (isNewEndpoint || sidecarVersion !== null) {
+        throw new SidecarOutdatedError(
+          `Sidecar 版本过旧：端点 ${path} 不存在 (HTTP 404)。` +
+          `请重新下载并安装最新版客户端，让 sidecar.exe 同步更新。` +
+          (sidecarVersion !== null ? ` (sidecar API v${sidecarVersion})` : ''),
+          { sidecarVersion, path },
+        )
+      }
+    }
+
+    const detail = body?.detail || body?.error || body?.message || ''
+    throw new HakusAIError(`${fallbackMsg}: ${res.status} ${detail}`.trim())
+  }
+
   // ============ REST endpoints ============
 
   async health(): Promise<HealthResponse> {
@@ -112,15 +184,31 @@ export class HakusAIClient {
     return res.json()
   }
 
+  /**
+   * 查询 sidecar 的 API 版本。客户端启动时调用一次，检测 sidecar 是否过旧。
+   * - 如果端点本身 404（sidecar 是 v0.1.0-beta.2 或更早），返回 null。
+   * - 如果 fetch 失败（sidecar 没启动），返回 null。
+   * 调用方应该把 null 视为"版本未知"，不阻塞 UI 启动。
+   */
+  async getSidecarVersion(): Promise<SidecarVersionInfo | null> {
+    try {
+      const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/version`, {}, 5000)
+      if (!res.ok) return null
+      return await res.json() as SidecarVersionInfo
+    } catch {
+      return null
+    }
+  }
+
   async getConfig(): Promise<AppConfig> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get config failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config`, 'Get config failed')
     return res.json()
   }
 
   async getCharacter(): Promise<CharacterInfo> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get character failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/character`, 'Get character failed')
     return res.json()
   }
 
@@ -131,7 +219,7 @@ export class HakusAIClient {
       body: JSON.stringify(body),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Update character failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/character/update`, 'Update character failed')
     }
   }
 
@@ -139,7 +227,7 @@ export class HakusAIClient {
 
   async getProviders(): Promise<ProvidersResponse> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get providers failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config/providers`, 'Get providers failed')
     return res.json()
   }
 
@@ -150,7 +238,7 @@ export class HakusAIClient {
       body: JSON.stringify(body),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Update provider failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/providers`, 'Update provider failed')
     }
   }
 
@@ -161,7 +249,7 @@ export class HakusAIClient {
       body: JSON.stringify({ provider }),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Set default model failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/default-model`, 'Set default model failed')
     }
   }
 
@@ -169,7 +257,7 @@ export class HakusAIClient {
 
   async getMemoryDetails(): Promise<MemoryDetails> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/memory/details`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get memory details failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/memory/details`, 'Get memory details failed')
     return res.json()
   }
 
@@ -186,7 +274,7 @@ export class HakusAIClient {
 
   async getTools(): Promise<ToolsResponse> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tools`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get tools failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/tools`, 'Get tools failed')
     return res.json()
   }
 
@@ -197,13 +285,13 @@ export class HakusAIClient {
       body: JSON.stringify({ tool_id, enabled }),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Toggle tool failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/tools/toggle`, 'Toggle tool failed')
     }
   }
 
   async getPermission(): Promise<PermissionInfo> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/permission`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get permission failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/permission`, 'Get permission failed')
     return res.json()
   }
 
@@ -214,7 +302,7 @@ export class HakusAIClient {
       body: JSON.stringify({ mode }),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Set permission failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/permission`, 'Set permission failed')
     }
   }
 
@@ -226,7 +314,7 @@ export class HakusAIClient {
 
   async exportConfig(): Promise<ExportConfigResponse> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/export`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Export config failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config/export`, 'Export config failed')
     return res.json()
   }
 
@@ -237,7 +325,7 @@ export class HakusAIClient {
       body: JSON.stringify({ config }),
     }, 10000)
     if (!res.ok) {
-      throw new HakusAIError(`Import config failed: ${res.status} ${await res.text()}`)
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/import`, 'Import config failed')
     }
   }
 
@@ -245,7 +333,7 @@ export class HakusAIClient {
 
   async getDiagnostics(): Promise<DiagnosticsInfo> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/diagnostics`, {}, 10000)
-    if (!res.ok) throw new HakusAIError(`Get diagnostics failed: ${res.status}`)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/diagnostics`, 'Get diagnostics failed')
     return res.json()
   }
 

@@ -30,6 +30,19 @@ from .vtuber_websocket import vtuber_handler
 logger = logging.getLogger(__name__)
 
 
+# ========== 服务器 API 版本 ==========
+# 每次 sidecar 新增/变更 API 端点时，必须 bump 此版本号。
+# 桌面客户端启动时会 GET /api/version 检查 sidecar 是否过旧；
+# 如果版本不匹配，会提示用户重新下载最新版（而不是显示莫名其妙的 404）。
+#
+# 历史: v0.1.0-beta.3 用户报告 "Get providers failed:404"，根因是用户安装的
+# sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
+# 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
+# 对着 404 一头雾水。
+SIDECAR_API_VERSION = "0.2.0"
+SIDECAR_API_VERSION_INT = 2  # 整数版本，便于客户端比较
+
+
 # ========== 服务器状态机 ==========
 # /health 在 lifespan 起飞后立即返回 200，并通过 status 字段告诉客户端当前真实状态。
 # 这样 sidecar 健康检查不再因 AI 组件初始化失败而 30s 超时。
@@ -556,7 +569,35 @@ class HakusAIServer:
                 "version": "2.0.0",
                 "status": "running"
             }
-        
+
+        @app.get("/api/version")
+        async def get_version():
+            """
+            返回 sidecar API 版本 — 客户端用来检测 sidecar 是否过旧。
+
+            场景：用户更新了客户端 (electron app)，但 Windows NSIS 安装时
+            sidecar.exe 可能因为旧进程仍占用、杀软拦截、用户覆盖安装时
+            选了"保留旧文件"等原因没被替换。这时客户端会向旧 sidecar 发
+            请求，遇到一堆莫名其妙的 404。
+
+            客户端启动时调 /api/version，如果 version < 期望版本，直接
+            提示用户「sidecar 版本过旧，请重新下载最新版客户端」。
+            """
+            return {
+                "sidecar_api_version": SIDECAR_API_VERSION,
+                "sidecar_api_version_int": SIDECAR_API_VERSION_INT,
+                "server_version": "2.0.0",
+                "endpoints": [
+                    "/api/config/providers",
+                    "/api/character",
+                    "/api/memory/details",
+                    "/api/tools",
+                    "/api/permission",
+                    "/api/config/export",
+                    "/api/diagnostics",
+                ],
+            }
+
         @app.get("/health")
         async def health_check():
             """
@@ -1366,6 +1407,45 @@ class HakusAIServer:
         async def websocket_vtuber_session(websocket: WebSocket, session_id: str):
             """虚拟主播 WebSocket 接口（支持多会话）"""
             await vtuber_handler.handle_connection(websocket, session_id=session_id)
+
+        # ========== 自定义 404 / 500 JSON 处理器 ==========
+        # FastAPI 默认 404 返回 HTML ("{\"detail\":\"Not Found\"}")，前端 fetch
+        # 解析 JSON 会失败。这里改成统一返回 JSON，并加上 sidecar_api_version
+        # 字段，方便前端检测 "sidecar 版本过旧"（旧 sidecar 没有某个端点 → 404）。
+
+        @app.exception_handler(404)
+        async def not_found_handler(request, exc):
+            path = request.url.path
+            # SPA 路径（无 /api/ 前缀）依然返回 index.html，让前端路由处理
+            # 但因为我们在 mount 静态文件时已经注册了 catch-all，这里基本不会触发。
+            # /api/ 路径返回 JSON 404，附带 sidecar 版本提示。
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": "Not Found",
+                    "path": path,
+                    "sidecar_api_version": SIDECAR_API_VERSION,
+                    "sidecar_api_version_int": SIDECAR_API_VERSION_INT,
+                    "hint": (
+                        "This endpoint does not exist on the running sidecar. "
+                        "If you upgraded the desktop client but see this, the bundled "
+                        "sidecar.exe may be outdated. Reinstall the latest client "
+                        "to get a matching sidecar."
+                    ),
+                },
+            )
+
+        @app.exception_handler(500)
+        async def server_error_handler(request, exc):
+            logger.exception(f"500 error on {request.url.path}: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": str(exc) if exc else "Internal Server Error",
+                    "path": request.url.path,
+                    "sidecar_api_version": SIDECAR_API_VERSION,
+                },
+            )
     
     async def start(self):
         """启动服务器"""

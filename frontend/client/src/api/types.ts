@@ -36,6 +36,31 @@ export interface HealthResponse {
   agent_ready: boolean
 }
 
+/**
+ * /api/version 响应 — 客户端用来检测 sidecar 是否过旧。
+ *
+ * 场景：用户更新了客户端 (electron app)，但 Windows NSIS 安装时
+ * sidecar.exe 可能没被替换（旧进程占用 / 杀软拦截 / 覆盖安装保留旧文件）。
+ * 这时客户端会向旧 sidecar 发请求，遇到一堆 404。
+ *
+ * 客户端启动时调 /api/version，如果 sidecar_api_version_int < EXPECTED，
+ * 直接提示用户「sidecar 版本过旧，请重新下载最新版客户端」。
+ */
+export interface SidecarVersionInfo {
+  sidecar_api_version: string
+  sidecar_api_version_int: number
+  server_version: string
+  endpoints: string[]
+}
+
+/**
+ * 客户端期望的 sidecar API 版本。
+ * 必须与 src/hakusai_server/server.py 中的 SIDECAR_API_VERSION_INT 保持同步。
+ * 每次 sidecar 新增端点或变更 API 形状时，server.py 那边 bump 这个数字，
+ * 这里也要同步 bump，否则客户端不会提示用户升级。
+ */
+export const EXPECTED_SIDECAR_API_VERSION_INT = 2
+
 export interface AppConfig {
   version: string
   character: {

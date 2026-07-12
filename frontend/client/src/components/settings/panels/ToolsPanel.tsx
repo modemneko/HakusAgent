@@ -10,7 +10,8 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
-import { apiClient } from '@/api/client'
+import { apiClient, SidecarOutdatedError } from '@/api/client'
+import { SidecarOutdatedBanner } from '@/components/settings/SidecarOutdatedBanner'
 import { cn } from '@/lib/utils'
 import type { ToolInfo, PermissionMode } from '@/api/types'
 
@@ -46,9 +47,11 @@ export function ToolsPanel() {
   const [availableModes, setAvailableModes] = useState<string[]>(['auto', 'ask', 'bypass'])
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [settingPerm, setSettingPerm] = useState(false)
+  const [outdatedError, setOutdatedError] = useState<SidecarOutdatedError | null>(null)
 
   const refresh = async () => {
     setLoading(true)
+    setOutdatedError(null)
     try {
       const [toolsResp, permResp] = await Promise.all([
         apiClient.getTools(),
@@ -58,7 +61,12 @@ export function ToolsPanel() {
       setPermission(permResp.mode)
       setAvailableModes(permResp.available_modes)
     } catch (e: any) {
-      toast.error(`加载工具列表失败：${e?.message || e}`)
+      console.error('[ToolsPanel] load failed:', e)
+      if (e instanceof SidecarOutdatedError) {
+        setOutdatedError(e)
+      } else {
+        toast.error(`加载工具列表失败：${e?.message || e}`)
+      }
     } finally {
       setLoading(false)
     }
@@ -102,6 +110,13 @@ export function ToolsPanel() {
 
   return (
     <div className="space-y-5">
+      {outdatedError && (
+        <SidecarOutdatedBanner
+          message={outdatedError.message}
+          sidecarVersion={outdatedError.sidecarVersion}
+          onRetry={refresh}
+        />
+      )}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
