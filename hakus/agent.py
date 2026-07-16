@@ -431,7 +431,7 @@ class SubAgent:
 
 class AgentCore:
     def __init__(self, model_type: Optional[str] = None,
-                 permission_mode: PermissionMode = PermissionMode.AUTO,
+                 permission_mode: PermissionMode = PermissionMode.ASK,
                  confirm_callback: Optional[Callable[[str, str], bool]] = None,
                  max_iterations: int = 100, max_context_tokens: int = 200000,
                  working_dir: Optional[str] = None, session_id: Optional[str] = None,
@@ -3568,7 +3568,7 @@ _agent_cache_lock = threading.Lock()
 
 
 def get_agent_core(session_id: str, model_type: Optional[str] = None,
-                   permission_mode: PermissionMode = PermissionMode.AUTO,
+                   permission_mode: PermissionMode = PermissionMode.ASK,
                    confirm_callback: Optional[Callable[[str, str], bool]] = None) -> AgentCore:
     if session_id in _agent_cache:
         return _agent_cache[session_id]

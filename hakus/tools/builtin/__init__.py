@@ -16,10 +16,12 @@ from .file import (
     FileStat, MoveFile, MultiEditFile, ReadFile, ReadMultipleFiles,
     WriteFile,
 )
+from .git import ApplyPatch, GitDiff
 from .search import Glob, Grep
 from .shell import Bash
 from .task import TaskManage
 from .task_done import TaskDoneTool
+from .todo import TodoWrite
 from .web import WebFetch, WebSearch
 
 # Single source of truth for the canonical built-in tool list.
@@ -41,10 +43,13 @@ BUILTIN_TOOL_CLASSES = [
     Grep,               # local files — search
     ListDir,            # local files — browse
     Tree,               # local files — browse
+    GitDiff,            # git — inspect changes
+    ApplyPatch,         # git — apply unified diff
+    TodoWrite,          # plan — structured todo list
     WebSearch,          # network
     WebFetch,           # network
     BrowserUse,         # browser
-    TaskManage,         # tasks
+    TaskManage,         # long-running background tasks
     TaskDoneTool,       # task completion signal (trae-agent style)
 ]
 
@@ -56,6 +61,8 @@ __all__ = [
     "Bash",
     "Glob", "Grep",
     "ListDir", "Tree",
+    "GitDiff", "ApplyPatch",
+    "TodoWrite",
     "WebSearch", "WebFetch",
     "BrowserUse",
     "TaskManage",
