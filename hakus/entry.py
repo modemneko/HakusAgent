@@ -40,9 +40,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--permission", "-p",
         type=str,
-        choices=["auto", "ask", "bypass"],
-        default="auto",
-        help="权限模式 (default: auto)",
+        choices=["ask", "bypass", "danger_auto", "auto"],
+        default="ask",
+        help="权限模式 (default: ask). 'ask'=每次危险操作都确认; "
+             "'bypass'/'danger_auto'/'auto'=全部放行(仅受严格策略保护)",
     )
     parser.add_argument(
         "--voice", "-v",

@@ -4,6 +4,7 @@ HakusAI 2.0 FastAPI服务器
 """
 
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 from enum import Enum
@@ -26,6 +27,12 @@ from hakusai_core.agent import BaseAgent, AgentContext
 from hakusai_core.memory import MemoryManager, MemoryStorage
 from hakusai_core.voice.tts import tts_registry
 from .vtuber_websocket import vtuber_handler
+from .agent_bridge import (
+    run_turn_stream as agentcore_run_turn_stream,
+    run_turn_collect as agentcore_run_turn_collect,
+    clear_session_history as agentcore_clear_session,
+    get_or_create_agent as agentcore_get_or_create,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +46,14 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.2.0"
-SIDECAR_API_VERSION_INT = 2  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.3.0"
+SIDECAR_API_VERSION_INT = 3  # 整数版本，便于客户端比较
+
+# Toggle: when True, /api/chat* endpoints use hakus.AgentCore (24 tools,
+# permissions, AgentEvent stream). When False, fall back to the old
+# BaseAgent chat-only path (useful for debugging / bisecting).
+# Default True — the BaseAgent path is now considered legacy.
+USE_AGENTCORE_FOR_CHAT = os.environ.get("HAKUSAI_USE_AGENTCORE", "1") != "0"
 
 
 # ========== 服务器状态机 ==========
@@ -587,6 +600,8 @@ class HakusAIServer:
                 "sidecar_api_version": SIDECAR_API_VERSION,
                 "sidecar_api_version_int": SIDECAR_API_VERSION_INT,
                 "server_version": "2.0.0",
+                "use_agentcore_for_chat": USE_AGENTCORE_FOR_CHAT,
+                "agentcore_tools_count": 24,  # hakus/tools/builtin — kept in sync manually
                 "endpoints": [
                     "/api/config/providers",
                     "/api/character",
@@ -595,6 +610,31 @@ class HakusAIServer:
                     "/api/permission",
                     "/api/config/export",
                     "/api/diagnostics",
+                    "/api/agentcore/status",
+                ],
+            }
+
+        @app.get("/api/agentcore/status")
+        async def agentcore_status():
+            """Return AgentCore integration status.
+
+            Lets the desktop client verify that the sidecar is using
+            the new AgentCore path (24 tools + permissions + AgentEvent
+            stream) vs. the legacy BaseAgent chat-only path.
+            """
+            from .agent_bridge import _agent_cache
+            return {
+                "use_agentcore_for_chat": USE_AGENTCORE_FOR_CHAT,
+                "active_sessions": list(_agent_cache.keys()),
+                "session_count": len(_agent_cache),
+                "tools_available": USE_AGENTCORE_FOR_CHAT,
+                "permission_mode_default": "ask",
+                "auto_approve_in_sidecar": True,  # no UI to prompt
+                "stream_event_types": [
+                    "text_delta", "reasoning_delta",
+                    "tool_call_started", "tool_call_finished",
+                    "token_usage",
+                    "turn_completed", "turn_failed", "cancelled",
                 ],
             }
 
@@ -651,13 +691,17 @@ class HakusAIServer:
         async def chat(request: ChatRequest):
             """
             聊天接口（非流式）
-            
+
             请求体:
             {
                 "message": "你好",
                 "session_id": "default",
                 "stream": false
             }
+
+            当 USE_AGENTCORE_FOR_CHAT=True 时，走 hakus.AgentCore
+            (24 工具 + 权限流 + AgentEvent 协议); 否则回退到旧
+            BaseAgent 单轮聊天路径。
             """
             # Phase 1: 如果还在初始化中，先等一下（最多 10s）
             if not await self._ensure_ready(timeout=10.0):
@@ -665,52 +709,86 @@ class HakusAIServer:
                     status_code=503,
                     detail="AI still initializing, please retry in a few seconds"
                 )
-            # 初始化已结束但 agent 仍为 None → 一定是关键组件失败
+
+            # AgentCore 路径 — 不需要 self.agent (BaseAgent) 就绪，
+            # 它自己会 lazy-init LLM client。但要求 model_adapter 至少
+            # 初始化过（说明 API key 配了）—— 否则给具体错误。
+            if USE_AGENTCORE_FOR_CHAT:
+                if not self.model_adapter:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Model not initialized: {self._init_error or 'unknown reason'}"
+                    )
+                try:
+                    logger.info(f"Chat (AgentCore): {request.message[:80]}")
+                    result = await agentcore_run_turn_collect(
+                        request.message, request.session_id,
+                    )
+                    logger.info(
+                        f"Chat response: {result['content'][:100]}... "
+                        f"(iter={result.get('iterations')}, "
+                        f"in_tok={result.get('input_tokens')}, "
+                        f"out_tok={result.get('output_tokens')})"
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(f"AgentCore chat error: {e}", exc_info=True)
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            # 旧路径 (BaseAgent)
             if not self.agent:
                 raise HTTPException(
                     status_code=503,
                     detail=f"Agent not initialized: {self._init_error or 'unknown reason'}"
                 )
-            
+
             try:
                 logger.info(f"Chat request: {request.message}")
                 context = AgentContext(
                     session_id=request.session_id,
                     user_id="default"
                 )
-                
+
                 # 收集完整响应
                 full_content = ""
                 emotion = None
                 actions = []
-                
+
                 async for response in self.agent.chat(request.message, context, stream=False):
                     full_content = response.content
                     emotion = response.emotion
                     actions = response.actions
                     logger.debug(f"Response chunk: {response.content[:50]}...")
-                
+
                 logger.info(f"Chat response: {full_content[:100]}...")
-                
+
                 return {
                     "content": full_content,
                     "emotion": emotion,
                     "actions": actions,
                     "session_id": request.session_id
                 }
-                
+
             except Exception as e:
                 logger.error(f"Chat error: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @app.post("/api/chat/stream")
         async def chat_stream(request: ChatRequest):
             """
             聊天接口（流式）
-            
-            返回SSE流
+
+            返回SSE流。每个事件是 ``data: {json}\\n\\n``。
+
+            AgentCore 路径会发更丰富的事件类型 (event_type 字段):
+              - text_delta / reasoning_delta / tool_call_started /
+                tool_call_finished / token_usage / turn_completed /
+                turn_failed / cancelled
+
+            旧前端只看 content + done, 这些字段在所有事件里都保留。
+            新前端可以按 event_type 路由渲染。
             """
             # Phase 1: 等初始化完成，否则发 503
             if not await self._ensure_ready(timeout=10.0):
@@ -718,19 +796,56 @@ class HakusAIServer:
                     status_code=503,
                     detail="AI still initializing, please retry in a few seconds"
                 )
+
+            if USE_AGENTCORE_FOR_CHAT:
+                if not self.model_adapter:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Model not initialized: {self._init_error or 'unknown reason'}"
+                    )
+
+                async def generate_agentcore():
+                    try:
+                        async for chunk in agentcore_run_turn_stream(
+                            request.message, request.session_id,
+                        ):
+                            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    except Exception as e:
+                        logger.error(f"AgentCore stream error: {e}", exc_info=True)
+                        err = {
+                            "content": "",
+                            "emotion": None,
+                            "actions": [],
+                            "done": True,
+                            "event_type": "turn_failed",
+                            "error": str(e),
+                            "code": "stream_error",
+                        }
+                        yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+                return StreamingResponse(
+                    generate_agentcore(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                    }
+                )
+
+            # 旧路径
             if not self.agent:
                 raise HTTPException(
                     status_code=503,
                     detail=f"Agent not initialized: {self._init_error or 'unknown reason'}"
                 )
-            
+
             async def generate():
                 try:
                     context = AgentContext(
                         session_id=request.session_id,
                         user_id="default"
                     )
-                    
+
                     async for response in self.agent.chat(request.message, context, stream=True):
                         data = {
                             "content": response.content,
@@ -739,14 +854,14 @@ class HakusAIServer:
                             "done": False
                         }
                         yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                    
+
                     # 发送结束标记
                     yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-                    
+
                 except Exception as e:
                     logger.error(f"Stream chat error: {e}")
                     yield f"data: {json.dumps({'error': str(e), 'done': True}, ensure_ascii=False)}\n\n"
-            
+
             return StreamingResponse(
                 generate(),
                 media_type="text/event-stream",
@@ -769,24 +884,52 @@ class HakusAIServer:
                     "success": False,
                     "retry_after_s": 2,
                 }
+
+            # AgentCore 路径
+            if USE_AGENTCORE_FOR_CHAT:
+                if not self.model_adapter:
+                    return {
+                        "error": f"Model not initialized: {self._init_error or 'unknown reason'}",
+                        "success": False,
+                    }
+                try:
+                    result = await agentcore_run_turn_collect(
+                        request.message, request.session_id,
+                    )
+                    return {
+                        "success": not result.get("failed", False),
+                        "data": {
+                            "content": result["content"],
+                            "role": "assistant",
+                            "iterations": result.get("iterations", 0),
+                            "input_tokens": result.get("input_tokens", 0),
+                            "output_tokens": result.get("output_tokens", 0),
+                        },
+                        "error": result.get("error"),
+                    }
+                except Exception as e:
+                    logger.error(f"AgentCore chat_message error: {e}", exc_info=True)
+                    return {"success": False, "error": str(e)}
+
+            # 旧路径
             if not self.agent:
                 return {
                     "error": f"Agent not initialized: {self._init_error or 'unknown reason'}",
                     "success": False,
                 }
-            
+
             try:
                 context = AgentContext(
                     session_id=request.session_id,
                     user_id="default"
                 )
-                
+
                 # 收集完整响应
                 full_content = ""
-                
+
                 async for response in self.agent.chat(request.message, context, stream=False):
                     full_content = response.content
-                
+
                 return {
                     "success": True,
                     "data": {
@@ -794,7 +937,7 @@ class HakusAIServer:
                         "role": "assistant"
                     }
                 }
-                
+
             except Exception as e:
                 logger.error(f"Chat error: {e}")
                 return {
@@ -1261,14 +1404,34 @@ class HakusAIServer:
             return self.memory.stats
         
         @app.post("/api/memory/clear")
-        async def clear_memory():
-            """清空记忆"""
+        async def clear_memory(request: dict = None):
+            """清空记忆。
+
+            请求体 (可选):
+            {
+                "session_id": "default"  // 不传则清所有 session 的 AgentCore cache
+            }
+            """
+            session_id = (request or {}).get("session_id")
             if self.memory:
                 await self.memory.clear()
-                # 同时清空Agent历史
+                # 同时清空 BaseAgent 历史（旧路径）
                 if self.agent:
-                    self.agent.clear_history()
-            
+                    try:
+                        self.agent.clear_history()
+                    except Exception as e:
+                        logger.warning(f"BaseAgent clear_history failed: {e}")
+
+            # 清空 AgentCore session cache（新路径）
+            if USE_AGENTCORE_FOR_CHAT:
+                if session_id:
+                    agentcore_clear_session(session_id)
+                else:
+                    # 没指定 session — 清所有缓存的 agent
+                    from .agent_bridge import _agent_cache, _agent_cache_lock
+                    with _agent_cache_lock:
+                        _agent_cache.clear()
+
             return {"message": "Memory cleared"}
         
         # ========== TTS API ==========
@@ -1330,23 +1493,28 @@ class HakusAIServer:
         
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
-            """WebSocket聊天接口"""
+            """WebSocket聊天接口。
+
+            AgentCore 路径下，stream 事件携带 event_type 字段
+            (text_delta / tool_call_started / ... / turn_completed)，
+            旧客户端只看 content + done 即可。
+            """
             await self.websocket_manager.connect(websocket)
             try:
                 while True:
                     data = await websocket.receive_json()
-                    
+
                     message_type = data.get("type", "message")
-                    
+
                     if message_type == "message":
                         content = data.get("content", "")
                         session_id = data.get("session_id", "default")
-                        
+
                         await event_bus.emit(
                             EventType.CHAT_MESSAGE_RECEIVED,
                             {"content": content, "websocket_id": id(websocket)}
                         )
-                        
+
                         # Phase 1: 等 AI 初始化完成（最多 10s），仍没好就发 init_pending
                         if not await self._ensure_ready(timeout=10.0):
                             await websocket.send_json({
@@ -1356,7 +1524,33 @@ class HakusAIServer:
                                 "retry_after_s": 2,
                             })
                             continue
-                        
+
+                        # AgentCore 路径
+                        if USE_AGENTCORE_FOR_CHAT:
+                            if not self.model_adapter:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": f"Model not initialized: {self._init_error or 'unknown reason'}",
+                                    "code": "init_failed",
+                                    "diagnostics_url": "/api/diagnostics",
+                                })
+                                continue
+                            try:
+                                async for chunk in agentcore_run_turn_stream(content, session_id):
+                                    await websocket.send_json({
+                                        "type": "stream",
+                                        **chunk,
+                                    })
+                            except Exception as e:
+                                logger.error(f"WS AgentCore stream error: {e}", exc_info=True)
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": str(e),
+                                    "code": "stream_error",
+                                })
+                            continue
+
+                        # 旧路径
                         if not self.agent:
                             await websocket.send_json({
                                 "type": "error",
@@ -1365,9 +1559,9 @@ class HakusAIServer:
                                 "diagnostics_url": "/api/diagnostics",
                             })
                             continue
-                        
+
                         context = AgentContext(session_id=session_id)
-                        
+
                         async for response in self.agent.chat(content, context, stream=True):
                             await websocket.send_json({
                                 "type": "stream",
@@ -1375,16 +1569,16 @@ class HakusAIServer:
                                 "emotion": response.emotion,
                                 "done": False
                             })
-                        
+
                         await websocket.send_json({
                             "type": "stream",
                             "content": "",
                             "done": True
                         })
-                    
+
                     elif message_type == "ping":
                         await websocket.send_json({"type": "pong"})
-                        
+
             except WebSocketDisconnect:
                 self.websocket_manager.disconnect(websocket)
             except Exception as e:

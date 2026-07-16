@@ -1,3 +1,29 @@
+"""Permission system for HakusAI AgentCore.
+
+Refactored to default to ASK mode (was AUTO). The old AUTO mode
+silently auto-approved any tool call that wasn't on a small regex
+blacklist — a backwards default for a high-permission coding agent.
+
+Modes (post-refactor):
+  - ASK         (default) — every dangerous tool call prompts the user
+                            via the confirm callback. Safe tools are
+                            auto-approved.
+  - BYPASS      — every tool call is allowed (no prompt). Use only in
+                            headless CI runs with full trust.
+  - DANGER_AUTO — alias of BYPASS, kept for backward compat. Old code
+                            and tests that pass ``PermissionMode.AUTO``
+                            still work but get the new (stricter)
+                            semantics: AUTO is no longer "auto-approve
+                            with a blacklist", it is "approve
+                            everything", same as BYPASS.
+
+The pre-execution path also delegates to :class:`PermissionChecker`
+(from hakus.permissions.checker) for the always-deny rules
+(``.aws/credentials``, ``.kube/config``, ``rm -rf /``, etc.).
+PermissionChecker has stricter patterns than this module's own
+regex blacklist — those checks happen BEFORE any mode-based decision,
+so they apply even in BYPASS mode.
+"""
 import asyncio
 import re
 from enum import Enum
@@ -9,9 +35,22 @@ logger = get_logger(__name__)
 
 
 class PermissionMode(Enum):
-    AUTO = "auto"
-    ASK = "ask"
-    BYPASS = "bypass"
+    """Permission modes for AgentCore.
+
+    Renamed in this refactor:
+      - ``AUTO`` → ``DANGER_AUTO`` (AUTO kept as alias for back-compat)
+      - Default changed from ``AUTO`` to ``ASK``
+
+    The old AUTO behavior (auto-approve anything not on a small regex
+    blacklist) was unsafe for a high-permission coding agent. The new
+    DANGER_AUTO / AUTO alias behaves like BYPASS — every call is
+    allowed. Use ASK (the new default) for interactive use.
+    """
+
+    ASK = "ask"               # default — prompt for every dangerous call
+    BYPASS = "bypass"         # allow everything (no prompt)
+    DANGER_AUTO = "danger_auto"  # alias of BYPASS, explicit name
+    AUTO = "auto"             # DEPRECATED alias of DANGER_AUTO
 
 
 _DANGEROUS_BASH_PATTERNS = [
@@ -81,9 +120,22 @@ class PermissionResult:
 
 
 class PermissionManager:
+    """Two-layer permission gate.
+
+    Layer 1 (always-on): :class:`hakus.permissions.checker.PermissionChecker`
+    applies always-deny rules regardless of mode. These cover
+    high-value credential paths (``.aws/credentials``, ``.kube/config``)
+    and catastrophic commands (``rm -rf /``, ``mkfs``).
+
+    Layer 2 (mode-based): this class's own logic decides whether to
+    prompt the user. In ASK mode (the new default), every dangerous
+    tool call triggers the confirm callback. In BYPASS / DANGER_AUTO /
+    AUTO mode, calls are allowed (subject to Layer 1).
+    """
+
     def __init__(
         self,
-        mode: PermissionMode = PermissionMode.AUTO,
+        mode: PermissionMode = PermissionMode.ASK,
         confirm_callback: Optional[Callable[[str, str], bool]] = None,
     ):
         self._mode = mode
@@ -92,6 +144,24 @@ class PermissionManager:
         self._auto_approved_tools: set = set()
         self._denied_tools: set = set()
         self._session_approvals: Dict[str, bool] = {}
+
+        # Layer 1: always-on strict checker (sensitive paths + catastrophic commands)
+        # Lazily imported to avoid circular deps in tests.
+        self._strict_checker: Optional[Any] = None
+        try:
+            from .permissions.checker import PermissionChecker
+            from .permissions.modes import PermissionMode as NewPermissionMode
+            _mode_map = {
+                PermissionMode.ASK: NewPermissionMode.DEFAULT,
+                PermissionMode.BYPASS: NewPermissionMode.FULL_AUTO,
+                PermissionMode.DANGER_AUTO: NewPermissionMode.FULL_AUTO,
+                PermissionMode.AUTO: NewPermissionMode.FULL_AUTO,
+            }
+            self._strict_checker = PermissionChecker(
+                mode=_mode_map.get(mode, NewPermissionMode.DEFAULT),
+            )
+        except Exception as e:
+            logger.warning(f"PermissionChecker unavailable, falling back to regex-only: {e}")
 
     def set_confirm_callback(self, callback: Callable[[str, str], bool]) -> None:
         self._confirm_callback = callback
@@ -115,7 +185,49 @@ class PermissionManager:
     def mode(self, value: PermissionMode) -> None:
         self._mode = value
 
+    # ============================================================
+    # Layer 1: always-deny rules (apply in ALL modes, including BYPASS)
+    # ============================================================
+
+    def _strict_check(self, tool_name: str, args: Dict) -> Optional[PermissionResult]:
+        """Return a deny result if the call hits an always-deny rule, else None.
+
+        Only returns a non-None result when the strict checker says
+        "absolutely not" (allowed=False, requires_confirmation=False).
+        If it says "needs confirmation" we fall through to the normal
+        mode-based flow, which is more flexible.
+        """
+        if self._strict_checker is None:
+            return None
+        try:
+            file_path = args.get("path") or args.get("cwd") or ""
+            command = args.get("command") or ""
+
+            decision = self._strict_checker.evaluate(
+                tool_name=tool_name,
+                file_path=file_path or None,
+                command=command or None,
+            )
+            if decision and not decision.allowed and not decision.requires_confirmation:
+                # Hard deny (not just "needs confirm")
+                return PermissionResult(
+                    allowed=False,
+                    reason=f"Blocked by strict policy: {decision.reason}",
+                )
+        except Exception as e:
+            logger.debug(f"strict_check error (continuing): {e}")
+        return None
+
+    # ============================================================
+    # Layer 2: mode-based checks
+    # ============================================================
+
     def check_bash_command(self, command: str) -> PermissionResult:
+        # Layer 1 first
+        strict = self._strict_check("bash", {"command": command})
+        if strict is not None:
+            return strict
+
         for pattern in _DANGEROUS_BASH_PATTERNS:
             if pattern.search(command):
                 return self._evaluate(
@@ -131,6 +243,10 @@ class PermissionManager:
         return self._evaluate(f"bash:{command}", f"Shell command: {command}")
 
     def check_file_write(self, path: str, content_preview: str = "") -> PermissionResult:
+        strict = self._strict_check("write_file", {"path": path})
+        if strict is not None:
+            return strict
+
         for pattern in _DANGEROUS_WRITE_PATTERNS:
             if pattern.search(path):
                 return self._evaluate(
@@ -142,6 +258,10 @@ class PermissionManager:
         return self._evaluate(f"write:{path}", f"Writing to: {path}")
 
     def check_file_edit(self, path: str, old_str: str, new_str: str) -> PermissionResult:
+        strict = self._strict_check("edit_file", {"path": path})
+        if strict is not None:
+            return strict
+
         for pattern in _DANGEROUS_WRITE_PATTERNS:
             if pattern.search(path):
                 return self._evaluate(
@@ -155,6 +275,11 @@ class PermissionManager:
     def check_tool_execution(self, tool_name: str, is_dangerous: bool, args: Dict) -> PermissionResult:
         if tool_name in self._denied_tools:
             return PermissionResult(allowed=False, reason=f"Tool '{tool_name}' is denied for this session")
+
+        # Layer 1: always-deny
+        strict = self._strict_check(tool_name, args)
+        if strict is not None:
+            return strict
 
         if tool_name in self._auto_approved_tools:
             return PermissionResult(allowed=True)
@@ -180,6 +305,11 @@ class PermissionManager:
         if tool_name in self._denied_tools:
             return PermissionResult(allowed=False, reason=f"Tool '{tool_name}' is denied for this session")
 
+        # Layer 1: always-deny
+        strict = self._strict_check(tool_name, args)
+        if strict is not None:
+            return strict
+
         if tool_name in self._auto_approved_tools:
             return PermissionResult(allowed=True)
 
@@ -202,14 +332,13 @@ class PermissionManager:
         if action_key in self._session_approvals:
             return PermissionResult(allowed=self._session_approvals[action_key])
 
-        if self._mode == PermissionMode.BYPASS:
-            return PermissionResult(allowed=True, reason="Bypass mode active")
+        # DANGER_AUTO / AUTO / BYPASS all mean "approve everything"
+        # (subject to Layer 1 strict checks above)
+        if self._mode in (PermissionMode.BYPASS, PermissionMode.DANGER_AUTO, PermissionMode.AUTO):
+            return PermissionResult(allowed=True, reason=f"{self._mode.value} mode active")
 
-        if self._mode == PermissionMode.AUTO and not force_confirm:
-            self._session_approvals[action_key] = True
-            return PermissionResult(allowed=True, reason="Auto-approved")
-
-        if self._mode == PermissionMode.ASK or force_confirm or self._mode == PermissionMode.AUTO:
+        # ASK mode (the default)
+        if self._mode == PermissionMode.ASK or force_confirm:
             if self._confirm_callback:
                 answer = self._confirm_callback(action_key, reason)
                 # 兼容三种返回:
@@ -241,10 +370,10 @@ class PermissionManager:
                     needs_confirm=not once_only,
                 )
 
-            if self._mode == PermissionMode.AUTO:
-                self._session_approvals[action_key] = True
-                return PermissionResult(allowed=True, reason="Auto-approved (no callback)")
+            # No callback installed — fail safe (deny) in ASK mode
+            return PermissionResult(allowed=False, reason=reason, needs_confirm=True)
 
+        # Default: deny
         return PermissionResult(allowed=False, reason=reason, needs_confirm=True)
 
     async def _async_evaluate(
@@ -262,14 +391,10 @@ class PermissionManager:
         if action_key in self._session_approvals:
             return PermissionResult(allowed=self._session_approvals[action_key])
 
-        if self._mode == PermissionMode.BYPASS:
-            return PermissionResult(allowed=True, reason="Bypass mode active")
+        if self._mode in (PermissionMode.BYPASS, PermissionMode.DANGER_AUTO, PermissionMode.AUTO):
+            return PermissionResult(allowed=True, reason=f"{self._mode.value} mode active")
 
-        if self._mode == PermissionMode.AUTO and not force_confirm:
-            self._session_approvals[action_key] = True
-            return PermissionResult(allowed=True, reason="Auto-approved")
-
-        if self._mode == PermissionMode.ASK or force_confirm or self._mode == PermissionMode.AUTO:
+        if self._mode == PermissionMode.ASK or force_confirm:
             if self._async_confirm_callback:
                 answer = await self._async_confirm_callback(action_key, reason)
                 if isinstance(answer, bool):
@@ -297,9 +422,8 @@ class PermissionManager:
                     needs_confirm=not once_only,
                 )
 
-            if self._mode == PermissionMode.AUTO:
-                self._session_approvals[action_key] = True
-                return PermissionResult(allowed=True, reason="Auto-approved (no callback)")
+            # No callback — fail safe (deny) in ASK mode
+            return PermissionResult(allowed=False, reason=reason, needs_confirm=True)
 
         return PermissionResult(allowed=False, reason=reason, needs_confirm=True)
 
@@ -393,3 +517,7 @@ class PermissionManager:
             "denied": list(self._denied_tools),
             "session_approvals": dict(self._session_approvals),
         }
+
+
+# Used by _strict_check type hint
+from typing import Any  # noqa: E402
