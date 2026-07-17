@@ -7,6 +7,7 @@ name: Release
 # 触发方式:
 #   1. 推 tag (v0.1.0, v1.2.3, ...) → 自动构建三平台并发布 Release
 #   2. Actions 页面手动点 "Run workflow" → 仅构建, 不发布 Release (产物在 Actions artifacts)
+#   3. 推 master → 触发构建, 产物上传到 Actions artifacts (retention = 1 天)
 #
 # 产物 (每个平台一份):
 #   - Windows: HakusAI-Setup-x.y.z.exe           (NSIS 安装程序)
@@ -14,13 +15,17 @@ name: Release
 #   - Linux:   HakusAI-x.y.z.AppImage + .deb      (AppImage + Debian 包)
 #
 # 工作流:
-#   setup-node → setup-python → pip install → build-sidecar.sh → npm ci → npm run dist:PLATFORM
+#   cleanup (清空旧 artifacts 释放存储配额)
+#     ↓
+#   build (matrix: win/mac/linux) — setup → build-sidecar → npm ci → npm run dist:PLATFORM
+#     ↓ (仅推 tag 时)
+#   release — 汇总三平台产物到 GitHub Release
 #
 # 注意:
 #   - PyInstaller 不能交叉编译, 所以三平台必须分别在三台 runner 上构建
-#   - 每个 job 都先构建 sidecar (当前平台原生二进制), 再打 Electron 包
-#   - sidecar 会被 electron-builder 通过 extraResources 字段嵌入到安装包
-#   - 用户安装后无需任何额外配置, 双击即用
+#   - GitHub Actions 免费账户有 500 MB artifact 存储配额, 所以每次构建前
+#     先清空所有旧 artifacts (cleanup job), 且新 artifacts 仅保留 1 天
+#   - 所有 actions 用最新主版本 (Node.js 24), 避免 Node.js 20 弃用警告
 # =====================================================================
 
 on:
@@ -32,11 +37,62 @@ on:
   workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow)
 
 permissions:
-  contents: write      # 发布 Release 需要写权限
+  contents: write     # 发布 Release 需要写权限
+  actions: write      # 清理旧 artifacts 需要 actions:write 权限
 
 jobs:
+  # =====================================================================
+  # Cleanup job — 先于 build 运行, 清空 repo 内所有旧 artifacts
+  # =====================================================================
+  # GitHub Actions 免费账户有 500 MB artifact 存储配额。每次构建三平台
+  # 会产生 ~150-300 MB artifacts, 几次累积就会超配额, 导致
+  # "Failed to CreateArtifact: Artifact storage limits" 错误。
+  # 这个 job 在 build 之前先把 repo 内所有旧 artifacts 删掉, 释放配额。
+  # 用 github-script 调 REST API, 不依赖 gh CLI。
+  # =====================================================================
+  cleanup:
+    name: 🧹 Cleanup old artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🗑️ Delete all previous artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let deleted = 0;
+            let page = 1;
+            while (true) {
+              const resp = await github.rest.actions.listArtifactsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page: page,
+              });
+              if (resp.data.artifacts.length === 0) break;
+              for (const artifact of resp.data.artifacts) {
+                try {
+                  await github.rest.actions.deleteArtifact({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    artifact_id: artifact.id,
+                  });
+                  core.info(`✓ Deleted "${artifact.name}" (id=${artifact.id}, ${artifact.size_in_bytes} bytes, created ${artifact.created_at})`);
+                  deleted++;
+                } catch (err) {
+                  // 已经被删 / 权限不够 / 等等 — 不阻塞, 只记日志
+                  core.warning(`Failed to delete artifact ${artifact.name} (id=${artifact.id}): ${err.message}`);
+                }
+              }
+              if (resp.data.artifacts.length < 100) break;
+              page++;
+            }
+            core.info(`Cleanup complete. Deleted ${deleted} artifacts total.`);
+
+  # =====================================================================
+  # Build job — 三平台并行构建
+  # =====================================================================
   build:
     name: Build (${{ matrix.os }} / ${{ matrix.platform }})
+    needs: cleanup
     strategy:
       fail-fast: false  # 一个平台失败不影响其他平台继续构建
       matrix:
@@ -58,21 +114,19 @@ jobs:
     steps:
       # ============ 1. Checkout ============
       - name: 📥 Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      # ============ 2. Setup Node.js ============
-      # Note: Node 20 is deprecated on GitHub Actions runners as of 2025-09-19.
-      # Using Node 22 (LTS) instead.
+      # ============ 2. Setup Node.js 22 (LTS) ============
       - name: 📦 Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/client/package-lock.json
 
-      # ============ 3. Setup Python ============
+      # ============ 3. Setup Python 3.11 ============
       - name: 🐍 Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -153,10 +207,18 @@ jobs:
           echo "=== File sizes ==="
           du -h release/* 2>/dev/null || true
 
-      # ============ 11. Upload artifacts to Actions (always) ============
+      # ============ 11. Upload artifacts to Actions ============
       # 即使没推 tag, 也能从 Actions 页面下载产物
+      #
+      # 关键参数:
+      #   retention-days: 1     — GitHub 免费账户只有 500 MB artifact 配额,
+      #                           retention 设 1 天 (最低) 让旧产物快速过期
+      #                           再加上 cleanup job 主动清理, 永不超配额
+      #   compression-level: 0  — exe/dmg/AppImage 本身已经是压缩格式 (NSIS
+      #                           LZMA / DMG UDZO / AppImage squashfs), 再用
+      #                           gzip 压一遍是浪费 CPU 不会减小体积
       - name: 📤 Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -168,7 +230,8 @@ jobs:
             frontend/client/release/*.blockmap
             frontend/client/release/latest*.yml
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 1
+          compression-level: 0
 
   # =====================================================================
   # Release job — 只在推 tag 时运行
@@ -181,7 +244,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -227,6 +290,9 @@ jobs:
             - 🔌 内嵌 Python 后端 (sidecar), **开箱即用, 无需额外配置**
             - 📝 Markdown 渲染 + 代码高亮
             - 🛠️ 可视化工具调用卡片
+            - 🔧 **新**: 24 个内置工具 (含 git_diff / apply_patch / todo_write)
+            - 🛡️ **新**: 权限系统默认 ASK, 双层防御 (.aws/credentials / rm -rf / 永远拒绝)
+            - 🔍 **新**: Grep 工具改用 ripgrep (大仓库毫秒级搜索)
 
             ## 🚀 使用
 
