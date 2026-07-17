@@ -1,13 +1,13 @@
 name: Release
 
 # =====================================================================
-# HakusAI Desktop Client — 三平台自动打包 + GitHub Release 发布
+# HakusAI Desktop Client — 三平台自动打包 + 直接上传到 GitHub Release
 # =====================================================================
 #
 # 触发方式:
 #   1. 推 tag (v0.1.0, v1.2.3, ...) → 自动构建三平台并发布 Release
-#   2. Actions 页面手动点 "Run workflow" → 仅构建, 不发布 Release (产物在 Actions artifacts)
-#   3. 推 master → 触发构建, 产物上传到 Actions artifacts (retention = 1 天)
+#   2. 推 master → 仅构建验证 (不发 Release, 不上传 artifact)
+#   3. Actions 页面手动点 "Run workflow" → 仅构建, 不发 Release
 #
 # 产物 (每个平台一份):
 #   - Windows: HakusAI-Setup-x.y.z.exe           (NSIS 安装程序)
@@ -15,17 +15,19 @@ name: Release
 #   - Linux:   HakusAI-x.y.z.AppImage + .deb      (AppImage + Debian 包)
 #
 # 工作流:
-#   cleanup (清空旧 artifacts 释放存储配额)
+#   cleanup (清空旧 artifacts 释放存储配额, 可选)
 #     ↓
-#   build (matrix: win/mac/linux) — setup → build-sidecar → npm ci → npm run dist:PLATFORM
-#     ↓ (仅推 tag 时)
-#   release — 汇总三平台产物到 GitHub Release
+#   build (matrix: win/mac/linux)
+#     ↓ 每个 job 直接把产物上传到 GitHub Release (不走 artifact 系统)
+#   (没有 release job, 因为 build jobs 已经直接上传到 Release 了)
 #
-# 注意:
-#   - PyInstaller 不能交叉编译, 所以三平台必须分别在三台 runner 上构建
-#   - GitHub Actions 免费账户有 500 MB artifact 存储配额, 所以每次构建前
-#     先清空所有旧 artifacts (cleanup job), 且新 artifacts 仅保留 1 天
-#   - 所有 actions 用最新主版本 (Node.js 24), 避免 Node.js 20 弃用警告
+# 关键设计 (避免 GitHub Actions 500 MB artifact 存储配额耗尽):
+#   - GitHub Release 存储**独立于** Actions artifact 存储
+#   - 公共仓库 Release 存储免费且无配额限制
+#   - 所以每个 build job 构建完直接调 gh-release API 把产物
+#     附加到对应的 GitHub Release 上, 完全绕过 artifact 系统
+#   - 即便配额被旧 artifact 占满 (recalculate 6-12 小时一次),
+#     新构建的安装包仍然能通过 Release 流到用户手里
 # =====================================================================
 
 on:
@@ -33,22 +35,19 @@ on:
     tags:
       - 'v*'           # 推 v 开头的 tag 触发正式发布
     branches:
-      - master         # 推 master 也触发构建 (产物上传到 Actions artifacts, 不发 Release)
+      - master         # 推 master 只构建验证, 不发 Release
   workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow)
 
 permissions:
-  contents: write     # 发布 Release 需要写权限
+  contents: write     # 上传 Release 资产 + 创建 Release 需要写权限
   actions: write      # 清理旧 artifacts 需要 actions:write 权限
 
 jobs:
   # =====================================================================
   # Cleanup job — 先于 build 运行, 清空 repo 内所有旧 artifacts
   # =====================================================================
-  # GitHub Actions 免费账户有 500 MB artifact 存储配额。每次构建三平台
-  # 会产生 ~150-300 MB artifacts, 几次累积就会超配额, 导致
-  # "Failed to CreateArtifact: Artifact storage limits" 错误。
-  # 这个 job 在 build 之前先把 repo 内所有旧 artifacts 删掉, 释放配额。
-  # 用 github-script 调 REST API, 不依赖 gh CLI。
+  # GitHub Actions 免费账户有 500 MB artifact 存储配额。虽然本 workflow
+  # 现在不再依赖 artifact 上传, 但保留 cleanup 以防其他 workflow 累积.
   # =====================================================================
   cleanup:
     name: 🧹 Cleanup old artifacts
@@ -75,10 +74,9 @@ jobs:
                     repo: context.repo.repo,
                     artifact_id: artifact.id,
                   });
-                  core.info(`✓ Deleted "${artifact.name}" (id=${artifact.id}, ${artifact.size_in_bytes} bytes, created ${artifact.created_at})`);
+                  core.info(`✓ Deleted "${artifact.name}" (id=${artifact.id}, ${artifact.size_in_bytes} bytes)`);
                   deleted++;
                 } catch (err) {
-                  // 已经被删 / 权限不够 / 等等 — 不阻塞, 只记日志
                   core.warning(`Failed to delete artifact ${artifact.name} (id=${artifact.id}): ${err.message}`);
                 }
               }
@@ -88,7 +86,7 @@ jobs:
             core.info(`Cleanup complete. Deleted ${deleted} artifacts total.`);
 
   # =====================================================================
-  # Build job — 三平台并行构建
+  # Build job — 三平台并行构建, 完成后直接上传到 GitHub Release
   # =====================================================================
   build:
     name: Build (${{ matrix.os }} / ${{ matrix.platform }})
@@ -99,15 +97,12 @@ jobs:
         include:
           - os: windows-latest
             platform: win
-            artifact_name: hakusai-windows
             asset_ext: exe
           - os: macos-latest
             platform: mac
-            artifact_name: hakusai-macos
             asset_ext: dmg
           - os: ubuntu-latest
             platform: linux
-            artifact_name: hakusai-linux
             asset_ext: AppImage
 
     runs-on: ${{ matrix.os }}
@@ -143,10 +138,6 @@ jobs:
           pip install pyinstaller pillow
 
       # ============ 4.5. Import smoke test (sidecar 启动链预检) ============
-      # 在 PyInstaller 之前验证 sidecar 启动时的完整 import 链能跑通。
-      # 如果这里失败，CI 立即终止，不会打出一个用户一跑就崩的 exe。
-      # 历史上 "No module named 'watchdog'" / "No module named 'numpy'"
-      # 都是因为缺这一步，PyInstaller 静态分析看不出来运行时 import 失败。
       - name: 🧪 Sidecar import smoke test
         working-directory: .
         run: |
@@ -154,8 +145,6 @@ jobs:
           python -c "import numpy, watchdog, fastapi, uvicorn, pydantic, httpx, aiohttp, websockets, dotenv, pydantic_settings, rich, textual, yaml, multipart; print('all required 3rd-party modules importable')"
 
       # ============ 5. Build HakusAI sidecar (PyInstaller) ============
-      # 生成 frontend/client/sidecar/dist/hakusai-server 二进制
-      # 这一步必须和目标平台原生构建 (PyInstaller 不能交叉编译)
       - name: 🔨 Build HakusAI server sidecar
         working-directory: frontend/client
         run: bash scripts/build-sidecar.sh
@@ -169,7 +158,6 @@ jobs:
           ls -la sidecar/dist/ || true
           if [ ! -f sidecar/dist/hakusai-server ] && [ ! -f sidecar/dist/hakusai-server.exe ]; then
             echo "⚠️  Warning: sidecar binary not found. Build will continue without bundled Python backend."
-            echo "    Users will need to run HakusAI server separately."
           else
             echo "✓ Sidecar binary present"
           fi
@@ -189,11 +177,8 @@ jobs:
         working-directory: frontend/client
         run: npm run dist:${{ matrix.platform }}
         env:
-          # GitHub Actions 默认 CI=true, electron-builder 会据此启用更详细的日志
           CI: true
-          # macOS 签名 (可选 — 没有证书就跳过, 用户首次启动需右键打开)
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          # Linux: 关掉 fpm 的某些坑
           USE_SYSTEM_FPM: false
 
       # ============ 10. List build artifacts ============
@@ -207,21 +192,22 @@ jobs:
           echo "=== File sizes ==="
           du -h release/* 2>/dev/null || true
 
-      # ============ 11. Upload artifacts to Actions ============
-      # 即使没推 tag, 也能从 Actions 页面下载产物
+      # ============ 11. Upload directly to GitHub Release ============
+      # 关键: 直接把产物上传到 GitHub Release, 完全绕过 Actions artifact 系统
+      # 这样即使 artifact 存储配额耗尽, 安装包仍然能通过 Release 流到用户
       #
-      # 关键参数:
-      #   retention-days: 1     — GitHub 免费账户只有 500 MB artifact 配额,
-      #                           retention 设 1 天 (最低) 让旧产物快速过期
-      #                           再加上 cleanup job 主动清理, 永不超配额
-      #   compression-level: 0  — exe/dmg/AppImage 本身已经是压缩格式 (NSIS
-      #                           LZMA / DMG UDZO / AppImage squashfs), 再用
-      #                           gzip 压一遍是浪费 CPU 不会减小体积
-      - name: 📤 Upload artifacts
-        uses: actions/upload-artifact@v5
+      # 只有推 tag 时才上传; master 推送只验证构建不发布
+      # =====================================================================
+      - name: 📤 Upload installers to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ matrix.artifact_name }}
-          path: |
+          tag_name: ${{ github.ref_name }}
+          name: HakusAI ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
             frontend/client/release/*.exe
             frontend/client/release/*.dmg
             frontend/client/release/*.AppImage
@@ -229,46 +215,6 @@ jobs:
             frontend/client/release/*.snap
             frontend/client/release/*.blockmap
             frontend/client/release/latest*.yml
-          if-no-files-found: warn
-          retention-days: 1
-          compression-level: 0
-
-  # =====================================================================
-  # Release job — 只在推 tag 时运行
-  # 等所有平台构建完成后, 把产物汇总到 GitHub Release
-  # =====================================================================
-  release:
-    name: 📢 Publish GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Download all artifacts
-        uses: actions/download-artifact@v5
-        with:
-          path: artifacts
-
-      - name: 📋 List downloaded artifacts
-        run: |
-          echo "=== All downloaded artifacts ==="
-          find artifacts -type f | sort
-          echo ""
-          echo "=== Moving to release/ ==="
-          mkdir -p release
-          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.snap" -o -name "*.blockmap" -o -name "latest*.yml" \) -exec cp -v {} release/ \;
-          echo ""
-          echo "=== release/ contents ==="
-          ls -la release/
-
-      - name: 📢 Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: HakusAI ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: release/*
           body: |
             # HakusAI Desktop Client ${{ github.ref_name }}
 
@@ -308,3 +254,23 @@ jobs:
             见下方自动生成的 Release Notes。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ============ 12. (Fallback) Upload to Actions artifacts ============
+      # 备用: 同时上传到 Actions artifacts, 万一 Release 上传失败用户仍能下载
+      # continue-on-error=true: 即使配额耗尽也不阻塞构建成功
+      - name: 📤 Upload artifacts (best-effort, non-blocking)
+        continue-on-error: true
+        uses: actions/upload-artifact@v5
+        with:
+          name: hakusai-${{ matrix.platform }}
+          path: |
+            frontend/client/release/*.exe
+            frontend/client/release/*.dmg
+            frontend/client/release/*.AppImage
+            frontend/client/release/*.deb
+            frontend/client/release/*.snap
+            frontend/client/release/*.blockmap
+            frontend/client/release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 0
