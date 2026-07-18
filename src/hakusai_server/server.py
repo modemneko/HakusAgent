@@ -1194,6 +1194,146 @@ class HakusAIServer:
                 logger.warning(f"Default model saved but reload failed: {e}")
             return {"message": "Default model updated", "default_model": provider_id}
 
+        # ========== Provider 运维操作 API ==========
+        # 这些端点让桌面客户端能在 Provider 设置页里:
+        #   - 测试连接 (POST /api/providers/{id}/test)
+        #   - 获取可用模型列表 (POST /api/providers/{id}/fetch-models)
+        #   - 多 API Key 轮换管理 (GET/POST/DELETE /api/providers/{id}/keys[/{key_id}])
+        #   - 自定义 HTTP Header (GET/PUT /api/providers/{id}/headers)
+        #   - 列出所有 provider 的元数据 + 分组 (GET /api/providers/meta)
+        # 对应前端 ModelPanel 里的「测试」「获取模型列表」「多 Key 管理」「自定义 Header」按钮.
+        # 实现细节在 hakusai_server.provider_ops 模块.
+        from . import provider_ops as _pops  # noqa: WPS433
+
+        @app.get("/api/providers/meta")
+        async def get_providers_meta():
+            """返回所有 provider 的元数据 + 分组信息 (不含 API Key).
+
+            前端用这个渲染 Provider 列表的分组 + 搜索建议. 与 list_providers 区别:
+              - list_providers 返回的是「当前配置状态」(含 masked_api_key / model_name)
+              - get_providers_meta 返回的是「元数据」(display_name / group / default_url)
+            前端会同时调两个, list_providers 提供运行时状态, meta 提供静态分组.
+            """
+            return {
+                "providers": _pops.list_known_providers(),
+                "groups": [g[0] for g in _pops.PROVIDER_GROUPS],
+            }
+
+        @app.post("/api/providers/{provider_id}/test")
+        async def test_provider(provider_id: str, request: dict):
+            """测试 provider 连接 + 认证.
+
+            请求体 (全部可选, 留空使用 config 里的当前值):
+            {
+                "api_key": "sk-xxx",       // 覆盖测试用的 Key
+                "base_url": "https://...", // 覆盖测试用的 Base URL
+                "model": "deepseek-chat",  // 覆盖测试用的模型名
+                "timeout": 15              // 超时秒数 (默认 15)
+            }
+            """
+            result = await _pops.test_provider_connection(
+                provider_id,
+                override_api_key=request.get("api_key") or None,
+                override_base_url=request.get("base_url") or None,
+                override_model=request.get("model") or None,
+                timeout=float(request.get("timeout", 15.0)),
+            )
+            return {
+                "ok": result.ok,
+                "message": result.message,
+                "detail": result.detail,
+                "latency_ms": result.latency_ms,
+            }
+
+        @app.post("/api/providers/{provider_id}/fetch-models")
+        async def fetch_models(provider_id: str, request: dict):
+            """从 provider 的 /models 端点拉取可用模型列表.
+
+            请求体 (全部可选):
+            {
+                "api_key": "sk-xxx",
+                "base_url": "https://...",
+                "timeout": 20
+            }
+
+            返回:
+            {
+                "ok": true,
+                "models": [{"id": "...", "name": "...", "owned_by": "..."}],
+                "message": "获取到 N 个可用模型",
+                "detail": null
+            }
+            """
+            result = await _pops.fetch_provider_models(
+                provider_id,
+                override_api_key=request.get("api_key") or None,
+                override_base_url=request.get("base_url") or None,
+                timeout=float(request.get("timeout", 20.0)),
+            )
+            return {
+                "ok": result.ok,
+                "models": result.models,
+                "message": result.message,
+                "detail": result.detail,
+            }
+
+        @app.get("/api/providers/{provider_id}/keys")
+        async def list_provider_keys(provider_id: str):
+            """列出某个 provider 的所有 API Key (masked)."""
+            try:
+                keys = _pops.list_provider_keys(provider_id)
+                return {"keys": keys}
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        @app.post("/api/providers/{provider_id}/keys")
+        async def add_provider_key(provider_id: str, request: dict):
+            """添加一个额外的 API Key (不影响主 Key).
+
+            请求体: { "key": "sk-xxx", "label": "主号" }
+            """
+            try:
+                entry = _pops.add_provider_key(
+                    provider_id,
+                    request.get("key", ""),
+                    request.get("label", ""),
+                )
+                return entry
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        @app.delete("/api/providers/{provider_id}/keys/{key_id}")
+        async def delete_provider_key(provider_id: str, key_id: str):
+            """删除一个额外的 API Key (不能删主 Key)."""
+            try:
+                ok = _pops.delete_provider_key(provider_id, key_id)
+                if not ok:
+                    raise HTTPException(status_code=404, detail=f"Key not found: {key_id}")
+                return {"message": "Key deleted", "key_id": key_id}
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        @app.get("/api/providers/{provider_id}/headers")
+        async def get_provider_headers(provider_id: str):
+            """获取 provider 的自定义 HTTP Headers."""
+            return {"headers": _pops.get_provider_custom_headers(provider_id)}
+
+        @app.put("/api/providers/{provider_id}/headers")
+        async def set_provider_headers(provider_id: str, request: dict):
+            """设置 provider 的自定义 HTTP Headers.
+
+            请求体: { "headers": {"X-Custom-Header": "value"} }
+            传空字典会清除所有自定义 Header.
+            """
+            try:
+                _pops.set_provider_custom_headers(
+                    provider_id,
+                    request.get("headers", {}) or {},
+                )
+                return {"message": "Headers saved", "provider": provider_id}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         @app.post("/api/character/update")
         async def update_character_full(request: dict):
             """

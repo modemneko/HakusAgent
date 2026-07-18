@@ -26,6 +26,10 @@ import type {
   WSOutgoingMessage,
   ProvidersResponse,
   UpdateProviderBody,
+  ProvidersMetaResponse,
+  ConnectionTestResult,
+  FetchModelsResult,
+  ProviderKeyEntry,
   UpdateCharacterBody,
   ToolsResponse,
   PermissionInfo,
@@ -250,6 +254,140 @@ export class HakusAIClient {
     }, 10000)
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/config/default-model`, 'Set default model failed')
+    }
+  }
+
+  // ============ Provider 运维操作 (测试连接 / 获取模型 / 多 Key / 自定义 Header) ============
+
+  /**
+   * 获取所有 provider 的静态元数据 + 分组信息.
+   * 前端用这个渲染分组列表 + 默认 URL/模型提示.
+   */
+  async getProvidersMeta(): Promise<ProvidersMetaResponse> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/providers/meta`, {}, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/meta`, 'Get providers meta failed')
+    }
+    return res.json()
+  }
+
+  /**
+   * 测试 provider 连接. 可以传 override_api_key/base_url/model 临时测试
+   * (不写回 config), 也可以留空使用 config 里的当前值.
+   */
+  async testProviderConnection(
+    providerId: string,
+    overrides?: { api_key?: string; base_url?: string; model?: string; timeout?: number },
+  ): Promise<ConnectionTestResult> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/test`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(overrides ?? {}),
+      },
+      // 给后端 timeout + 5s 缓冲
+      Math.max(20000, (overrides?.timeout ?? 15) * 1000 + 5000),
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/test`, 'Test provider failed')
+    }
+    return res.json()
+  }
+
+  /**
+   * 从 provider 的 /models 端点拉取可用模型列表.
+   * 用于「获取模型列表」按钮 — 用户不用再手抄 model_name.
+   */
+  async fetchProviderModels(
+    providerId: string,
+    overrides?: { api_key?: string; base_url?: string; timeout?: number },
+  ): Promise<FetchModelsResult> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/fetch-models`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(overrides ?? {}),
+      },
+      Math.max(30000, (overrides?.timeout ?? 20) * 1000 + 5000),
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/fetch-models`, 'Fetch models failed')
+    }
+    return res.json()
+  }
+
+  /** 列出某 provider 的所有 API Key (masked). */
+  async listProviderKeys(providerId: string): Promise<ProviderKeyEntry[]> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys`,
+      {},
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/keys`, 'List provider keys failed')
+    }
+    const data = await res.json()
+    return data.keys ?? []
+  }
+
+  /** 给某 provider 添加一个额外的 API Key. */
+  async addProviderKey(providerId: string, key: string, label: string = ''): Promise<ProviderKeyEntry> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, label }),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/keys`, 'Add provider key failed')
+    }
+    return res.json()
+  }
+
+  /** 删除某 provider 的一个额外 Key (不能删主 Key). */
+  async deleteProviderKey(providerId: string, keyId: string): Promise<void> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys/${encodeURIComponent(keyId)}`,
+      { method: 'DELETE' },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/keys/${keyId}`, 'Delete provider key failed')
+    }
+  }
+
+  /** 获取某 provider 的自定义 HTTP Headers. */
+  async getProviderHeaders(providerId: string): Promise<Record<string, string>> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/headers`,
+      {},
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/headers`, 'Get provider headers failed')
+    }
+    const data = await res.json()
+    return data.headers ?? {}
+  }
+
+  /** 设置某 provider 的自定义 HTTP Headers (传空字典清除). */
+  async setProviderHeaders(providerId: string, headers: Record<string, string>): Promise<void> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/headers`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ headers }),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/headers`, 'Set provider headers failed')
     }
   }
 

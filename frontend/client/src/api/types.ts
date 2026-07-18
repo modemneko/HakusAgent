@@ -128,6 +128,54 @@ export interface UpdateProviderBody {
   set_as_default?: boolean
 }
 
+// --- Provider 运维操作 (测试连接 / 获取模型 / 多 Key / 自定义 Header) ---
+
+/** Provider 元数据 (静态分组 + 默认值), 来自 GET /api/providers/meta */
+export interface ProviderMeta {
+  id: string
+  display_name: string
+  has_url: boolean
+  group: string
+  default_url: string
+  default_model: string
+}
+
+export interface ProvidersMetaResponse {
+  providers: ProviderMeta[]
+  groups: string[]
+}
+
+/** 测试连接结果, 来自 POST /api/providers/{id}/test */
+export interface ConnectionTestResult {
+  ok: boolean
+  message: string
+  detail?: string | null
+  latency_ms?: number | null
+}
+
+/** 获取模型列表结果, 来自 POST /api/providers/{id}/fetch-models */
+export interface FetchModelsResult {
+  ok: boolean
+  models: ProviderModel[]
+  message: string
+  detail?: string | null
+}
+
+export interface ProviderModel {
+  id: string
+  name: string
+  owned_by?: string | null
+}
+
+/** 多 API Key 条目, 来自 GET /api/providers/{id}/keys */
+export interface ProviderKeyEntry {
+  id: string
+  label: string
+  masked_key: string
+  enabled: boolean
+  is_primary: boolean
+}
+
 export interface UpdateCharacterBody {
   name?: string
   nickname?: string
