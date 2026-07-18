@@ -80,6 +80,11 @@ export function ChatView() {
       setStreaming(true)
 
       try {
+        // Pass the current default provider (from settings store) so the
+        // server uses an AgentCore bound to it. This makes the TopBar
+        // "switch provider" dropdown actually take effect — without it,
+        // the server would silently reuse a cached AgentCore created
+        // with whatever provider was default when the session started.
         await apiClient.chatStream(
           text,
           session?.remote_session_id || sessionId,
@@ -104,6 +109,7 @@ export function ChatView() {
             }
           },
           ctrl.signal,
+          settings.defaultModel,
         )
         // Ensure streaming flag is off
         updateMessage(sessionId, assistantMsgId, { streaming: false })
@@ -125,7 +131,7 @@ export function ChatView() {
         setAbortCtrl(null)
       }
     },
-    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming],
+    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming, settings.defaultModel],
   )
 
   // Handle typed AgentEvent from the protocol layer

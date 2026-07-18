@@ -76,6 +76,12 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default"
     stream: bool = True
+    # Per-request provider override. If set (e.g. "opencode"), the
+    # agent_bridge creates/reuses an AgentCore bound to this provider
+    # instead of the global default_model from config.yaml. This lets
+    # the user switch providers from the TopBar dropdown mid-session.
+    # If None, falls back to config.yaml's models.default_model.
+    provider: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -720,9 +726,10 @@ class HakusAIServer:
                         detail=f"Model not initialized: {self._init_error or 'unknown reason'}"
                     )
                 try:
-                    logger.info(f"Chat (AgentCore): {request.message[:80]}")
+                    logger.info(f"Chat (AgentCore): {request.message[:80]} provider={request.provider or 'default'}")
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
+                        provider=request.provider,
                     )
                     logger.info(
                         f"Chat response: {result['content'][:100]}... "
@@ -808,6 +815,7 @@ class HakusAIServer:
                     try:
                         async for chunk in agentcore_run_turn_stream(
                             request.message, request.session_id,
+                            provider=request.provider,
                         ):
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                     except Exception as e:
@@ -895,6 +903,7 @@ class HakusAIServer:
                 try:
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
+                        provider=request.provider,
                     )
                     return {
                         "success": not result.get("failed", False),
@@ -1018,6 +1027,35 @@ class HakusAIServer:
             models_cfg = raw.get("models", {}) or {}
             default_model = models_cfg.get("default_model", "deepseek")
 
+            # Resolve ${VAR:default} env-var placeholders so the UI shows
+            # actual values (e.g. "deepseek-chat") rather than the raw
+            # template string. The placeholder format follows shell
+            # parameter expansion: ${VAR:-default} or ${VAR:default}.
+            import re as _re
+            _PLACEHOLDER_RE = _re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::(-?[^}]*))?\}")
+
+            def _resolve_placeholder(val: str) -> str:
+                """Resolve ${VAR:default} placeholders using env vars.
+
+                - If env var is set, use its value.
+                - Else if a default is given (after ':' or ':-'), use it.
+                - Else return the original string unchanged (lets the
+                  user see the template if there's no default).
+                - Non-string or non-placeholder values pass through.
+                """
+                if not isinstance(val, str):
+                    return val
+                def _sub(m):
+                    var_name, default_val = m.group(1), m.group(2)
+                    # strip leading '-' from ':-default' form
+                    if default_val is not None and default_val.startswith("-"):
+                        default_val = default_val[1:]
+                    env_val = os.environ.get(var_name)
+                    if env_val is not None and env_val != "":
+                        return env_val
+                    return default_val if default_val is not None else m.group(0)
+                return _PLACEHOLDER_RE.sub(_sub, val)
+
             providers = []
             for pid, meta in PROVIDER_META.items():
                 prov_cfg = models_cfg.get(pid, {}) or {}
@@ -1028,14 +1066,16 @@ class HakusAIServer:
                 if has_key:
                     k = api_keys.get(key_name, "")
                     masked = (k[:4] + "..." + k[-4:]) if len(k) > 8 else "*" * len(k)
+                raw_model = prov_cfg.get("model_name", "")
+                raw_url = prov_cfg.get("base_url", "")
                 providers.append({
                     "id": pid,
                     "display_name": meta["display"],
                     "has_url": meta["has_url"],
                     "has_api_key": has_key,
                     "masked_api_key": masked,
-                    "model_name": prov_cfg.get("model_name", ""),
-                    "base_url": prov_cfg.get("base_url", ""),
+                    "model_name": _resolve_placeholder(raw_model),
+                    "base_url": _resolve_placeholder(raw_url),
                     "is_default": pid == default_model,
                 })
             return {"providers": providers, "default_model": default_model}
@@ -1509,6 +1549,10 @@ class HakusAIServer:
                     if message_type == "message":
                         content = data.get("content", "")
                         session_id = data.get("session_id", "default")
+                        # WebSocket clients can also pass a per-message
+                        # provider override (same semantics as the REST
+                        # ChatRequest.provider field).
+                        ws_provider = data.get("provider")
 
                         await event_bus.emit(
                             EventType.CHAT_MESSAGE_RECEIVED,
@@ -1536,7 +1580,7 @@ class HakusAIServer:
                                 })
                                 continue
                             try:
-                                async for chunk in agentcore_run_turn_stream(content, session_id):
+                                async for chunk in agentcore_run_turn_stream(content, session_id, provider=ws_provider):
                                     await websocket.send_json({
                                         "type": "stream",
                                         **chunk,

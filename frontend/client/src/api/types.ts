@@ -11,6 +11,16 @@ export interface ChatRequest {
   message: string
   session_id?: string
   stream?: boolean
+  /**
+   * Per-request provider override (e.g. "opencode" / "deepseek" / "glm").
+   * If set, the server uses an AgentCore bound to this provider for the
+   * turn, instead of the global default_model from config.yaml.
+   *
+   * This is what makes the TopBar "switch provider" dropdown actually
+   * take effect — without it, the server would silently reuse a cached
+   * AgentCore created with whatever provider was default at session start.
+   */
+  provider?: string
 }
 
 export interface ChatResponse {

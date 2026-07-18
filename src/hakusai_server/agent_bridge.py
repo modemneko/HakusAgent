@@ -47,20 +47,26 @@ from typing import Any, AsyncIterator, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
-# Per-session AgentCore cache. Each session gets its own agent with
-# its own ContextManager — sessions are isolated.
-_agent_cache: Dict[str, Any] = {}
+# Per-session AgentCore cache. Each (session_id, provider) pair gets its
+# own AgentCore with its own ContextManager — sessions are isolated, and
+# switching provider mid-session creates a fresh agent (so the user's
+# "switch to OpenCode" actually takes effect instead of being ignored).
+_agent_cache: Dict[tuple, Any] = {}
 _agent_cache_lock = threading.Lock()
 
 
-def _resolve_provider() -> str:
+def _resolve_provider(explicit: Optional[str] = None) -> str:
     """Pick the provider name to pass to AgentCore.
 
     Priority:
-      1. ``HAKUSAI_SIDECAR_PROVIDER`` env var (set by electron launcher)
-      2. ``models.default_model`` in config.yaml (via BASE_CONFIG)
-      3. Fallback to "opencode" (the repo default, free models)
+      1. ``explicit`` — per-request override from ChatRequest.provider
+         (this is what makes the TopBar "switch provider" dropdown work)
+      2. ``HAKUSAI_SIDECAR_PROVIDER`` env var (set by electron launcher)
+      3. ``models.default_model`` in config.yaml (via BASE_CONFIG)
+      4. Fallback to "opencode" (the repo default, free models)
     """
+    if explicit:
+        return explicit.lower()
     env = os.environ.get("HAKUSAI_SIDECAR_PROVIDER")
     if env:
         return env.lower()
@@ -103,28 +109,34 @@ def _make_async_confirm_callback():
     return _cb
 
 
-def get_or_create_agent(session_id: str) -> Any:
-    """Return a cached AgentCore for the session, or create a new one.
+def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
+    """Return a cached AgentCore for the (session_id, provider) pair,
+    or create a new one.
 
     Creation is lazy and fault-tolerant: if hakus/ can't be imported
     (missing dep), or if the LLM client factory fails (bad API key),
     we raise — the caller (server.py) catches and surfaces the error
     via /health's ``degraded`` state.
+
+    The cache key is ``(session_id, provider)`` so that switching
+    provider mid-session (via TopBar dropdown) creates a fresh agent
+    bound to the new provider, instead of silently reusing the old one.
     """
-    if session_id in _agent_cache:
-        return _agent_cache[session_id]
+    resolved_provider = _resolve_provider(provider)
+    cache_key = (session_id, resolved_provider)
+    if cache_key in _agent_cache:
+        return _agent_cache[cache_key]
 
     with _agent_cache_lock:
-        if session_id not in _agent_cache:
+        if cache_key not in _agent_cache:
             # Local imports — see module docstring
             from hakus.agent import AgentCore
             from hakus.permission import PermissionMode
 
-            provider = _resolve_provider()
-            logger.info(f"Creating AgentCore for session={session_id} provider={provider}")
+            logger.info(f"Creating AgentCore for session={session_id} provider={resolved_provider}")
 
             agent = AgentCore(
-                model_type=provider,
+                model_type=resolved_provider,
                 permission_mode=PermissionMode.ASK,
                 confirm_callback=_make_confirm_callback(),
                 session_id=session_id,
@@ -142,14 +154,25 @@ def get_or_create_agent(session_id: str) -> Any:
             except Exception as e:
                 logger.warning(f"Could not set async confirm callback: {e}")
 
-            _agent_cache[session_id] = agent
-    return _agent_cache[session_id]
+            _agent_cache[cache_key] = agent
+    return _agent_cache[cache_key]
 
 
-def drop_agent(session_id: str) -> None:
-    """Drop a session's agent from the cache (used on /api/memory/clear)."""
+def drop_agent(session_id: str, provider: Optional[str] = None) -> None:
+    """Drop a session's agent from the cache (used on /api/memory/clear).
+
+    If ``provider`` is None, drops ALL agents for this session_id
+    (across all providers). Otherwise drops only the matching pair.
+    """
     with _agent_cache_lock:
-        _agent_cache.pop(session_id, None)
+        if provider is None:
+            # Drop all entries whose session_id matches
+            keys_to_drop = [k for k in _agent_cache if k[0] == session_id]
+            for k in keys_to_drop:
+                _agent_cache.pop(k, None)
+        else:
+            resolved = _resolve_provider(provider)
+            _agent_cache.pop((session_id, resolved), None)
 
 
 # Legacy chunk shape:
@@ -161,6 +184,7 @@ def drop_agent(session_id: str) -> None:
 async def run_turn_stream(
     message: str,
     session_id: str = "default",
+    provider: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Run one AgentCore turn, yielding legacy-shape chunks.
 
@@ -173,10 +197,14 @@ async def run_turn_stream(
 
     Terminal events (``turn_completed`` / ``turn_failed`` / ``cancelled``)
     set ``done=True`` and end the generator.
+
+    ``provider`` is a per-request override — if set (e.g. "opencode"),
+    a fresh AgentCore bound to that provider is used. If None, falls
+    back to config.yaml's models.default_model.
     """
     from hakus.protocol.serialization import serialize_event
 
-    agent = get_or_create_agent(session_id)
+    agent = get_or_create_agent(session_id, provider=provider)
 
     accumulated = ""
     input_tokens = 0
@@ -313,7 +341,11 @@ async def run_turn_stream(
         }
 
 
-async def run_turn_collect(message: str, session_id: str = "default") -> Dict[str, Any]:
+async def run_turn_collect(
+    message: str,
+    session_id: str = "default",
+    provider: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run a turn and return the full response as a single dict.
 
     Used by the non-streaming ``/api/chat`` endpoint.
@@ -325,7 +357,7 @@ async def run_turn_collect(message: str, session_id: str = "default") -> Dict[st
     error: Optional[str] = None
     failed = False
 
-    async for chunk in run_turn_stream(message, session_id):
+    async for chunk in run_turn_stream(message, session_id, provider=provider):
         if chunk.get("content"):
             full_content += chunk["content"]
         if chunk.get("input_tokens"):
@@ -352,22 +384,31 @@ async def run_turn_collect(message: str, session_id: str = "default") -> Dict[st
 
 
 def clear_session_history(session_id: str) -> bool:
-    """Clear a session's conversation context.
+    """Clear a session's conversation context across ALL providers.
 
-    Returns True if the session existed and was cleared, False otherwise.
+    Returns True if at least one agent existed and was cleared,
+    False otherwise.
     """
-    agent = _agent_cache.get(session_id)
-    if agent is None:
+    # Find any agent for this session_id (across all providers).
+    # Cache key is now (session_id, provider) tuple, so we look up by prefix.
+    matching = [v for k, v in _agent_cache.items() if k[0] == session_id]
+    if not matching:
         return False
-    try:
-        # AgentCore has a clear_history-like path via ContextManager reset
-        ctx = getattr(agent, "_context", None)
-        if ctx is not None and hasattr(ctx, "reset"):
-            ctx.reset()
-            return True
-        # Fall back: drop the agent entirely (next call recreates fresh)
+    cleared_any = False
+    for agent in matching:
+        try:
+            # AgentCore has a clear_history-like path via ContextManager reset
+            ctx = getattr(agent, "_context", None)
+            if ctx is not None and hasattr(ctx, "reset"):
+                ctx.reset()
+                cleared_any = True
+                continue
+            # Fall back: drop the agent entirely (next call recreates fresh)
+            # (handled below — we don't drop here because we'd need provider too)
+        except Exception as e:
+            logger.warning(f"clear_session_history failed for {session_id}: {e}")
+    # If nothing had a reset method, drop everything for this session
+    if not cleared_any:
         drop_agent(session_id)
         return True
-    except Exception as e:
-        logger.warning(f"clear_session_history failed for {session_id}: {e}")
-        return False
+    return cleared_any or True

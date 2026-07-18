@@ -126,13 +126,23 @@
       ],
       "icon": "build-resources/icon.png",
       "category": "Utility",
-      "maintainer": "Lightneko <107292546+modemneko@users.noreply.github.com>"
+      "maintainer": "Lightneko <107292546+modemneko@users.noreply.github.com>",
+      "desktop": {
+        "Name": "HakusAI",
+        "Comment": "AI 虚拟助手桌面客户端",
+        "Categories": "Utility;Office;AI;"
+      },
+      "fpm": [
+        "--after-upgrade=build-resources/linux-postrm.sh",
+        "--after-remove=build-resources/linux-postrm.sh"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "include": "build-resources/installer.nsh"
     }
   }
 }

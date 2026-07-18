@@ -357,7 +357,7 @@ export class HakusAIClient {
 
   // ============ Non-streaming chat ============
 
-  async chat(message: string, sessionId = 'default'): Promise<ChatResponse> {
+  async chat(message: string, sessionId = 'default', provider?: string): Promise<ChatResponse> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -365,6 +365,7 @@ export class HakusAIClient {
         message,
         session_id: sessionId,
         stream: false,
+        ...(provider ? { provider } : {}),
       } satisfies ChatRequest),
       signal: AbortSignal.timeout(this.timeout * 4),
     })
@@ -393,6 +394,7 @@ export class HakusAIClient {
     sessionId: string,
     onChunk: StreamHandler,
     signal?: AbortSignal,
+    provider?: string,
   ): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
       method: 'POST',
@@ -404,6 +406,7 @@ export class HakusAIClient {
         message,
         session_id: sessionId,
         stream: true,
+        ...(provider ? { provider } : {}),
       } satisfies ChatRequest),
       signal,
     })
