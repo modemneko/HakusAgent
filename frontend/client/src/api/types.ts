@@ -68,8 +68,14 @@ export interface SidecarVersionInfo {
  * 必须与 src/hakusai_server/server.py 中的 SIDECAR_API_VERSION_INT 保持同步。
  * 每次 sidecar 新增端点或变更 API 形状时，server.py 那边 bump 这个数字，
  * 这里也要同步 bump，否则客户端不会提示用户升级。
+ *
+ * 历史:
+ *   v5 (0.5.0): + MCP 客户端支持 (/api/config/mcp-servers* + /api/mcp/servers/*)
+ *   v4 (0.4.0): + SQLite 会话持久化 + 聊天记录导出/导入
+ *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
+ *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_SIDECAR_API_VERSION_INT = 2
+export const EXPECTED_SIDECAR_API_VERSION_INT = 5
 
 export interface AppConfig {
   version: string
@@ -585,4 +591,92 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsEnabled: false,
   ttsVoice: 'zh-CN-XiaoxiaoNeural',
   ttsSpeed: 1.0,
+}
+
+// =====================================================================
+// MCP (Model Context Protocol) — Phase 2 round 2
+// =====================================================================
+// Mirrors the shapes returned by /api/config/mcp-servers and /api/mcp/servers/*.
+// Keep in sync with src/hakusai_server/mcp_ops.py + hakus/mcp/config.py.
+// =====================================================================
+
+export interface McpServerInfo {
+  name: string
+  enabled: boolean
+  transport: 'stdio' | 'sse' | 'http'
+  command: string
+  args: string[]
+  // Only env KEYS are exposed — values are masked server-side.
+  env_keys: string[]
+  has_env: boolean
+  cwd: string | null
+  startup_timeout: number
+  tool_timeout: number
+  // Runtime status (merged from McpClientManager)
+  status: 'stopped' | 'starting' | 'running' | 'failed' | 'disabled'
+  last_error: string | null
+  started_at: number | null
+  tool_count: number
+}
+
+export interface McpServerConfig {
+  enabled: boolean
+  transport: 'stdio' | 'sse' | 'http'
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string | null
+  startup_timeout: number
+  tool_timeout: number
+}
+
+export interface McpGlobalConfig {
+  auto_start: boolean
+  fail_fast: boolean
+  tool_naming: 'namespace' | 'flat'
+}
+
+export interface McpServersResponse {
+  servers: McpServerInfo[]
+  global: McpGlobalConfig
+}
+
+export interface McpToolInfo {
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+  is_dangerous: boolean
+}
+
+export interface McpStartResult {
+  ok: boolean
+  message: string
+  status: {
+    name: string
+    status: string
+    last_error: string | null
+    started_at: number | null
+    tool_count: number
+  }
+  tools: McpToolInfo[]
+}
+
+export interface McpTestResult {
+  ok: boolean
+  message: string
+  detail: string
+  tools: McpToolInfo[]
+}
+
+export interface McpServerToolsResponse {
+  ok: boolean
+  message: string
+  tools: McpToolInfo[]
+}
+
+export interface McpInvokeResult {
+  ok: boolean
+  message: string
+  result: string
+  is_error: boolean
 }

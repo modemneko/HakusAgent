@@ -46,6 +46,13 @@ import type {
   MessageCreateBody,
   MessageUpdateBody,
   BulkImportBody,
+  McpServersResponse,
+  McpServerConfig,
+  McpGlobalConfig,
+  McpStartResult,
+  McpTestResult,
+  McpServerToolsResponse,
+  McpInvokeResult,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -396,6 +403,153 @@ export class HakusAIClient {
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/headers`, 'Set provider headers failed')
     }
+  }
+
+  // ============ MCP (Model Context Protocol) 服务器 ============
+  // Phase 2 round 2 — external stdio MCP servers.
+  // All methods mirror /api/config/mcp-servers* and /api/mcp/servers/* endpoints.
+
+  async getMcpServers(): Promise<McpServersResponse> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/config/mcp-servers`,
+      {},
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/mcp-servers`, 'Get MCP servers failed')
+    }
+    return res.json()
+  }
+
+  async saveMcpServer(name: string, config: McpServerConfig): Promise<{ name: string; config: Record<string, unknown> }> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/config/mcp-servers`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config }),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/mcp-servers`, 'Save MCP server failed')
+    }
+    return res.json()
+  }
+
+  async updateMcpServer(name: string, patch: Partial<McpServerConfig> & { enabled?: boolean }): Promise<{ name: string; config: Record<string, unknown> }> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/config/mcp-servers/${encodeURIComponent(name)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/mcp-servers/${name}`, 'Update MCP server failed')
+    }
+    return res.json()
+  }
+
+  async deleteMcpServer(name: string): Promise<{ name: string; deleted: boolean }> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/config/mcp-servers/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/mcp-servers/${name}`, 'Delete MCP server failed')
+    }
+    return res.json()
+  }
+
+  async updateMcpGlobalConfig(patch: Partial<McpGlobalConfig>): Promise<{ global: McpGlobalConfig }> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/config/mcp`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/config/mcp`, 'Update MCP global config failed')
+    }
+    return res.json()
+  }
+
+  async startMcpServer(name: string): Promise<McpStartResult> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/start`,
+      { method: 'POST' },
+      30000, // generous timeout — spawn + initialize can take a few seconds
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/mcp/servers/${name}/start`, 'Start MCP server failed')
+    }
+    return res.json()
+  }
+
+  async stopMcpServer(name: string): Promise<{ ok: boolean; message: string }> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/stop`,
+      { method: 'POST' },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/mcp/servers/${name}/stop`, 'Stop MCP server failed')
+    }
+    return res.json()
+  }
+
+  async testMcpServer(
+    name: string,
+    overrides?: { command?: string; args?: string[]; env?: Record<string, string>; cwd?: string },
+  ): Promise<McpTestResult> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/test`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(overrides ?? {}),
+      },
+      30000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/mcp/servers/${name}/test`, 'Test MCP server failed')
+    }
+    return res.json()
+  }
+
+  async listMcpServerTools(name: string): Promise<McpServerToolsResponse> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/tools`,
+      {},
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/mcp/servers/${name}/tools`, 'List MCP server tools failed')
+    }
+    return res.json()
+  }
+
+  async invokeMcpTool(name: string, toolName: string, args: Record<string, unknown>): Promise<McpInvokeResult> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/tools/${encodeURIComponent(toolName)}/invoke`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arguments: args }),
+      },
+      60000, // generous — tool execution can be slow
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/mcp/servers/${name}/tools/${toolName}/invoke`, 'Invoke MCP tool failed')
+    }
+    return res.json()
   }
 
   // ============ 记忆系统 ============
