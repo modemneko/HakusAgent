@@ -574,6 +574,10 @@ export interface AppSettings {
   ttsEnabled: boolean
   ttsVoice: string
   ttsSpeed: number
+  // Phase 3 — System tray + global shortcuts (Electron-only; ignored in browser dev mode)
+  trayEnabled: boolean
+  minimizeToTray: boolean
+  toggleShortcut: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -591,6 +595,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsEnabled: false,
   ttsVoice: 'zh-CN-XiaoxiaoNeural',
   ttsSpeed: 1.0,
+  // Phase 3 — tray + shortcuts
+  trayEnabled: true,
+  minimizeToTray: true,
+  toggleShortcut: 'Shift+CommandOrControl+H',
 }
 
 // =====================================================================

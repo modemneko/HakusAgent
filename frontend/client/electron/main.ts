@@ -1,7 +1,15 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, globalShortcut } from 'electron'
 import { join } from 'path'
 import Store from 'electron-store'
 import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
+import { syncTray, destroyTray, isTrayActive } from './tray'
+import {
+  registerToggleShortcut,
+  unregisterAll as unregisterAllShortcuts,
+  defaultAccelerator,
+  getCurrentAccelerator,
+  isValidAcceleratorSyntax,
+} from './shortcuts'
 
 // In CommonJS context, __dirname is a Node global (declared by @types/node).
 // vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
@@ -21,7 +29,13 @@ interface PersistedSettings {
   ttsEnabled: boolean
   ttsVoice: string
   ttsSpeed: number
+  // Phase 3 — system tray + global shortcuts
+  trayEnabled: boolean
+  minimizeToTray: boolean
+  toggleShortcut: string
 }
+
+const DEFAULT_TOGGLE_SHORTCUT = defaultAccelerator()
 
 const store = new Store<PersistedSettings>({
   defaults: {
@@ -38,6 +52,12 @@ const store = new Store<PersistedSettings>({
     ttsEnabled: false,
     ttsVoice: 'zh-CN-XiaoxiaoNeural',
     ttsSpeed: 1.0,
+    // Tray: enabled by default so users see it on first launch.
+    trayEnabled: true,
+    // When tray is on, the close button hides instead of quitting.
+    minimizeToTray: true,
+    // Global toggle-window shortcut.
+    toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
   },
 })
 
@@ -97,6 +117,23 @@ function createWindow() {
     }
     return { action: 'allow' }
   })
+
+  // Intercept close: if tray is on and minimize-to-tray is enabled,
+  // hide the window instead of quitting. A real quit happens via the
+  // tray menu's Quit item (which sets app.quitting = true first) or
+  // when the user explicitly calls app.quit().
+  win.on('close', (e) => {
+    if (
+      store.get('trayEnabled', true) &&
+      store.get('minimizeToTray', true) &&
+      !app.quitting
+    ) {
+      e.preventDefault()
+      win?.hide()
+    }
+    // else: fall through — the window actually closes, triggering
+    // window-all-closed → app.quit() on non-macOS.
+  })
 }
 
 // IPC handlers for persistent settings
@@ -133,6 +170,19 @@ app.whenReady().then(async () => {
     console.warn('[main] No bundled sidecar detected — using external server URL')
   }
   createWindow()
+
+  // Phase 3: set up system tray + global shortcut based on persisted settings.
+  const trayEnabled = store.get('trayEnabled', true)
+  const minimizeToTray = store.get('minimizeToTray', true)
+  syncTray(win, { enabled: trayEnabled, minimizeToTray })
+
+  const shortcutAccel = store.get('toggleShortcut', DEFAULT_TOGGLE_SHORTCUT)
+  if (shortcutAccel) {
+    const ok = registerToggleShortcut(shortcutAccel, win)
+    if (!ok) {
+      console.warn(`[main] Global shortcut "${shortcutAccel}" failed to register — likely conflicting with another app.`)
+    }
+  }
 })
 
 // IPC: query sidecar status (for renderer to show startup errors)
@@ -155,20 +205,123 @@ ipcMain.handle('sidecar:restart', async () => {
   }
 })
 
-// Stop sidecar on quit
+// ─── Phase 3: Tray IPC ──────────────────────────────────────────────────────
+// All tray/shortcut knobs are exposed to the renderer so the Settings UI
+// can flip them at runtime without an app restart.
+
+ipcMain.handle('tray:getConfig', () => {
+  return {
+    enabled: store.get('trayEnabled', true),
+    minimizeToTray: store.get('minimizeToTray', true),
+    active: isTrayActive(),
+  }
+})
+
+ipcMain.handle('tray:setEnabled', (_event, enabled: boolean) => {
+  store.set('trayEnabled', !!enabled)
+  // If we're turning tray off but minimizeToTray is still on, the close
+  // button would silently hide the window with no tray icon to restore
+  // from. Be defensive: also turn off minimizeToTray.
+  if (!enabled) {
+    store.set('minimizeToTray', false)
+  }
+  syncTray(win, {
+    enabled: store.get('trayEnabled', true),
+    minimizeToTray: store.get('minimizeToTray', true),
+  })
+  return {
+    enabled: store.get('trayEnabled', true),
+    minimizeToTray: store.get('minimizeToTray', true),
+    active: isTrayActive(),
+  }
+})
+
+ipcMain.handle('tray:setMinimizeToTray', (_event, enabled: boolean) => {
+  // minimizeToTray requires tray to be on; auto-enable tray if user
+  // tries to enable minimizeToTray while tray is off.
+  if (enabled && !store.get('trayEnabled', true)) {
+    store.set('trayEnabled', true)
+  }
+  store.set('minimizeToTray', !!enabled)
+  syncTray(win, {
+    enabled: store.get('trayEnabled', true),
+    minimizeToTray: store.get('minimizeToTray', true),
+  })
+  return {
+    enabled: store.get('trayEnabled', true),
+    minimizeToTray: store.get('minimizeToTray', true),
+    active: isTrayActive(),
+  }
+})
+
+// ─── Phase 3: Global Shortcut IPC ───────────────────────────────────────────
+
+ipcMain.handle('shortcuts:getConfig', () => {
+  return {
+    accelerator: store.get('toggleShortcut', DEFAULT_TOGGLE_SHORTCUT),
+    registered: getCurrentAccelerator(),
+    default: DEFAULT_TOGGLE_SHORTCUT,
+  }
+})
+
+ipcMain.handle('shortcuts:setAccelerator', (_event, accelerator: string | null) => {
+  // Validate syntax first so we never overwrite a working shortcut with
+  // a broken one.
+  if (accelerator && !isValidAcceleratorSyntax(accelerator)) {
+    return { ok: false, error: `Invalid accelerator syntax: "${accelerator}"`, registered: getCurrentAccelerator() }
+  }
+  store.set('toggleShortcut', accelerator || '')
+  const ok = registerToggleShortcut(accelerator || null, win)
+  return {
+    ok,
+    error: ok ? null : `Failed to register "${accelerator}" — it may conflict with another application.`,
+    registered: getCurrentAccelerator(),
+  }
+})
+
+// Validate a candidate accelerator WITHOUT claiming it. Used by the
+// settings UI for live input validation.
+ipcMain.handle('shortcuts:validate', (_event, accelerator: string) => {
+  return { valid: isValidAcceleratorSyntax(accelerator) }
+})
+
+// Stop sidecar + tear down tray + unregister shortcuts on quit
 app.on('before-quit', () => {
+  // Signal the close handler that this is a real quit, not a hide-to-tray.
+  app.quitting = true
   stopSidecar()
+  destroyTray()
+  unregisterAllShortcuts()
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // On non-macOS, when tray is disabled the last window closing should
+  // quit the app. When tray is enabled, the close handler intercepts
+  // the close event and hides the window instead — so window-all-closed
+  // never fires in normal use with tray on.
+  if (process.platform !== 'darwin' && !store.get('trayEnabled', true)) {
     app.quit()
     win = null
   }
 })
 
 app.on('activate', () => {
+  // macOS dock click — if window is hidden but tray is on, restore it.
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
+    syncTray(win, {
+      enabled: store.get('trayEnabled', true),
+      minimizeToTray: store.get('minimizeToTray', true),
+    })
+  } else if (win && !win.isVisible()) {
+    win.show()
+    win.focus()
   }
+})
+
+// Defensive: unregister all shortcuts when the app loses focus (macOS
+// sometimes leaves them registered after a crash). Electron already
+// cleans up on quit, but this is a safety net for unexpected terminations.
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
 })

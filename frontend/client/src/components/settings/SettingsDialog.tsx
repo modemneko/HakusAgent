@@ -1,7 +1,7 @@
 /**
  * Settings Dialog — 左侧分类列表 + 右侧表单的现代留白布局.
  *
- * 9 个分类:
+ * 10 个分类:
  *   1. 模型配置 (Bot)
  *   2. 角色 (User)
  *   3. 对话 (MessageSquare)
@@ -9,8 +9,9 @@
  *   5. 记忆 (Brain)
  *   6. 工具与权限 (Shield)
  *   7. 外观 (Palette)
- *   8. 连接 (Server)
- *   9. 高级 (Settings)
+ *   8. 托盘与快捷键 (LayoutGrid) — Phase 3
+ *   9. 连接 (Server)
+ *  10. 高级 (Settings)
  */
 
 import { useState } from 'react'
@@ -22,6 +23,7 @@ import {
   Brain,
   Shield,
   Palette,
+  LayoutGrid,
   Server,
   Settings as SettingsIcon,
   Info,
@@ -42,6 +44,7 @@ import { TtsPanel } from './panels/TtsPanel'
 import { MemoryPanel } from './panels/MemoryPanel'
 import { ToolsPanel } from './panels/ToolsPanel'
 import { AppearancePanel } from './panels/AppearancePanel'
+import { TrayPanel } from './panels/TrayPanel'
 import { ConnectionPanel } from './panels/ConnectionPanel'
 import { AdvancedPanel } from './panels/AdvancedPanel'
 
@@ -53,6 +56,7 @@ type CategoryId =
   | 'memory'
   | 'tools'
   | 'appearance'
+  | 'tray'
   | 'connection'
   | 'advanced'
 
@@ -71,6 +75,7 @@ const CATEGORIES: Category[] = [
   { id: 'memory', label: '记忆', desc: '短期与长期记忆', icon: Brain },
   { id: 'tools', label: '工具与权限', desc: '工具开关与权限模式', icon: Shield },
   { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
+  { id: 'tray', label: '托盘与快捷键', desc: '任务栏图标与全局快捷键', icon: LayoutGrid },
   { id: 'connection', label: '连接', desc: '服务地址与超时', icon: Server },
   { id: 'advanced', label: '高级', desc: '诊断 / 导入导出 / 重启', icon: SettingsIcon },
 ]
@@ -143,6 +148,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {active === 'memory' && <MemoryPanel />}
                 {active === 'tools' && <ToolsPanel />}
                 {active === 'appearance' && <AppearancePanel />}
+                {active === 'tray' && <TrayPanel />}
                 {active === 'connection' && <ConnectionPanel />}
                 {active === 'advanced' && <AdvancedPanel />}
               </div>

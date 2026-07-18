@@ -26,6 +26,10 @@ interface SettingsStore extends AppSettings {
   /** 强制重置 provider 加载状态（用于从卡死的 loading 中恢复） */
   resetProvidersLoading: () => void
   setDefaultModel: (provider: string) => Promise<void>
+  // Phase 3 — tray + shortcuts (Electron-only; no-op in browser dev mode)
+  setTrayEnabled: (enabled: boolean) => Promise<void>
+  setMinimizeToTray: (enabled: boolean) => Promise<void>
+  setToggleShortcut: (accelerator: string) => Promise<{ ok: boolean; error: string | null }>
 }
 
 // Persistence layer
@@ -49,6 +53,9 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       ttsEnabled: all?.ttsEnabled ?? DEFAULT_SETTINGS.ttsEnabled,
       ttsVoice: all?.ttsVoice || DEFAULT_SETTINGS.ttsVoice,
       ttsSpeed: all?.ttsSpeed ?? DEFAULT_SETTINGS.ttsSpeed,
+      trayEnabled: all?.trayEnabled ?? DEFAULT_SETTINGS.trayEnabled,
+      minimizeToTray: all?.minimizeToTray ?? DEFAULT_SETTINGS.minimizeToTray,
+      toggleShortcut: all?.toggleShortcut || DEFAULT_SETTINGS.toggleShortcut,
     }
   }
   // Browser dev fallback — localStorage
@@ -78,6 +85,9 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('ttsEnabled', settings.ttsEnabled)
     await api.set('ttsVoice', settings.ttsVoice)
     await api.set('ttsSpeed', settings.ttsSpeed)
+    await api.set('trayEnabled', settings.trayEnabled)
+    await api.set('minimizeToTray', settings.minimizeToTray)
+    await api.set('toggleShortcut', settings.toggleShortcut)
     return
   }
   localStorage.setItem('hakusai-settings', JSON.stringify(settings))
@@ -173,5 +183,61 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({ providers: prev, defaultModel: get().defaultModel })
       throw e
     }
+  },
+
+  // ─── Phase 3: tray + shortcuts ───────────────────────────────────────────
+  // These call the dedicated IPC handlers in main.ts which both persist
+  // the new value AND apply it at runtime (no app restart required).
+  // In browser dev mode (no window.electron), they fall back to plain
+  // store updates so the UI still reflects the user's intent.
+
+  setTrayEnabled: async (enabled) => {
+    set({ trayEnabled: enabled })
+    const electron = (window as any).electron
+    if (electron?.tray) {
+      try {
+        const cfg = await electron.tray.setEnabled(enabled)
+        // Reconcile state with the authoritative response from main.
+        // (main may flip minimizeToTray if tray was disabled.)
+        set({ trayEnabled: cfg.enabled, minimizeToTray: cfg.minimizeToTray })
+      } catch (e) {
+        console.error('[settings] tray.setEnabled failed:', e)
+      }
+    } else {
+      await saveSettings(get() as any)
+    }
+  },
+
+  setMinimizeToTray: async (enabled) => {
+    set({ minimizeToTray: enabled })
+    const electron = (window as any).electron
+    if (electron?.tray) {
+      try {
+        const cfg = await electron.tray.setMinimizeToTray(enabled)
+        // If main auto-enabled tray, reflect that in our state.
+        set({ trayEnabled: cfg.enabled, minimizeToTray: cfg.minimizeToTray })
+      } catch (e) {
+        console.error('[settings] tray.setMinimizeToTray failed:', e)
+      }
+    } else {
+      await saveSettings(get() as any)
+    }
+  },
+
+  setToggleShortcut: async (accelerator) => {
+    const electron = (window as any).electron
+    if (electron?.shortcuts) {
+      const result = await electron.shortcuts.setAccelerator(accelerator)
+      // Only update local state if registration succeeded — otherwise
+      // keep the previous value so the UI doesn't show a broken shortcut.
+      if (result.ok) {
+        set({ toggleShortcut: accelerator || '' })
+      }
+      return { ok: result.ok, error: result.error }
+    }
+    // Browser dev fallback — just persist without real registration.
+    set({ toggleShortcut: accelerator || '' })
+    await saveSettings(get() as any)
+    return { ok: true, error: null }
   },
 }))

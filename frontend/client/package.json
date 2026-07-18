@@ -84,6 +84,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "build-resources",
+        "to": "build-resources",
+        "filter": [
+          "tray-icon-*.png",
+          "icon.png"
+        ]
       }
     ],
     "win": {

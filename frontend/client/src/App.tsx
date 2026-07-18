@@ -53,6 +53,16 @@ function App() {
     }
   }, [loadSessions, loadSettings, migrateSessions])
 
+  // Phase 3: listen for "new chat" requests fired from the tray menu
+  useEffect(() => {
+    const electron = (window as any).electron
+    if (!electron?.tray?.onNewChat) return
+    const unsubscribe = electron.tray.onNewChat(() => {
+      useSessionStore.getState().createSession('New Chat')
+    })
+    return unsubscribe
+  }, [])
+
   // Refresh server info when connection state changes to connected
   useEffect(() => {
     if (connState === 'connected') {
