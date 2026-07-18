@@ -131,11 +131,10 @@
         "Name": "HakusAI",
         "Comment": "AI 虚拟助手桌面客户端",
         "Categories": "Utility;Office;AI;"
-      },
-      "fpm": [
-        "--after-upgrade=build-resources/linux-postrm.sh",
-        "--after-remove=build-resources/linux-postrm.sh"
-      ]
+      }
+    },
+    "deb": {
+      "afterRemove": "build-resources/linux-postrm.sh"
     },
     "nsis": {
       "oneClick": false,

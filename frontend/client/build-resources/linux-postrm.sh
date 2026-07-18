@@ -6,13 +6,18 @@
 # Linux 没有像 Windows NSIS 那样的交互式弹窗, 所以这里只打印提示
 # 让用户决定是否手动删除 ~/.hakus 数据目录.
 #
-# 由 electron-builder 通过 build.linux.fpm 的 --after-remove 注入.
+# 由 electron-builder 通过 build.deb.afterRemove 注入.
+#
+# 重要: 脚本里绝对不能出现 $ {WORD} 形式的字符串 (即使是在注释里),
+# 因为 electron-builder 会把它当模板宏处理, 找不到对应宏就报
+# "Macro WORD is not defined" 让构建失败.
+# 所以一律用 $WORD 形式 (不要加大括号).
 # =====================================================================
 
 set -e
 
 # 数据目录位置 (跟随当前用户)
-HAKUS_DATA_DIR="${HOME}/.hakus"
+HAKUS_DATA_DIR="$HOME/.hakus"
 
 # 仅在 purge 阶段才提示, 普通卸载不打印太多
 case "$1" in
