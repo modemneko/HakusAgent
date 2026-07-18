@@ -24,6 +24,8 @@ export function ChatView() {
   const renameSession = useSessionStore((s) => s.renameSession)
   const isStreaming = useSessionStore((s) => s.isStreaming)
   const setStreaming = useSessionStore((s) => s.setStreaming)
+  const persistNewMessage = useSessionStore((s) => s.persistNewMessage)
+  const persistMessage = useSessionStore((s) => s.persistMessage)
 
   const settings = useSettingsStore()
   const connState = useConnectionStore((s) => s.state)
@@ -53,25 +55,28 @@ export function ChatView() {
       if (!activeId) return
       const sessionId = activeId
 
-      // 1. Add user message
-      addMessage(sessionId, {
+      // 1. Add user message — persist immediately (it's already final)
+      const userMsgId = addMessage(sessionId, {
         role: 'user',
         content: text,
         tool_calls: [],
       })
+      void persistNewMessage(sessionId, userMsgId)
 
-      // 2. Add assistant placeholder (streaming)
+      // 2. Add assistant placeholder (streaming) — persist as streaming=true,
+      //    will be PATCHed on stream end with final content.
       const assistantMsgId = addMessage(sessionId, {
         role: 'assistant',
         content: '',
         tool_calls: [],
         streaming: true,
       })
+      void persistNewMessage(sessionId, assistantMsgId)
 
       // 3. Auto-rename session if it's the first message
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
       if (session && session.title === 'New Chat') {
-        renameSession(sessionId, text.slice(0, 40).replace(/\n/g, ' '))
+        void renameSession(sessionId, text.slice(0, 40).replace(/\n/g, ' '))
       }
 
       // 4. Start SSE stream
@@ -113,6 +118,8 @@ export function ChatView() {
         )
         // Ensure streaming flag is off
         updateMessage(sessionId, assistantMsgId, { streaming: false })
+        // Persist final assistant message (content + reasoning + tool_calls + tokens)
+        void persistMessage(sessionId, assistantMsgId)
       } catch (e: any) {
         if (e?.name === 'AbortError') {
           updateMessage(sessionId, assistantMsgId, {
@@ -126,12 +133,14 @@ export function ChatView() {
             streaming: false,
           })
         }
+        // Persist even on error/abort so the partial content + error is saved
+        void persistMessage(sessionId, assistantMsgId)
       } finally {
         setStreaming(false)
         setAbortCtrl(null)
       }
     },
-    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming, settings.defaultModel],
+    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming, persistNewMessage, persistMessage, settings.defaultModel],
   )
 
   // Handle typed AgentEvent from the protocol layer

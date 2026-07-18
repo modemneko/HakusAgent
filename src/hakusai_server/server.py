@@ -33,6 +33,7 @@ from .agent_bridge import (
     clear_session_history as agentcore_clear_session,
     get_or_create_agent as agentcore_get_or_create,
 )
+from . import session_store
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.3.0"
-SIDECAR_API_VERSION_INT = 3  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.4.0"
+SIDECAR_API_VERSION_INT = 4  # 整数版本，便于客户端比较
 
 # Toggle: when True, /api/chat* endpoints use hakus.AgentCore (24 tools,
 # permissions, AgentEvent stream). When False, fall back to the old
@@ -97,6 +98,59 @@ class ConfigUpdateRequest(BaseModel):
     section: str
     key: str
     value: Any
+
+
+# ========== Session persistence (SQLite) 请求模型 ==========
+
+class SessionCreateRequest(BaseModel):
+    """创建 session 请求"""
+    id: str
+    title: str = "New Chat"
+    remote_session_id: Optional[str] = None
+    provider: Optional[str] = None
+    pinned: bool = False
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
+class SessionUpdateRequest(BaseModel):
+    """更新 session 请求 — 所有字段可选"""
+    title: Optional[str] = None
+    remote_session_id: Optional[str] = None
+    provider: Optional[str] = None
+    pinned: Optional[bool] = None
+
+
+class MessageCreateRequest(BaseModel):
+    """追加 message 请求"""
+    id: str
+    role: str = "user"  # user / assistant / system / tool
+    content: str = ""
+    reasoning: Optional[str] = None
+    tool_calls: Optional[list] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    error: Optional[str] = None
+    streaming: bool = False
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
+class MessageUpdateRequest(BaseModel):
+    """更新 message 请求 — 所有字段可选"""
+    content: Optional[str] = None
+    reasoning: Optional[str] = None
+    tool_calls: Optional[list] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    error: Optional[str] = None
+    streaming: Optional[bool] = None
+
+
+class BulkImportRequest(BaseModel):
+    """批量导入 (用于 localStorage -> SQLite 迁移)"""
+    sessions: list
+    messages: Dict[str, list] = {}  # session_id -> [messages]
 
 
 # ========== 服务器类 ==========
@@ -617,6 +671,8 @@ class HakusAIServer:
                     "/api/config/export",
                     "/api/diagnostics",
                     "/api/agentcore/status",
+                    "/api/sessions",
+                    "/api/sessions/{id}/messages",
                 ],
             }
 
@@ -953,7 +1009,221 @@ class HakusAIServer:
                     "success": False,
                     "error": str(e)
                 }
-        
+
+        # ========== Session 持久化 API (SQLite) ==========
+        # 替代前端 localStorage 的会话存储. 用户在桌面客户端看到的所有
+        # chat 历史 (sessions + messages) 都持久化在 ~/.hakus/sessions.db.
+        #
+        # 设计:
+        #   - Sessions / messages 通过 REST CRUD 接口管理
+        #   - Streaming 期间前端只更新 in-memory state, stream 结束时
+        #     一次性 PATCH 最终 message (content + reasoning + tool_calls)
+        #   - User 消息在 send 时立即 POST (它已经是 final 状态)
+        #   - 跨设备同步留 Phase 3 (现在只解决"localStorage 5MB 上限 +
+        #     浏览器缓存清空就丢"的问题)
+
+        @app.get("/api/sessions")
+        async def list_sessions_api():
+            """列出所有 sessions (按 updated_at 倒序, pinned 优先).
+            不返回 messages — 客户端按需 GET /api/sessions/{id} 拉详情."""
+            try:
+                return {"sessions": session_store.list_sessions()}
+            except Exception as e:
+                logger.error(f"list_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions")
+        async def create_session_api(req: SessionCreateRequest):
+            """创建 session. 客户端生成 UUID (s_xxx), 服务端只负责持久化."""
+            try:
+                return session_store.create_session(
+                    session_id=req.id,
+                    title=req.title,
+                    remote_session_id=req.remote_session_id,
+                    provider=req.provider,
+                    pinned=req.pinned,
+                    created_at=req.created_at,
+                    updated_at=req.updated_at,
+                )
+            except Exception as e:
+                logger.error(f"create_session failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/sessions/{session_id}")
+        async def get_session_api(session_id: str):
+            """获取单个 session + 其所有 messages (按 created_at 升序)."""
+            try:
+                sess = session_store.get_session(session_id)
+                if not sess:
+                    raise HTTPException(status_code=404, detail="session not found")
+                msgs = session_store.list_messages(session_id)
+                return {**sess, "messages": msgs}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"get_session failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.patch("/api/sessions/{session_id}")
+        async def update_session_api(session_id: str, req: SessionUpdateRequest):
+            """更新 session 的 title / pinned / provider / remote_session_id."""
+            try:
+                result = session_store.update_session(
+                    session_id,
+                    title=req.title,
+                    remote_session_id=req.remote_session_id,
+                    provider=req.provider,
+                    pinned=req.pinned,
+                )
+                if not result:
+                    raise HTTPException(status_code=404, detail="session not found")
+                return result
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"update_session failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/sessions/{session_id}")
+        async def delete_session_api(session_id: str):
+            """删除 session + 级联删除其所有 messages."""
+            try:
+                ok = session_store.delete_session(session_id)
+                if not ok:
+                    raise HTTPException(status_code=404, detail="session not found")
+                # 同时清掉 agent_bridge 里这个 session 的 AgentCore 缓存
+                try:
+                    agentcore_clear_session(session_id)
+                except Exception as _e:
+                    logger.warning(f"clear_session_history failed: {_e}")
+                return {"deleted": True, "id": session_id}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"delete_session failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/sessions/{session_id}/messages")
+        async def list_messages_api(session_id: str):
+            """列出某 session 的所有 messages."""
+            try:
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                return {"messages": session_store.list_messages(session_id)}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"list_messages failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/{session_id}/messages")
+        async def add_message_api(session_id: str, req: MessageCreateRequest):
+            """追加 message. 用于:
+              - user 消息 (send 时立即写)
+              - assistant 消息占位 (stream 开始时建空 row, 结束时 PATCH)
+            """
+            try:
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                return session_store.add_message(
+                    session_id=session_id,
+                    message_id=req.id,
+                    role=req.role,
+                    content=req.content,
+                    reasoning=req.reasoning,
+                    tool_calls=req.tool_calls,
+                    input_tokens=req.input_tokens,
+                    output_tokens=req.output_tokens,
+                    error=req.error,
+                    streaming=req.streaming,
+                    created_at=req.created_at,
+                    updated_at=req.updated_at,
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"add_message failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.patch("/api/sessions/{session_id}/messages/{message_id}")
+        async def update_message_api(session_id: str, message_id: str, req: MessageUpdateRequest):
+            """更新 message. 用于 stream 完成时把最终 content / tool_calls /
+            tokens 一次性写入."""
+            try:
+                result = session_store.update_message(
+                    message_id,
+                    content=req.content,
+                    reasoning=req.reasoning,
+                    tool_calls=req.tool_calls,
+                    input_tokens=req.input_tokens,
+                    output_tokens=req.output_tokens,
+                    error=req.error,
+                    streaming=req.streaming,
+                )
+                if not result:
+                    raise HTTPException(status_code=404, detail="message not found")
+                return result
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"update_message failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/sessions/{session_id}/messages/{message_id}")
+        async def delete_message_api(session_id: str, message_id: str):
+            """删除单个 message."""
+            try:
+                ok = session_store.delete_message(message_id)
+                if not ok:
+                    raise HTTPException(status_code=404, detail="message not found")
+                return {"deleted": True, "id": message_id}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"delete_message failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/sessions/{session_id}/messages")
+        async def clear_session_messages_api(session_id: str):
+            """清空某 session 的所有 messages (保留 session 行).
+            用于 TopBar '清空对话' — 用户想在同一个 session 里重新开始."""
+            try:
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                n = session_store.clear_session_messages(session_id)
+                # 同时清掉 AgentCore 的 in-memory context, 让 LLM 也"忘记"
+                try:
+                    agentcore_clear_session(session_id)
+                except Exception as _e:
+                    logger.warning(f"clear_session_history failed: {_e}")
+                return {"deleted_messages": n, "session_id": session_id}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"clear_session_messages failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/migrate")
+        async def migrate_sessions_api(req: BulkImportRequest):
+            """批量导入 sessions + messages. 用于把前端 localStorage 里
+            已有的历史一次性导入 SQLite. 幂等 (INSERT OR REPLACE)."""
+            try:
+                counts = session_store.bulk_import(req.sessions, req.messages)
+                return {"imported": counts}
+            except Exception as e:
+                logger.error(f"migrate_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/sessions")
+        async def wipe_all_sessions_api():
+            """删除所有 sessions + messages. 危险操作 — 前端必须二次确认."""
+            try:
+                n = session_store.wipe_all()
+                return {"deleted_sessions": n}
+            except Exception as e:
+                logger.error(f"wipe_all_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
         # ========== 配置API ==========
         
         @app.get("/api/config")

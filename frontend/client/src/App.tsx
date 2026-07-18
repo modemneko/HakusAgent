@@ -19,28 +19,39 @@ function App() {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
 
-  const loadSessions = useSessionStore((s) => s.loadFromStorage)
+  const loadSessions = useSessionStore((s) => s.loadFromServer)
+  const migrateSessions = useSessionStore((s) => s.migrateFromLocalStorage)
   const loadSettings = useSettingsStore((s) => s.load)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
 
-  // Initialize on first mount
+  // Initialize on first mount.
+  // We need settings (server URL) loaded before we can hit /api/sessions,
+  // so the flow is: loadSettings -> migrateFromLocalStorage (one-shot,
+  // best-effort) -> loadFromServer -> ensure at least one session exists.
   useEffect(() => {
-    loadSessions()
-    loadSettings().then(() => {
-      // Settings load triggers connection check via TopBar effect; nothing else to do.
-    })
-  }, [loadSessions, loadSettings])
-
-  // If no session exists after load, create one
-  useEffect(() => {
-    const sessions = useSessionStore.getState().sessions
-    if (sessions.length === 0) {
-      useSessionStore.getState().createSession('New Chat')
-    } else if (!useSessionStore.getState().activeSessionId) {
-      useSessionStore.getState().setActiveSession(sessions[0].id)
+    let cancelled = false
+    ;(async () => {
+      await loadSettings()
+      if (cancelled) return
+      // Best-effort migration of legacy localStorage data — never blocks app boot.
+      void migrateSessions().catch((e) => console.warn('session migrate failed:', e))
+      // Load sessions from server. If sidecar is down, loadError is set in store
+      // and the UI can show a retry — but we still create a placeholder session
+      // below so the composer is usable.
+      await loadSessions()
+      if (cancelled) return
+      const st = useSessionStore.getState()
+      if (st.sessions.length === 0) {
+        void st.createSession('New Chat')
+      } else if (!st.activeSessionId) {
+        st.setActiveSession(st.sessions[0].id)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-  }, [])
+  }, [loadSessions, loadSettings, migrateSessions])
 
   // Refresh server info when connection state changes to connected
   useEffect(() => {

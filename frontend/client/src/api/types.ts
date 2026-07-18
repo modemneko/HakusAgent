@@ -457,9 +457,90 @@ export interface ChatSession {
   title: string
   // Optional remote session_id (HakusAI server-side session)
   remote_session_id?: string
+  // Per-session provider override (e.g. "deepseek" / "opencode" / "openai").
+  // If unset, the global defaultModel from settings is used.
+  provider?: string
   created_at: number
   updated_at: number
   pinned?: boolean
+}
+
+/** Server-side session row (matches session_store._row_to_session). */
+export interface ServerSession {
+  id: string
+  title: string
+  remote_session_id: string | null
+  provider: string | null
+  pinned: boolean
+  created_at: number
+  updated_at: number
+}
+
+/** Server-side message row (matches session_store._row_to_message). */
+export interface ServerMessage {
+  id: string
+  session_id: string
+  role: string
+  content: string
+  reasoning: string | null
+  tool_calls: ToolCall[]
+  input_tokens: number | null
+  output_tokens: number | null
+  error: string | null
+  streaming: boolean
+  created_at: number
+  updated_at: number
+}
+
+/** POST /api/sessions body. */
+export interface SessionCreateBody {
+  id: string
+  title?: string
+  remote_session_id?: string
+  provider?: string
+  pinned?: boolean
+  created_at?: number
+  updated_at?: number
+}
+
+/** PATCH /api/sessions/{id} body — all fields optional. */
+export interface SessionUpdateBody {
+  title?: string
+  remote_session_id?: string
+  provider?: string
+  pinned?: boolean
+}
+
+/** POST /api/sessions/{id}/messages body. */
+export interface MessageCreateBody {
+  id: string
+  role?: string
+  content?: string
+  reasoning?: string | null
+  tool_calls?: ToolCall[]
+  input_tokens?: number | null
+  output_tokens?: number | null
+  error?: string | null
+  streaming?: boolean
+  created_at?: number
+  updated_at?: number
+}
+
+/** PATCH /api/sessions/{id}/messages/{msg_id} body — all fields optional. */
+export interface MessageUpdateBody {
+  content?: string
+  reasoning?: string | null
+  tool_calls?: ToolCall[]
+  input_tokens?: number | null
+  output_tokens?: number | null
+  error?: string | null
+  streaming?: boolean
+}
+
+/** POST /api/sessions/migrate body. */
+export interface BulkImportBody {
+  sessions: ServerSession[]
+  messages: Record<string, ServerMessage[]>
 }
 
 export interface ConnectionSettings {

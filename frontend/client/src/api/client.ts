@@ -39,6 +39,13 @@ import type {
   TtsVoicesResponse,
   ExportConfigResponse,
   SidecarVersionInfo,
+  ServerSession,
+  ServerMessage,
+  SessionCreateBody,
+  SessionUpdateBody,
+  MessageCreateBody,
+  MessageUpdateBody,
+  BulkImportBody,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -659,6 +666,122 @@ export class HakusAIClient {
 
   get wsConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  // ============ Session persistence (SQLite) ============
+  //
+  // Sessions + messages live in ~/.hakus/sessions.db on the sidecar.
+  // The frontend uses these endpoints instead of localStorage so that:
+  //   1. Chat history survives browser cache clears
+  //   2. No 5-10 MB localStorage cap
+  //   3. Backup story is "copy ~/.hakus"
+  //
+  // During SSE streaming, the frontend keeps incoming text_delta chunks
+  // in-memory only; when the stream finishes (turn_completed /
+  // turn_failed / aborted), it PATCHes the final message once with the
+  // complete content + reasoning + tool_calls + tokens.
+
+  /** List all sessions (no messages), newest first. */
+  async listSessions(): Promise<ServerSession[]> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions`, 'List sessions failed')
+    const data = await res.json()
+    return data.sessions as ServerSession[]
+  }
+
+  /** Get one session with all its messages. */
+  async getSession(sessionId: string): Promise<ServerSession & { messages: ServerMessage[] }> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
+    const res = await this.fetchWithHardTimeout(url, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Get session failed')
+    return res.json()
+  }
+
+  /** Create a new session. */
+  async createSession(body: SessionCreateBody): Promise<ServerSession> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions`, 'Create session failed')
+    return res.json()
+  }
+
+  /** Patch a session's title / pinned / provider / remote_session_id. */
+  async updateSession(sessionId: string, body: SessionUpdateBody): Promise<ServerSession> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
+    const res = await this.fetchWithHardTimeout(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Update session failed')
+    return res.json()
+  }
+
+  /** Delete a session + cascade its messages. */
+  async deleteSession(sessionId: string): Promise<void> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
+    const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Delete session failed')
+  }
+
+  /** Add a message (user msg, or assistant placeholder before stream starts). */
+  async addMessage(sessionId: string, body: MessageCreateBody): Promise<ServerMessage> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages`
+    const res = await this.fetchWithHardTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Add message failed')
+    return res.json()
+  }
+
+  /** Patch a message (used at stream end to write the final content). */
+  async updateMessage(sessionId: string, messageId: string, body: MessageUpdateBody): Promise<ServerMessage> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
+    const res = await this.fetchWithHardTimeout(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Update message failed')
+    return res.json()
+  }
+
+  /** Delete a single message. */
+  async deleteMessage(sessionId: string, messageId: string): Promise<void> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
+    const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Delete message failed')
+  }
+
+  /** Clear all messages in a session (keeps the session row). */
+  async clearSessionMessages(sessionId: string): Promise<{ deleted_messages: number }> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages`
+    const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Clear session messages failed')
+    return res.json()
+  }
+
+  /** Bulk import sessions + messages (idempotent INSERT OR REPLACE). */
+  async migrateSessions(body: BulkImportBody): Promise<{ imported: { sessions: number; messages: number } }> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions/migrate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions/migrate`, 'Migrate sessions failed')
+    return res.json()
+  }
+
+  /** Wipe ALL sessions + messages. Dangerous — frontend must confirm. */
+  async wipeAllSessions(): Promise<{ deleted_sessions: number }> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions`, 'Wipe sessions failed')
+    return res.json()
   }
 }
 
