@@ -777,6 +777,13 @@ export class HakusAIClient {
     return res.json()
   }
 
+  /** Export all sessions + messages as a single JSON (for backup/restore). */
+  async exportSessions(): Promise<BulkImportBody & { schema_version: number; exported_at: number }> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions/export`, {}, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions/export`, 'Export sessions failed')
+    return res.json()
+  }
+
   /** Wipe ALL sessions + messages. Dangerous — frontend must confirm. */
   async wipeAllSessions(): Promise<{ deleted_sessions: number }> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, { method: 'DELETE' }, 10000)

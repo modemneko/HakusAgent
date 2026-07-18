@@ -1049,6 +1049,39 @@ class HakusAIServer:
                 logger.error(f"create_session failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
 
+        # -----------------------------------------------------------------
+        # 注意路由注册顺序: 字面量路径 (export / migrate) 必须在
+        # /api/sessions/{session_id} 之前注册, 否则 FastAPI 会把 "export"
+        # 当成 session_id 匹配到 {session_id} 路由, 返回 404.
+        # -----------------------------------------------------------------
+
+        @app.get("/api/sessions/export")
+        async def export_sessions_api():
+            """导出全部 sessions + messages 为单个 JSON.
+            用于「备份聊天记录」按钮 — 用户下载后可保存到任意位置,
+            下次重装/换机时通过 POST /api/sessions/migrate 恢复.
+
+            返回格式与 /api/sessions/migrate 的请求体一致 (schema_version +
+            exported_at + sessions + messages), 所以导出文件可以直接喂给
+            导入端点, 不需要前端做格式转换.
+            """
+            try:
+                return session_store.export_all()
+            except Exception as e:
+                logger.error(f"export_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/migrate")
+        async def migrate_sessions_api(req: BulkImportRequest):
+            """批量导入 sessions + messages. 用于把前端 localStorage 里
+            已有的历史一次性导入 SQLite. 幂等 (INSERT OR REPLACE)."""
+            try:
+                counts = session_store.bulk_import(req.sessions, req.messages)
+                return {"imported": counts}
+            except Exception as e:
+                logger.error(f"migrate_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
         @app.get("/api/sessions/{session_id}")
         async def get_session_api(session_id: str):
             """获取单个 session + 其所有 messages (按 created_at 升序)."""
@@ -1201,17 +1234,6 @@ class HakusAIServer:
                 raise
             except Exception as e:
                 logger.error(f"clear_session_messages failed: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=str(e))
-
-        @app.post("/api/sessions/migrate")
-        async def migrate_sessions_api(req: BulkImportRequest):
-            """批量导入 sessions + messages. 用于把前端 localStorage 里
-            已有的历史一次性导入 SQLite. 幂等 (INSERT OR REPLACE)."""
-            try:
-                counts = session_store.bulk_import(req.sessions, req.messages)
-                return {"imported": counts}
-            except Exception as e:
-                logger.error(f"migrate_sessions failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
 
         @app.delete("/api/sessions")

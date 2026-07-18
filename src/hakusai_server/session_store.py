@@ -539,3 +539,42 @@ def wipe_all() -> int:
         conn.execute("DELETE FROM messages")
         conn.execute("DELETE FROM sessions")
     return n
+
+
+def export_all() -> Dict[str, Any]:
+    """Export the entire sessions + messages DB as a JSON-serializable dict.
+
+    Format:
+        {
+            "schema_version": 1,
+            "exported_at": 1784384195428,
+            "sessions": [...],
+            "messages": { session_id: [messages], ... }
+        }
+
+    This is the inverse of bulk_import — the same payload shape can be
+    POSTed back to /api/sessions/migrate to restore.
+    """
+    conn = _get_conn()
+    with _lock:
+        sess_rows = conn.execute(
+            "SELECT * FROM sessions ORDER BY updated_at DESC"
+        ).fetchall()
+        msg_rows = conn.execute(
+            "SELECT * FROM messages ORDER BY created_at ASC"
+        ).fetchall()
+
+    sessions = [_row_to_session(r) for r in sess_rows]
+    messages: Dict[str, List[Dict[str, Any]]] = {}
+    for r in msg_rows:
+        m = _row_to_message(r)
+        sid = m["session_id"]
+        messages.setdefault(sid, []).append(m)
+
+    import time as _time
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "exported_at": int(_time.time() * 1000),
+        "sessions": sessions,
+        "messages": messages,
+    }

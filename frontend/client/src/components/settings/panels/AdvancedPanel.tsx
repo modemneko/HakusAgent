@@ -14,6 +14,8 @@ import {
   FileText,
   CheckCircle2,
   XCircle,
+  Database,
+  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -21,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
 import { apiClient } from '@/api/client'
+import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
 import type { DiagnosticsInfo } from '@/api/types'
 
@@ -33,6 +36,9 @@ export function AdvancedPanel() {
   const [restarting, setRestarting] = useState(false)
   const [logPath, setLogPath] = useState<string | null>(null)
   const [fileInputEl, setFileInputEl] = useState<HTMLInputElement | null>(null)
+  const [chatFileInputEl, setChatFileInputEl] = useState<HTMLInputElement | null>(null)
+  const [exportingChat, setExportingChat] = useState(false)
+  const [importingChat, setImportingChat] = useState(false)
 
   const refreshDiag = async () => {
     setLoadingDiag(true)
@@ -143,6 +149,61 @@ export function AdvancedPanel() {
   }
 
   const hasRestartApi = !!((window as any).electron?.sidecar?.restart)
+
+  // ============ 聊天记录备份/导出 ============
+
+  const handleExportChat = async () => {
+    setExportingChat(true)
+    try {
+      const data = await apiClient.exportSessions()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `hakusai-chat-history-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      const msgCount = Object.values(data.messages).reduce((n, arr) => n + arr.length, 0)
+      toast.success(`已导出 ${data.sessions.length} 个会话 / ${msgCount} 条消息`)
+    } catch (e: any) {
+      toast.error(`导出失败：${e?.message || e}`)
+    } finally {
+      setExportingChat(false)
+    }
+  }
+
+  const handleImportChatClick = () => {
+    chatFileInputEl?.click()
+  }
+
+  const handleImportChatFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportingChat(true)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      // Validate shape — must have sessions array (messages optional)
+      if (typeof data !== 'object' || data === null || !Array.isArray(data.sessions)) {
+        throw new Error('文件格式不对：缺少 sessions 字段')
+      }
+      const body = {
+        sessions: data.sessions,
+        messages: data.messages || {},
+      }
+      const result = await apiClient.migrateSessions(body)
+      toast.success(`已导入 ${result.imported.sessions} 个会话 / ${result.imported.messages} 条消息`)
+      // Reload sessions from server so the sidebar reflects the imported data
+      await useSessionStore.getState().loadFromServer()
+    } catch (err: any) {
+      toast.error(`导入失败：${err?.message || err}`)
+    } finally {
+      setImportingChat(false)
+      e.target.value = ''
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -275,6 +336,51 @@ export function AdvancedPanel() {
         <p className="text-[11px] text-muted-foreground">
           导出的 JSON 中 API Key 已脱敏，可直接分享。导入会覆盖 <code>~/.hakus/config.yaml</code>。
         </p>
+      </div>
+
+      <Separator />
+
+      {/* 聊天记录备份 */}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2">
+          <Database className="h-3.5 w-3.5" /> 聊天记录备份
+        </Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleExportChat} disabled={exportingChat}>
+            {exportingChat ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-3.5 w-3.5" />
+            )}
+            导出聊天记录
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleImportChatClick} disabled={importingChat}>
+            {importingChat ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Upload className="mr-2 h-3.5 w-3.5" />
+            )}
+            导入聊天记录
+          </Button>
+          <input
+            ref={(el) => setChatFileInputEl(el)}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleImportChatFile}
+            className="hidden"
+          />
+        </div>
+        <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
+          <div className="mb-1 flex items-center gap-1.5">
+            <Archive className="h-3 w-3" />
+            <span>导出包含所有会话 + 消息 + 工具调用记录，格式为 JSON。</span>
+          </div>
+          <div>
+            换机/重装时点「导出」保存文件，新机器上点「导入」恢复。
+            导入是幂等的（按消息 ID 覆盖），不会重复。
+            原始数据仍在 <code>~/.hakus/sessions.db</code>，也可以直接复制这个文件备份。
+          </div>
+        </div>
       </div>
 
       <Separator />
