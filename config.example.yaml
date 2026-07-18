@@ -198,3 +198,52 @@ voice:
   live:
     enabled: false
     character_name: 羽汐
+
+# ==================== MCP (Model Context Protocol) ====================
+# Phase 2 round 2 — external tool servers spawned via stdio.
+#
+# Each entry under `mcp_servers:` is one MCP server process. The sidecar
+# spawns it at startup (if `enabled: true`), does the JSON-RPC handshake,
+# and registers all tools the server exposes into the AgentCore tool
+# registry. The agent can then call those tools like any builtin tool.
+#
+# Tool naming: by default, tools are registered as "<server>__<tool>"
+# (e.g. "filesystem__read_file") to avoid name conflicts with builtin
+# tools. Set `mcp.tool_naming: flat` to use the raw tool name (risk of
+# conflict if two servers expose the same name).
+#
+# Env var placeholders ${VAR:default} in `env` values are resolved at
+# spawn time, so restarting a server picks up new env vars without
+# reloading config.
+#
+# Example: filesystem MCP server (requires `npx` from Node.js 18+)
+mcp_servers:
+  filesystem:
+    enabled: false  # set to true after installing Node.js + npx
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "/"  # allowed root directory; change to your workspace path
+    env:
+      NODE_NO_WARNINGS: "1"
+    cwd: null
+    startup_timeout: 15
+    tool_timeout: 120
+
+  # Example: GitHub MCP server
+  # github:
+  #   enabled: false
+  #   transport: stdio
+  #   command: npx
+  #   args:
+  #     - "-y"
+  #     - "@modelcontextprotocol/server-github"
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:}
+
+mcp:
+  auto_start: true       # spawn all enabled servers on sidecar boot
+  fail_fast: false       # if true, server crash blocks sidecar boot
+  tool_naming: namespace # "namespace" (default) or "flat"

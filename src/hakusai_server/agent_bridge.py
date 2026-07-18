@@ -154,6 +154,24 @@ def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
             except Exception as e:
                 logger.warning(f"Could not set async confirm callback: {e}")
 
+            # Phase 2 round 2: register MCP tools into the agent.
+            # If McpClientManager has running servers, their tools become
+            # available to this agent. Idempotent — calling twice for the
+            # same agent just re-registers (registry overwrites by name).
+            try:
+                from hakus.mcp.manager import get_mcp_manager
+                mcp_mgr = get_mcp_manager()
+                if mcp_mgr is not None:
+                    count = mcp_mgr.register_tools_into(agent)
+                    if count > 0:
+                        logger.info(
+                            f"[MCP] registered {count} MCP tools into "
+                            f"session={session_id} provider={resolved_provider}"
+                        )
+            except Exception as e:
+                # MCP is optional — don't crash agent creation if it fails.
+                logger.warning(f"[MCP] tool registration failed (non-blocking): {e}")
+
             _agent_cache[cache_key] = agent
     return _agent_cache[cache_key]
 

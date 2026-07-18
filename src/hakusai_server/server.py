@@ -47,8 +47,11 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.4.0"
-SIDECAR_API_VERSION_INT = 4  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.5.0"
+SIDECAR_API_VERSION_INT = 5  # 整数版本，便于客户端比较
+# v0.5.0: + MCP 客户端支持 (/api/config/mcp-servers* + /api/mcp/servers/*)
+# v0.4.0: + SQLite 会话持久化 + 聊天记录导出/导入
+# v0.3.0: + 提供商配置 API (test connection / fetch models / multi-key / headers)
 
 # Toggle: when True, /api/chat* endpoints use hakus.AgentCore (24 tools,
 # permissions, AgentEvent stream). When False, fall back to the old
@@ -527,6 +530,25 @@ class HakusAIServer:
                     logger.error(f"AI init task crashed unexpectedly: {exc}", exc_info=exc)
             self._init_task.add_done_callback(_log_init_failure)
             
+            # Start MCP servers from ~/.hakus/config.yaml (Phase 2 round 2).
+            # Non-blocking: failures don't crash the sidecar unless fail_fast=True
+            # in the global mcp: config section.
+            try:
+                from hakus.mcp.manager import get_mcp_manager
+                mcp_mgr = get_mcp_manager()
+                if mcp_mgr is not None:
+                    logger.info("[MCP] starting servers from config...")
+                    await mcp_mgr.start_all_from_config()
+                    statuses = mcp_mgr.list_servers_status()
+                    running = sum(1 for s in statuses if s.get("status") == "running")
+                    failed = sum(1 for s in statuses if s.get("status") == "failed")
+                    logger.info(
+                        f"[MCP] startup complete: {running} running, "
+                        f"{failed} failed, {len(statuses)} total"
+                    )
+            except Exception as e:
+                logger.warning(f"[MCP] startup failed (non-blocking): {e}", exc_info=True)
+            
             yield
             
             # 关闭时
@@ -561,6 +583,17 @@ class HakusAIServer:
                 await event_bus.stop()
             except Exception as e:
                 logger.warning(f"Event bus stop failed: {e}")
+            
+            # Stop all MCP servers (Phase 2 round 2)
+            try:
+                from hakus.mcp.manager import get_mcp_manager
+                mcp_mgr = get_mcp_manager()
+                if mcp_mgr is not None:
+                    logger.info("[MCP] stopping all servers...")
+                    await mcp_mgr.stop_all()
+                    logger.info("[MCP] all servers stopped")
+            except Exception as e:
+                logger.warning(f"[MCP] stop_all failed: {e}")
         
         app = FastAPI(
             title="HakusAI API",
@@ -1611,6 +1644,132 @@ class HakusAIServer:
                     request.get("headers", {}) or {},
                 )
                 return {"message": "Headers saved", "provider": provider_id}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        # =====================================================================
+        # MCP (Model Context Protocol) — Phase 2 round 2
+        # =====================================================================
+        # Two groups of endpoints:
+        #   1. /api/config/mcp-servers* — config CRUD (read/write ~/.hakus/config.yaml)
+        #   2. /api/mcp/servers/{name}/* — runtime ops (start/stop/test/tools/invoke)
+        #
+        # Implementation delegates to hakusai_server.mcp_ops, which wraps
+        # the McpClientManager singleton in hakus/mcp/manager.py.
+        # =====================================================================
+
+        @app.get("/api/config/mcp-servers")
+        async def list_mcp_servers_endpoint():
+            """List all configured MCP servers with current runtime status."""
+            from . import mcp_ops as _mcp
+            return _mcp.list_mcp_servers()
+
+        @app.post("/api/config/mcp-servers")
+        async def save_mcp_server_endpoint(request: dict):
+            """Add or replace an MCP server config. Does NOT auto-start.
+
+            Body: {"name": "filesystem", "config": {McpServerConfig fields}}
+            """
+            from . import mcp_ops as _mcp
+            name = request.get("name", "").strip()
+            config = request.get("config", {}) or {}
+            if not name:
+                raise HTTPException(status_code=400, detail="'name' is required")
+            try:
+                return _mcp.save_mcp_server(name, config)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.patch("/api/config/mcp-servers/{name}")
+        async def update_mcp_server_endpoint(name: str, request: dict):
+            """Patch an existing MCP server config (e.g. toggle enabled)."""
+            from . import mcp_ops as _mcp
+            try:
+                return _mcp.update_mcp_server(name, request)
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"MCP server {name!r} not found")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/config/mcp-servers/{name}")
+        async def delete_mcp_server_endpoint(name: str):
+            """Remove an MCP server from config. Stops it first if running."""
+            from . import mcp_ops as _mcp
+            try:
+                return _mcp.delete_mcp_server(name)
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"MCP server {name!r} not found")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.patch("/api/config/mcp")
+        async def update_mcp_global_endpoint(request: dict):
+            """Patch the top-level mcp: section (auto_start / fail_fast / tool_naming)."""
+            from . import mcp_ops as _mcp
+            try:
+                return _mcp.update_mcp_global_config(request)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/mcp/servers/{name}/start")
+        async def start_mcp_server_endpoint(name: str):
+            """Start a server. Spawns subprocess, does MCP handshake, fetches tools."""
+            from . import mcp_ops as _mcp
+            try:
+                return await _mcp.start_mcp_server(name)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/mcp/servers/{name}/stop")
+        async def stop_mcp_server_endpoint(name: str):
+            """Stop a running server."""
+            from . import mcp_ops as _mcp
+            try:
+                return await _mcp.stop_mcp_server(name)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/mcp/servers/{name}/test")
+        async def test_mcp_server_endpoint(name: str, request: dict):
+            """One-shot test spawn: start → list_tools → kill.
+
+            Body (all optional): {"override_command": "...", "override_args": [...], "timeout": 15}
+            """
+            from . import mcp_ops as _mcp
+            try:
+                # Map frontend field names to McpServerConfig override keys
+                overrides = {}
+                if "command" in request:
+                    overrides["command"] = request["command"]
+                if "args" in request:
+                    overrides["args"] = request["args"]
+                if "env" in request:
+                    overrides["env"] = request["env"]
+                if "cwd" in request:
+                    overrides["cwd"] = request["cwd"]
+                return await _mcp.test_mcp_server(name, overrides or None)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/mcp/servers/{name}/tools")
+        async def list_mcp_server_tools_endpoint(name: str):
+            """Return the cached tool list for a running server."""
+            from . import mcp_ops as _mcp
+            return _mcp.list_server_tools(name)
+
+        @app.post("/api/mcp/servers/{name}/tools/{tool_name}/invoke")
+        async def invoke_mcp_tool_endpoint(name: str, tool_name: str, request: dict):
+            """Call a tool on a running MCP server (for UI testing only)."""
+            from . import mcp_ops as _mcp
+            arguments = request.get("arguments", {}) or {}
+            try:
+                return await _mcp.invoke_server_tool(name, tool_name, arguments)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 

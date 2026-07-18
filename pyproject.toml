@@ -44,12 +44,23 @@ dependencies = [
     "aiohttp>=3.9.0",
     "httpx>=0.25.0",
 
+    # LLM SDK — hakus/models/_legacy.py top-level `import openai`, so the
+    # sidecar can't even boot a chat without this. Previously lived only in
+    # requirements.txt + [project.optional-dependencies].models, but CI uses
+    # `pip install -e .` which skips both. Move to main deps to fix CI.
+    "openai>=1.0.0",
+
     # 终端UI
     "rich>=13.0.0",
     "textual>=0.85.0",
 
     # 工具
     "numpy>=1.24.0",
+
+    # MCP (Model Context Protocol) client — for spawning external tool servers
+    # via stdio. Used by hakus/mcp/manager.py. Version 1.27+ required for
+    # stable ClientSession API.
+    "mcp>=1.27.0",
 ]
 
 [project.optional-dependencies]
