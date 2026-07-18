@@ -29,13 +29,30 @@ import yaml as _yaml
 
 logger = logging.getLogger(__name__)
 
-# --- placeholder resolution (mirrors server.py list_providers) ---
+# --- placeholder resolution ---
+#
+# Public API: resolve_placeholder(val) — used by server.py list_providers,
+# _resolve_provider_config, list_provider_keys. Single source of truth so
+# base_url / model_name / api_key all get the same ${VAR:default} handling.
+#
+# Background: previously this function was duplicated in server.py:list_providers
+# and only applied to base_url + model_name, NOT api_key. That left api_key as
+# the literal "${OPENAI_API_KEY:sk-xxx}" template string, which got masked as
+# "${OPE...xxx}" and shown in the UI. Fixed by centralizing here and applying
+# to all three fields.
 
 _PLACEHOLDER_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::(-?[^}]*))?\}")
 
 
-def _resolve_placeholder(val: str) -> str:
-    """Resolve ${VAR:default} placeholders using env vars."""
+def resolve_placeholder(val: str) -> str:
+    """Resolve ${VAR:default} placeholders using env vars.
+
+    - If env var is set and non-empty → env value.
+    - Else if a default is given (after ':' or ':-') → default.
+    - Else → original string unchanged (lets caller detect unresolved
+      placeholders via looks_like_placeholder()).
+    - Non-string input passes through unchanged.
+    """
     if not isinstance(val, str):
         return val
 
@@ -49,6 +66,21 @@ def _resolve_placeholder(val: str) -> str:
         return default_val if default_val is not None else m.group(0)
 
     return _PLACEHOLDER_RE.sub(_sub, val)
+
+
+# Backward-compat alias (some internal call sites still use the underscore name).
+_resolve_placeholder = resolve_placeholder
+
+
+def looks_like_placeholder(val: str) -> bool:
+    """Return True if val still contains an unresolved ${VAR} placeholder.
+
+    Used by UI to render a friendly '<未设置环境变量>' mask instead of leaking
+    the template syntax to the user.
+    """
+    if not isinstance(val, str):
+        return False
+    return bool(_PLACEHOLDER_RE.search(val))
 
 
 # --- provider metadata (must match server.py PROVIDER_META) ---
@@ -137,9 +169,13 @@ def _resolve_provider_config(provider_id: str, raw: Optional[dict] = None) -> Di
     prov_cfg = models_cfg.get(provider_id, {}) or {}
 
     key_name = meta["key_name"]
-    api_key = api_keys.get(key_name, "") if key_name else ""
-    base_url = _resolve_placeholder(prov_cfg.get("base_url", "") or meta["default_url"])
-    model_name = _resolve_placeholder(prov_cfg.get("model_name", "") or meta["default_model"])
+    # api_key must also be resolved — otherwise "${OPENAI_API_KEY:sk-xxx}"
+    # gets passed to httpx as a literal Bearer token and connection test
+    # always 401s.
+    api_key_raw = api_keys.get(key_name, "") if key_name else ""
+    api_key = resolve_placeholder(api_key_raw) if api_key_raw else ""
+    base_url = resolve_placeholder(prov_cfg.get("base_url", "") or meta["default_url"])
+    model_name = resolve_placeholder(prov_cfg.get("model_name", "") or meta["default_model"])
 
     if not base_url:
         base_url = meta["default_url"]
@@ -453,7 +489,11 @@ def list_provider_keys(provider_id: str) -> List[Dict[str, Any]]:
 
     out: List[Dict[str, Any]] = []
     key_name = meta["key_name"]
-    primary = api_keys.get(key_name, "") if key_name else ""
+    primary_raw = api_keys.get(key_name, "") if key_name else ""
+    # Resolve ${VAR:default} so the masked_key shown in UI is the real key
+    # (or a friendly "<未设置>" hint if env var not set), not the literal
+    # "${OPENAI_API_KEY:sk-xxx}" template.
+    primary = resolve_placeholder(primary_raw) if primary_raw else ""
     if primary:
         out.append({
             "id": "__primary__",
@@ -469,7 +509,10 @@ def list_provider_keys(provider_id: str) -> List[Dict[str, Any]]:
         for entry in multi:
             if not isinstance(entry, dict):
                 continue
-            k = entry.get("key", "")
+            k_raw = entry.get("key", "")
+            if not k_raw:
+                continue
+            k = resolve_placeholder(k_raw)
             if not k:
                 continue
             out.append({
@@ -534,8 +577,19 @@ def delete_provider_key(provider_id: str, key_id: str) -> bool:
 
 
 def _mask_key(k: str) -> str:
+    """Mask an API key for display in the UI.
+
+    - Empty → empty string.
+    - Still looks like an unresolved ${VAR} placeholder (no env, no default)
+      → "<未设置环境变量>" so the user understands the key isn't actually
+      configured, instead of seeing the raw template syntax.
+    - Length > 8 → first 4 + "..." + last 4.
+    - Otherwise → all asterisks.
+    """
     if not k:
         return ""
+    if looks_like_placeholder(k):
+        return "<未设置环境变量>"
     if len(k) > 8:
         return k[:4] + "..." + k[-4:]
     return "*" * len(k)

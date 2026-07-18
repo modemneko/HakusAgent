@@ -1323,41 +1323,29 @@ class HakusAIServer:
             # actual values (e.g. "deepseek-chat") rather than the raw
             # template string. The placeholder format follows shell
             # parameter expansion: ${VAR:-default} or ${VAR:default}.
-            import re as _re
-            _PLACEHOLDER_RE = _re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::(-?[^}]*))?\}")
-
-            def _resolve_placeholder(val: str) -> str:
-                """Resolve ${VAR:default} placeholders using env vars.
-
-                - If env var is set, use its value.
-                - Else if a default is given (after ':' or ':-'), use it.
-                - Else return the original string unchanged (lets the
-                  user see the template if there's no default).
-                - Non-string or non-placeholder values pass through.
-                """
-                if not isinstance(val, str):
-                    return val
-                def _sub(m):
-                    var_name, default_val = m.group(1), m.group(2)
-                    # strip leading '-' from ':-default' form
-                    if default_val is not None and default_val.startswith("-"):
-                        default_val = default_val[1:]
-                    env_val = os.environ.get(var_name)
-                    if env_val is not None and env_val != "":
-                        return env_val
-                    return default_val if default_val is not None else m.group(0)
-                return _PLACEHOLDER_RE.sub(_sub, val)
+            #
+            # Applied to base_url / model_name / api_key uniformly so the
+            # masked_api_key is the real resolved key, not the literal
+            # "${OPENAI_API_KEY:sk-xxx}" template.
+            from .provider_ops import resolve_placeholder, looks_like_placeholder, _mask_key
 
             providers = []
             for pid, meta in PROVIDER_META.items():
                 prov_cfg = models_cfg.get(pid, {}) or {}
                 key_name = meta["key_name"]
-                has_key = bool(key_name) and bool(api_keys.get(key_name))
-                # mask key for display
-                masked = ""
-                if has_key:
-                    k = api_keys.get(key_name, "")
-                    masked = (k[:4] + "..." + k[-4:]) if len(k) > 8 else "*" * len(k)
+                raw_key = api_keys.get(key_name, "") if key_name else ""
+                resolved_key = resolve_placeholder(raw_key) if raw_key else ""
+                # If the placeholder couldn't be resolved (no env, no default),
+                # has_api_key should be False so the UI shows the "未配置" state
+                # rather than a misleading masked string.
+                unresolved = looks_like_placeholder(resolved_key)
+                has_key = bool(resolved_key) and not unresolved
+                # _mask_key returns "<未设置环境变量>" if val still looks like
+                # a ${VAR} placeholder, otherwise the standard "sk-xx...yyyy"
+                # mask. We always show the mask (even when unresolved) so the
+                # user understands "yes I do have a template here, but the env
+                # var isn't set".
+                masked = _mask_key(resolved_key) if resolved_key else ""
                 raw_model = prov_cfg.get("model_name", "")
                 raw_url = prov_cfg.get("base_url", "")
                 providers.append({
@@ -1366,8 +1354,8 @@ class HakusAIServer:
                     "has_url": meta["has_url"],
                     "has_api_key": has_key,
                     "masked_api_key": masked,
-                    "model_name": _resolve_placeholder(raw_model),
-                    "base_url": _resolve_placeholder(raw_url),
+                    "model_name": resolve_placeholder(raw_model),
+                    "base_url": resolve_placeholder(raw_url),
                     "is_default": pid == default_model,
                 })
             return {"providers": providers, "default_model": default_model}

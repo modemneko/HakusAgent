@@ -606,6 +606,11 @@ export function ModelPanel() {
                     当前已配置 Key（{selected.masked_api_key}）。输入新值将覆盖，留空则不变。
                   </p>
                 )}
+                {!selected.has_api_key && selected.masked_api_key === '<未设置环境变量>' && (
+                  <p className="text-[11px] text-amber-500">
+                    配置文件中存在 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{'${VAR}'}</code> 占位符但对应环境变量未设置。请在系统环境变量中设置该变量，或在下方直接输入 API Key。
+                  </p>
+                )}
               </div>
             )}
 
