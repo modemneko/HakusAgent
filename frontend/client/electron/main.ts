@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, ipcMain, globalShortcut } from 'electron'
 import { join } from 'path'
 import Store from 'electron-store'
 import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
-import { syncTray, destroyTray, isTrayActive } from './tray'
+import { syncTray, destroyTray, isTrayActive, setWindowCallbacks } from './tray'
 import {
   registerToggleShortcut,
   unregisterAll as unregisterAllShortcuts,
@@ -176,6 +176,22 @@ app.whenReady().then(async () => {
   }
   createWindow()
 
+  // ⚠️ Critical: wire up window callbacks BEFORE syncTray so tray click
+  // handlers can always resolve the current window (and recreate it if
+  // it's been destroyed). Without this, clicking the tray after the
+  // window was destroyed (e.g. user disabled minimizeToTray but kept
+  // tray on, then clicked X) would throw "Object has been destroyed".
+  setWindowCallbacks(
+    () => win,
+    () => {
+      // If win is destroyed or null, create a fresh one and return it.
+      if (!win || win.isDestroyed()) {
+        createWindow()
+      }
+      return win!
+    },
+  )
+
   // Phase 3: set up system tray + global shortcut based on persisted settings.
   const trayEnabled = store.get('trayEnabled', true)
   const minimizeToTray = store.get('minimizeToTray', true)
@@ -317,15 +333,28 @@ app.on('window-all-closed', () => {
   // quit the app. When tray is enabled, the close handler intercepts
   // the close event and hides the window instead — so window-all-closed
   // never fires in normal use with tray on.
+  //
+  // Edge case: if tray is on but minimizeToTray is off, clicking X
+  // actually destroys the window. window-all-closed then fires with
+  // trayEnabled=true. We must NOT quit here (user expects app to stay
+  // alive via tray). The tray click handler will recreate the window
+  // on demand via the recreator callback set in setWindowCallbacks.
+  //
+  // On macOS, keep the app alive (standard macOS behavior — dock click
+  // reopens the window).
   if (process.platform !== 'darwin' && !store.get('trayEnabled', true)) {
     app.quit()
     win = null
   }
+  // Else: leave app alive. If tray is on, tray click will recreate the
+  // window. If we're on macOS, dock click triggers 'activate' which
+  // also recreates the window.
 })
 
 app.on('activate', () => {
   // macOS dock click — if window is hidden but tray is on, restore it.
-  if (BrowserWindow.getAllWindows().length === 0) {
+  // If window was destroyed (window-all-closed fired), recreate it.
+  if (BrowserWindow.getAllWindows().length === 0 || !win || win.isDestroyed()) {
     createWindow()
     syncTray(win, {
       enabled: store.get('trayEnabled', true),

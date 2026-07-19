@@ -102,8 +102,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0 sm:rounded-xl">
-        <DialogHeader className="border-b border-border px-6 py-4">
+      <DialogContent
+        // Override default `grid` with `flex flex-col` — grid doesn't
+        // honor min-h-0 on children, so flex is required for the middle
+        // row to shrink and let ScrollArea work (Issue 4 fix).
+        className="flex max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl"
+        // Use flex column with explicit max-height so the dialog itself
+        // never grows taller than the viewport. The middle row (main
+        // content) uses flex-1 + min-h-0 so it shrinks to fit, letting
+        // the inner ScrollArea actually scroll instead of overflowing
+        // into the footer.
+        style={{ maxHeight: '90vh', height: 'min(90vh, 720px)' }}
+      >
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ActiveIcon className="h-4 w-4 text-violet-500" />
             设置 · {activeCat.label}
@@ -111,10 +122,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-[200px_1fr] gap-0" style={{ height: 'min(70vh, 640px)' }}>
+        {/* Main area: left nav + right panel, flex-1 so it fills available
+            space between header and footer. min-h-0 is critical — without
+            it, flex children won't shrink below their content's natural
+            height, causing overflow into the footer (Issue 4). */}
+        <div className="flex min-h-0 flex-1">
           {/* Left: categories */}
           <nav
-            className="border-r border-border bg-muted/30 p-2"
+            className="w-[200px] shrink-0 overflow-y-auto border-r border-border bg-muted/30 p-2"
             aria-label="设置分类"
           >
             <ul className="space-y-0.5">
@@ -147,8 +162,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </ul>
           </nav>
 
-          {/* Right: panel */}
-          <div className="relative">
+          {/* Right: panel — flex-1 + min-h-0 so it shrinks; ScrollArea
+              with h-full so it actually scrolls when content overflows. */}
+          <div className="min-h-0 flex-1 overflow-hidden">
             <ScrollArea className="h-full">
               <div className="p-6">
                 {active === 'model' && <ModelPanel />}
@@ -169,7 +185,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border bg-muted/30 px-6 py-3">
+        <div className="flex shrink-0 items-center justify-between border-t border-border bg-muted/30 px-6 py-3">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Info className="h-3 w-3" />
             客户端设置本地持久化；模型/角色/工具配置写入 ~/.hakus/config.yaml
