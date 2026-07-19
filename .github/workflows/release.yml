@@ -181,6 +181,12 @@ jobs:
         run: python3 scripts/make-icon.py
 
       # ============ 9. Build & package Electron app ============
+      # 注：package.json 没有 `build.publish` 配置。这是故意的 —— electron-builder
+      # 25.x 在 publish+deb 组合下会触发 "adding autoupdate files for: deb
+      # (Beta feature)" 步骤, 在三平台 CI 上都崩 (ERR_ELECTRON_BUILDER_CANNOT_EXECUTE).
+      # 我们改成: 打包时不带 publish, 然后下一步用 scripts/generate-update-manifests.py
+      # 手动生成 latest*.yml, 运行时由 electron-updater 的 setFeedURL 找到 GitHub
+      # Release 上的 yml + 安装包.
       - name: 📦 Build Electron app (${{ matrix.platform }})
         working-directory: frontend/client
         run: npm run dist:${{ matrix.platform }}
@@ -188,6 +194,17 @@ jobs:
           CI: true
           CSC_IDENTITY_AUTO_DISCOVERY: false
           USE_SYSTEM_FPM: false
+
+      # ============ 9b. Generate electron-updater manifests ============
+      # 因为 package.json 没有 publish 配置, electron-builder 不会自动生成
+      # latest*.yml. 这里手动生成, 给 electron-updater 用.
+      - name: 📝 Generate update manifests (latest*.yml)
+        working-directory: frontend/client
+        shell: bash
+        run: |
+          python3 scripts/generate-update-manifests.py \
+            --version "$(node -p "require('./package.json').version")" \
+            --release-dir release/
 
       # ============ 10. List build artifacts ============
       - name: 📋 List build artifacts

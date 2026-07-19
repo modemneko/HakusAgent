@@ -95,12 +95,6 @@
         ]
       }
     ],
-    "publish": {
-      "provider": "github",
-      "owner": "modemneko",
-      "repo": "HakusAgent",
-      "releaseType": "release"
-    },
     "win": {
       "target": [
         {

@@ -126,6 +126,28 @@ export function initUpdater(): void {
   // Don't allow prereleases — nightly builds are excluded.
   autoUpdater.allowPrerelease = false
 
+  // Inject publish feed URL at runtime.
+  //
+  // We deliberately removed the static `build.publish` block from package.json
+  // because electron-builder 25.x with publish+deb triggers a buggy "adding
+  // autoupdate files for: deb (Beta feature)" step that crashes the packaging
+  // across all 3 platforms (ERR_ELECTRON_BUILDER_CANNOT_EXECUTE, exit code null).
+  //
+  // electron-updater can still find the GitHub release if we setFeedURL here,
+  // AND if the CI uploads `latest*.yml` to the GitHub Release as assets (the
+  // generate-update-manifests.py script does this). So auto-update keeps
+  // working without the broken build-time publish config.
+  try {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'modemneko',
+      repo: 'HakusAgent',
+    })
+    console.log('[updater] Feed URL set: github.com/modemneko/HakusAgent')
+  } catch (e: any) {
+    console.error('[updater] setFeedURL failed:', e?.message || e)
+  }
+
   autoUpdater.on('checking-for-update', () => {
     setState({ status: 'checking', error: null, progress: null })
   })
