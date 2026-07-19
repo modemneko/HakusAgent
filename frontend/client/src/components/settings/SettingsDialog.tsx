@@ -1,7 +1,7 @@
 /**
  * Settings Dialog — 左侧分类列表 + 右侧表单的现代留白布局.
  *
- * 10 个分类:
+ * 11 个分类:
  *   1. 模型配置 (Bot)
  *   2. 角色 (User)
  *   3. 对话 (MessageSquare)
@@ -9,9 +9,11 @@
  *   5. 记忆 (Brain)
  *   6. 工具与权限 (Shield)
  *   7. 外观 (Palette)
- *   8. 托盘与快捷键 (LayoutGrid) — Phase 3
- *   9. 连接 (Server)
- *  10. 高级 (Settings)
+ *   8. 托盘与快捷键 (LayoutGrid) — Phase 3 round 1
+ *   9. MCP 服务器 (Plug) — Phase 2 round 3
+ *  10. 连接 (Server)
+ *  11. 高级 (Settings)
+ *  12. 关于与更新 (Sparkles) — Phase 3 round 2
  */
 
 import { useState } from 'react'
@@ -24,8 +26,10 @@ import {
   Shield,
   Palette,
   LayoutGrid,
+  Plug,
   Server,
   Settings as SettingsIcon,
+  Sparkles,
   Info,
 } from 'lucide-react'
 import {
@@ -45,8 +49,10 @@ import { MemoryPanel } from './panels/MemoryPanel'
 import { ToolsPanel } from './panels/ToolsPanel'
 import { AppearancePanel } from './panels/AppearancePanel'
 import { TrayPanel } from './panels/TrayPanel'
+import { McpPanel } from './panels/McpPanel'
 import { ConnectionPanel } from './panels/ConnectionPanel'
 import { AdvancedPanel } from './panels/AdvancedPanel'
+import { AboutPanel } from './panels/AboutPanel'
 
 type CategoryId =
   | 'model'
@@ -57,8 +63,10 @@ type CategoryId =
   | 'tools'
   | 'appearance'
   | 'tray'
+  | 'mcp'
   | 'connection'
   | 'advanced'
+  | 'about'
 
 interface Category {
   id: CategoryId
@@ -76,8 +84,10 @@ const CATEGORIES: Category[] = [
   { id: 'tools', label: '工具与权限', desc: '工具开关与权限模式', icon: Shield },
   { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
   { id: 'tray', label: '托盘与快捷键', desc: '任务栏图标与全局快捷键', icon: LayoutGrid },
+  { id: 'mcp', label: 'MCP 服务器', desc: '外部 MCP server 接入与工具调用', icon: Plug },
   { id: 'connection', label: '连接', desc: '服务地址与超时', icon: Server },
   { id: 'advanced', label: '高级', desc: '诊断 / 导入导出 / 重启', icon: SettingsIcon },
+  { id: 'about', label: '关于与更新', desc: '版本信息 + 自动更新', icon: Sparkles },
 ]
 
 interface SettingsDialogProps {
@@ -149,8 +159,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {active === 'tools' && <ToolsPanel />}
                 {active === 'appearance' && <AppearancePanel />}
                 {active === 'tray' && <TrayPanel />}
+                {active === 'mcp' && <McpPanel />}
                 {active === 'connection' && <ConnectionPanel />}
                 {active === 'advanced' && <AdvancedPanel />}
+                {active === 'about' && <AboutPanel />}
               </div>
             </ScrollArea>
           </div>

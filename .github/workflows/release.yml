@@ -5,9 +5,9 @@ name: Release
 # =====================================================================
 #
 # 触发方式:
-#   1. 推 tag (v0.1.0, v1.2.3, ...) → 自动构建三平台并发布 Release
-#   2. 推 master → 仅构建验证 (不发 Release, 不上传 artifact)
-#   3. Actions 页面手动点 "Run workflow" → 仅构建, 不发 Release
+#   1. 推 tag (v0.1.0, v1.2.3, ...) → 构建三平台 + 发布正式 Release (含 latest*.yml)
+#   2. 推 master → 构建三平台 + 滚动更新 "nightly" 预发布 Release (含 latest*.yml)
+#   3. Actions 页面手动点 "Run workflow" → 同 master 行为 (发到 nightly)
 #
 # 产物 (每个平台一份):
 #   - Windows: HakusAI-Setup-x.y.z.exe           (NSIS 安装程序)
@@ -15,10 +15,10 @@ name: Release
 #   - Linux:   HakusAI-x.y.z.AppImage + .deb      (AppImage + Debian 包)
 #
 # 工作流:
-#   cleanup (清空旧 artifacts 释放存储配额, 可选)
+#   cleanup (清空旧 artifacts 释放存储配额)
 #     ↓
 #   build (matrix: win/mac/linux)
-#     ↓ 每个 job 直接把产物上传到 GitHub Release (不走 artifact 系统)
+#     ↓ 每个 job 直接把产物上传到对应的 GitHub Release (不走 artifact 系统)
 #   (没有 release job, 因为 build jobs 已经直接上传到 Release 了)
 #
 # 关键设计 (避免 GitHub Actions 500 MB artifact 存储配额耗尽):
@@ -28,6 +28,14 @@ name: Release
 #     附加到对应的 GitHub Release 上, 完全绕过 artifact 系统
 #   - 即便配额被旧 artifact 占满 (recalculate 6-12 小时一次),
 #     新构建的安装包仍然能通过 Release 流到用户手里
+#
+# Nightly 滚动 Release (master 推送时):
+#   - 所有 master 推送的产物统一上传到 tag="nightly" 的预发布 Release
+#   - 上传前先删除该 Release 上所有旧 assets, 保证用户拿到的永远是最新构建
+#   - 同时附 commit SHA + 构建时间, 方便排查
+#   - 用户可通过该 Release URL 手动下载体验最新功能
+#   - 注: 暂不让 electron-updater 自动从 nightly 升级 (避免不稳定);
+#         自动升级只走 latest (正式 Release) 通道
 # =====================================================================
 
 on:
@@ -35,8 +43,8 @@ on:
     tags:
       - 'v*'           # 推 v 开头的 tag 触发正式发布
     branches:
-      - master         # 推 master 只构建验证, 不发 Release
-  workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow)
+      - master         # 推 master 触发 nightly 构建
+  workflow_dispatch:   # 手动触发 (Actions 页面点 Run workflow) — 走 nightly 通道
 
 permissions:
   contents: write     # 上传 Release 资产 + 创建 Release 需要写权限
@@ -192,13 +200,47 @@ jobs:
           echo "=== File sizes ==="
           du -h release/* 2>/dev/null || true
 
-      # ============ 11. Upload directly to GitHub Release ============
+      # ============ 11a. Pre-clean nightly assets (master push only) ============
+      # 滚动 nightly Release: 上传新产物前先删掉同名旧资产, 否则
+      # softprops/action-gh-release 会跳过冲突文件, 用户可能拿到上次的
+      # exe/appImage. 我们用 actions/github-script 列出 nightly Release
+      # 上所有 assets, 全部删除, 让下一步 upload 干净地重建.
+      - name: 🧹 Pre-clean nightly assets
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'nightly';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            try {
+              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              const assets = release.data.assets || [];
+              core.info(`Found ${assets.length} existing assets on "${tag}" release.`);
+              for (const asset of assets) {
+                try {
+                  await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+                  core.info(`  ✓ Deleted ${asset.name}`);
+                } catch (err) {
+                  core.warning(`  ✗ Failed to delete ${asset.name}: ${err.message}`);
+                }
+              }
+              core.info(`Pre-clean complete.`);
+            } catch (err) {
+              if (err.status === 404) {
+                core.info(`Nightly release does not exist yet — will be created by upload step.`);
+              } else {
+                throw err;
+              }
+            }
+
+      # ============ 11b. Upload installers to GitHub Release (tag push) ============
       # 关键: 直接把产物上传到 GitHub Release, 完全绕过 Actions artifact 系统
       # 这样即使 artifact 存储配额耗尽, 安装包仍然能通过 Release 流到用户
       #
-      # 只有推 tag 时才上传; master 推送只验证构建不发布
+      # 推 tag (v*): 发正式 Release, latest*.yml 让 electron-updater 走正式通道
       # =====================================================================
-      - name: 📤 Upload installers to GitHub Release
+      - name: 📤 Upload installers to GitHub Release (tag push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
@@ -232,13 +274,17 @@ jobs:
 
             - 🎨 Cherry Studio 风格 UI, 暗色主题
             - 🤖 完整 AgentEvent 协议支持 (流式文本, 工具调用, 思维链)
-            - 💬 多会话管理, 本地持久化
+            - 💬 多会话管理, SQLite 持久化
             - 🔌 内嵌 Python 后端 (sidecar), **开箱即用, 无需额外配置**
             - 📝 Markdown 渲染 + 代码高亮
             - 🛠️ 可视化工具调用卡片
-            - 🔧 **新**: 24 个内置工具 (含 git_diff / apply_patch / todo_write)
-            - 🛡️ **新**: 权限系统默认 ASK, 双层防御 (.aws/credentials / rm -rf / 永远拒绝)
-            - 🔍 **新**: Grep 工具改用 ripgrep (大仓库毫秒级搜索)
+            - 🔧 24 个内置工具 (含 git_diff / apply_patch / todo_write)
+            - 🛡️ 权限系统默认 ASK, 双层防御 (.aws/credentials / rm -rf / 永远拒绝)
+            - 🔍 Grep 工具改用 ripgrep (大仓库毫秒级搜索)
+            - 🧩 **新**: MCP (Model Context Protocol) 客户端 — 接入外部 stdio MCP server
+            - 🖥️ **新**: 系统托盘 + 全局快捷键 (Shift+Ctrl/Cmd+H 唤起)
+            - 🔄 **新**: electron-updater 自动更新 (从 GitHub Release 拉取)
+            - 💾 **新**: 数据备份 (一键导出 ~/.hakus 全量快照)
 
             ## 🚀 使用
 
@@ -255,14 +301,61 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # ============ 11c. Upload installers to Nightly Release (master push) ============
+      # 推 master: 滚动更新 nightly Release. 上一步已经清空旧 assets,
+      # 这里直接上传新的. make_latest=false 保证正式 Release 优先级不变,
+      # prerelease=true 让 GitHub 把它标记为 "Pre-release".
+      # =====================================================================
+      - name: 📤 Upload installers to Nightly Release (master push)
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: HakusAI Nightly (dev build)
+          body: |
+            ## 🌙 Nightly 自动构建
+
+            **Commit**: ${{ github.sha }}
+            **Branch**: master
+            **CI Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **构建时间**: ${{ github.run_started_at }}
+
+            > ⚠️ 这是 master 分支最新提交的自动构建版本，**不保证稳定**。
+            > 如需稳定版请使用 [latest release](https://github.com/${{ github.repository }}/releases/latest)。
+            >
+            > 每次新 master 推送会覆盖该 Release 上的所有安装包，所以这里永远是最新构建。
+
+            ## 📦 下载
+
+            | 平台 | 文件 | 说明 |
+            |---|---|---|
+            | **Windows** | `HakusAI-Setup-*.exe` | NSIS 安装程序 |
+            | **macOS (Intel)** | `HakusAI-*-x64.dmg` | Intel Mac |
+            | **macOS (Apple Silicon)** | `HakusAI-*-arm64.dmg` | M1/M2/M3 Mac |
+            | **Linux** | `HakusAI-*.AppImage` | 直接运行 |
+            | **Linux** | `hakusai-client_*.deb` | Debian/Ubuntu |
+          prerelease: true
+          make_latest: 'false'
+          files: |
+            frontend/client/release/*.exe
+            frontend/client/release/*.dmg
+            frontend/client/release/*.AppImage
+            frontend/client/release/*.deb
+            frontend/client/release/*.snap
+            frontend/client/release/*.blockmap
+            frontend/client/release/latest*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # ============ 12. (Fallback) Upload to Actions artifacts ============
       # 备用: 同时上传到 Actions artifacts, 万一 Release 上传失败用户仍能下载
       # continue-on-error=true: 即使配额耗尽也不阻塞构建成功
+      # retention-days: 7 (从 1 天提到 7 天) — 释放存储配额的同时给用户更长的下载窗口
       - name: 📤 Upload artifacts (best-effort, non-blocking)
         continue-on-error: true
         uses: actions/upload-artifact@v5
         with:
-          name: hakusai-${{ matrix.platform }}
+          name: hakusai-${{ matrix.platform }}-${{ github.sha }}
           path: |
             frontend/client/release/*.exe
             frontend/client/release/*.dmg
@@ -272,5 +365,5 @@ jobs:
             frontend/client/release/*.blockmap
             frontend/client/release/latest*.yml
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 7
           compression-level: 0

@@ -10,6 +10,11 @@ import {
   getCurrentAccelerator,
   isValidAcceleratorSyntax,
 } from './shortcuts'
+import {
+  initUpdater,
+  registerUpdaterIpc,
+  checkForUpdates,
+} from './updater'
 
 // In CommonJS context, __dirname is a Node global (declared by @types/node).
 // vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
@@ -183,6 +188,19 @@ app.whenReady().then(async () => {
       console.warn(`[main] Global shortcut "${shortcutAccel}" failed to register — likely conflicting with another app.`)
     }
   }
+
+  // Phase 3 round 2: register auto-updater IPC + init electron-updater.
+  // In dev mode this is a no-op, but the IPC surface still exists so the
+  // renderer can show "auto-update disabled in dev" hints.
+  registerUpdaterIpc()
+  initUpdater()
+  // Kick off a background check 5s after startup — non-blocking so it doesn't
+  // delay first paint. If autoDownload is on, this also starts downloading.
+  setTimeout(() => {
+    checkForUpdates().catch(() => {
+      /* swallow — updater is best-effort */
+    })
+  }, 5000)
 })
 
 // IPC: query sidecar status (for renderer to show startup errors)

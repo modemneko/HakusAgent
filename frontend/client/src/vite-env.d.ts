@@ -18,6 +18,31 @@ interface SetAcceleratorResult {
   registered: string | null
 }
 
+type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'installed'
+  | 'error'
+
+interface UpdaterState {
+  status: UpdateStatus
+  info: {
+    version: string
+    releaseDate: string | null
+    releaseNotes: string | unknown | null
+  } | null
+  progress: number | null
+  error: string | null
+  autoDownload: boolean
+  autoInstallOnAppQuit: boolean
+  currentVersion: string
+  isPackaged: boolean
+}
+
 interface ElectronAPI {
   store: {
     get: (key: string) => Promise<any>
@@ -39,6 +64,15 @@ interface ElectronAPI {
     getConfig: () => Promise<ShortcutsConfig>
     setAccelerator: (accelerator: string | null) => Promise<SetAcceleratorResult>
     validate: (accelerator: string) => Promise<{ valid: boolean }>
+  }
+  updater: {
+    getStatus: () => Promise<UpdaterState>
+    check: () => Promise<UpdaterState>
+    download: () => Promise<UpdaterState>
+    install: () => Promise<{ ok: boolean }>
+    setAutoDownload: (enabled: boolean) => Promise<UpdaterState>
+    setAutoInstallOnAppQuit: (enabled: boolean) => Promise<UpdaterState>
+    onStatusChange: (cb: (s: UpdaterState) => void) => () => void
   }
   platform: NodeJS.Platform
   versions: {

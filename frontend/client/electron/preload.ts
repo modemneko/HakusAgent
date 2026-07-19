@@ -23,6 +23,31 @@ export interface SetAcceleratorResult {
   registered: string | null
 }
 
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'installed'
+  | 'error'
+
+export interface UpdaterState {
+  status: UpdateStatus
+  info: {
+    version: string
+    releaseDate: string | null
+    releaseNotes: string | unknown | null
+  } | null
+  progress: number | null
+  error: string | null
+  autoDownload: boolean
+  autoInstallOnAppQuit: boolean
+  currentVersion: string
+  isPackaged: boolean
+}
+
 // Secure bridge between renderer and main process
 // Only expose whitelisted APIs — never expose the full ipcRenderer
 const api = {
@@ -55,6 +80,22 @@ const api = {
       ipcRenderer.invoke('shortcuts:setAccelerator', accelerator) as Promise<SetAcceleratorResult>,
     validate: (accelerator: string) =>
       ipcRenderer.invoke('shortcuts:validate', accelerator) as Promise<{ valid: boolean }>,
+  },
+  updater: {
+    getStatus: () => ipcRenderer.invoke('updater:getStatus') as Promise<UpdaterState>,
+    check: () => ipcRenderer.invoke('updater:check') as Promise<UpdaterState>,
+    download: () => ipcRenderer.invoke('updater:download') as Promise<UpdaterState>,
+    install: () => ipcRenderer.invoke('updater:install') as Promise<{ ok: boolean }>,
+    setAutoDownload: (enabled: boolean) =>
+      ipcRenderer.invoke('updater:setAutoDownload', enabled) as Promise<UpdaterState>,
+    setAutoInstallOnAppQuit: (enabled: boolean) =>
+      ipcRenderer.invoke('updater:setAutoInstallOnAppQuit', enabled) as Promise<UpdaterState>,
+    // Subscribe to status changes pushed from the main process.
+    onStatusChange: (cb: (s: UpdaterState) => void) => {
+      const listener = (_e: unknown, s: UpdaterState) => cb(s)
+      ipcRenderer.on('updater:status-changed', listener)
+      return () => ipcRenderer.removeListener('updater:status-changed', listener)
+    },
   },
   platform: process.platform,
   versions: {
