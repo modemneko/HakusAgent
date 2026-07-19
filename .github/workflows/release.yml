@@ -17,6 +17,8 @@ name: Release
 # 工作流:
 #   cleanup (清空旧 artifacts 释放存储配额)
 #     ↓
+#   prepare-nightly (master 推送时) - 单 job, 先于 build 清空 nightly Release assets
+#     ↓
 #   build (matrix: win/mac/linux)
 #     ↓ 每个 job 直接把产物上传到对应的 GitHub Release (不走 artifact 系统)
 #   (没有 release job, 因为 build jobs 已经直接上传到 Release 了)
@@ -31,7 +33,14 @@ name: Release
 #
 # Nightly 滚动 Release (master 推送时):
 #   - 所有 master 推送的产物统一上传到 tag="nightly" 的预发布 Release
-#   - 上传前先删除该 Release 上所有旧 assets, 保证用户拿到的永远是最新构建
+#   - **重要**: pre-clean 由独立的 prepare-nightly job 完成 (单次, 串行),
+#     不再由每个 build matrix job 各自执行. 旧版本里 pre-clean 在 matrix
+#     里跑, 三平台并行各自删 nightly assets → race condition: 后跑完
+#     pre-clean 的平台会删掉先跑完 upload 的平台刚上传的 assets, 导致
+#     nightly Release 上只剩最后一个平台的文件, 甚至全空.
+#   - 现在 prepare-nightly 在 build 之前串行执行一次清空, 之后 build
+#     matrix 并行 upload (softprops/action-gh-release 对不同名文件是
+#     append 模式), 三平台产物全部保留.
 #   - 同时附 commit SHA + 构建时间, 方便排查
 #   - 用户可通过该 Release URL 手动下载体验最新功能
 #   - 注: 暂不让 electron-updater 自动从 nightly 升级 (避免不稳定);
@@ -94,11 +103,66 @@ jobs:
             core.info(`Cleanup complete. Deleted ${deleted} artifacts total.`);
 
   # =====================================================================
+  # Prepare-nightly job — master 推送时, 在 build 之前清空 nightly Release
+  # =====================================================================
+  # 关键: 这一步必须在 build matrix 之前串行执行, 且只执行一次.
+  #
+  # 旧设计里, 这一步嵌在 build matrix 内, 三平台并行各自删除 nightly
+  # Release 上的所有 assets. 因为 matrix 是并行的, 时序变成:
+  #   T0: 三平台都开始 pre-clean
+  #   T1: Linux 跑完 pre-clean, 开始 upload, 上传 AppImage+deb+yml
+  #   T2: Windows 跑完 pre-clean (删除 Linux 刚上传的 assets), 开始 upload
+  #   T3: macOS 跑完 pre-clean (删除 Windows 和 Linux 上传的 assets), 开始 upload
+  # 最终 nightly Release 上只剩最后一个跑完 pre-clean 的平台的 assets.
+  #
+  # 新设计: 把 pre-clean 拆出来作为独立 job, build matrix needs 它.
+  # prepare-nightly 跑完一次清空后, build 三平台并行 upload (append 模式),
+  # 不同名文件互不冲突, 三平台产物全部保留.
+  # =====================================================================
+  prepare-nightly:
+    name: 🧹 Prepare nightly release
+    runs-on: ubuntu-latest
+    needs: cleanup
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    steps:
+      - name: 🧹 Pre-clean nightly assets (single-shot, before build)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'nightly';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            try {
+              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              const assets = release.data.assets || [];
+              core.info(`Found ${assets.length} existing assets on "${tag}" release.`);
+              for (const asset of assets) {
+                try {
+                  await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+                  core.info(`  ✓ Deleted ${asset.name}`);
+                } catch (err) {
+                  core.warning(`  ✗ Failed to delete ${asset.name}: ${err.message}`);
+                }
+              }
+              core.info(`Pre-clean complete. ${assets.length} asset(s) removed.`);
+            } catch (err) {
+              if (err.status === 404) {
+                core.info(`Nightly release does not exist yet — will be created by upload step.`);
+              } else {
+                throw err;
+              }
+            }
+
+  # =====================================================================
   # Build job — 三平台并行构建, 完成后直接上传到 GitHub Release
   # =====================================================================
   build:
     name: Build (${{ matrix.os }} / ${{ matrix.platform }})
-    needs: cleanup
+    # needs prepare-nightly (master push) 保证 master 推送时 build 在 pre-clean 之后跑
+    # 但 tag push 时 prepare-nightly 被 skip, 我们仍要 build, 所以加 if: always()
+    # 配合 !failure() && !cancelled(): cleanup 或 prepare-nightly 失败时不跑 build
+    needs: prepare-nightly
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false  # 一个平台失败不影响其他平台继续构建
       matrix:
@@ -233,39 +297,13 @@ jobs:
             --version "$(node -p "require('./package.json').version")" \
             --release-dir release/
 
-      # ============ 11a. Pre-clean nightly assets (master push only) ============
-      # 滚动 nightly Release: 上传新产物前先删掉同名旧资产, 否则
-      # softprops/action-gh-release 会跳过冲突文件, 用户可能拿到上次的
-      # exe/appImage. 我们用 actions/github-script 列出 nightly Release
-      # 上所有 assets, 全部删除, 让下一步 upload 干净地重建.
-      - name: 🧹 Pre-clean nightly assets
-        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = 'nightly';
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            try {
-              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              const assets = release.data.assets || [];
-              core.info(`Found ${assets.length} existing assets on "${tag}" release.`);
-              for (const asset of assets) {
-                try {
-                  await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
-                  core.info(`  ✓ Deleted ${asset.name}`);
-                } catch (err) {
-                  core.warning(`  ✗ Failed to delete ${asset.name}: ${err.message}`);
-                }
-              }
-              core.info(`Pre-clean complete.`);
-            } catch (err) {
-              if (err.status === 404) {
-                core.info(`Nightly release does not exist yet — will be created by upload step.`);
-              } else {
-                throw err;
-              }
-            }
+      # ============ 11a. (Removed) Pre-clean nightly assets ============
+      # 这一步已经挪到独立的 prepare-nightly job, 在 build 之前串行执行一次.
+      # 原因: 旧版本里 pre-clean 在 matrix 内并行跑, 后跑完 pre-clean 的平台
+      # 会删掉先跑完 upload 的平台刚上传的 assets, 导致 nightly Release 上
+      # 只剩最后一个平台的文件, 甚至全空 (race condition).
+      # 现在三平台 build job 只负责 append upload, 不再删 assets.
+      # =================================================================
 
       # ============ 11b. Upload installers to GitHub Release (tag push) ============
       # 关键: 直接把产物上传到 GitHub Release, 完全绕过 Actions artifact 系统
@@ -282,6 +320,9 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+          # 每个 matrix job 只产出自己平台的文件, 其他平台的 glob 不会匹配.
+          # fail_on_unmatched_files=false: 未匹配的 glob 不算错, 避免误报.
+          fail_on_unmatched_files: false
           files: |
             frontend/client/release/*.exe
             frontend/client/release/*.dmg
@@ -335,9 +376,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ============ 11c. Upload installers to Nightly Release (master push) ============
-      # 推 master: 滚动更新 nightly Release. 上一步已经清空旧 assets,
-      # 这里直接上传新的. make_latest=false 保证正式 Release 优先级不变,
-      # prerelease=true 让 GitHub 把它标记为 "Pre-release".
+      # 推 master: 滚动更新 nightly Release. prepare-nightly job 已经在 build
+      # 之前串行清空过 nightly assets, 这里直接 append 上传.
+      # 三平台 matrix 并行 upload, 但每个平台只上传自己平台的文件 (文件名不同),
+      # softprops/action-gh-release 对不同名文件是 append 模式, 互不冲突.
+      # make_latest=false 保证正式 Release 优先级不变, prerelease=true 让
+      # GitHub 把它标记为 "Pre-release".
       # =====================================================================
       - name: 📤 Upload installers to Nightly Release (master push)
         if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
@@ -345,6 +389,9 @@ jobs:
         with:
           tag_name: nightly
           name: HakusAI Nightly (dev build)
+          # 每个 matrix job 只产出自己平台的文件, 其他平台的 glob 不会匹配.
+          # fail_on_unmatched_files=false: 未匹配的 glob 不算错, 避免误报.
+          fail_on_unmatched_files: false
           body: |
             ## 🌙 Nightly 自动构建
 
