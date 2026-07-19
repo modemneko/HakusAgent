@@ -102,27 +102,97 @@ def write_yml(out_path: str, version: str, files: list[dict], primary_path: str,
 
 
 def find_installers(release_dir: str) -> dict[str, list[str]]:
-    """Find installer files by platform. Returns {'win': [...], 'mac': [...], 'linux': [...]}."""
+    """Find installer files by platform. Returns {'win': [...], 'mac': [...], 'linux': [...]}.
+
+    Patterns supported (each tried in order, then recursive fallback):
+      Windows:
+        - HakusAI-Setup-*.exe     (electron-builder default, mixed-case productName)
+        - HakusAI-setup-*.exe     (lowercase productName variant)
+        - HakusAI Setup *.exe     (alt template with space, just in case)
+        - HakusAI-*.exe           (catch-all)
+      macOS:
+        - HakusAI-*.dmg
+      Linux:
+        - HakusAI-*.AppImage
+        - HakusAI-*.deb           (collected but not used as auto-update primary)
+    """
     found: dict[str, list[str]] = {"win": [], "mac": [], "linux": []}
 
-    # Windows: NSIS installer
-    for p in glob.glob(os.path.join(release_dir, "HakusAI-Setup-*.exe")):
-        found["win"].append(p)
-    # Some setups may produce just "HakusAI-*.exe" — accept that too if no Setup-* matched.
+    # ─── Windows: try top-level first, then recursive ──────────────────
+    win_patterns = [
+        "HakusAI-Setup-*.exe",
+        "HakusAI-setup-*.exe",
+        "HakusAI Setup *.exe",
+        "HakusAI-*.exe",
+    ]
+    for pat in win_patterns:
+        matches = glob.glob(os.path.join(release_dir, pat))
+        if matches:
+            found["win"].extend(matches)
+            break
+    # Recursive fallback — covers nested output dirs that some CI setups produce.
     if not found["win"]:
-        for p in glob.glob(os.path.join(release_dir, "HakusAI-*.exe")):
+        for p in glob.glob(os.path.join(release_dir, "**", "*.exe"), recursive=True):
+            # Skip the uninstaller helper and any __uninstaller-*.exe intermediates.
+            base = os.path.basename(p)
+            if base.startswith("__uninstaller"):
+                continue
+            # Skip small helper exes (<5MB) — NSIS installers are typically 60+ MB.
+            if file_size(p) < 5_000_000:
+                continue
             found["win"].append(p)
 
-    # macOS: dmg (we publish dmg, not zip, so latest-mac.yml points at dmg)
+    # ─── macOS ─────────────────────────────────────────────────────────
     for p in glob.glob(os.path.join(release_dir, "HakusAI-*.dmg")):
         found["mac"].append(p)
+    if not found["mac"]:
+        for p in glob.glob(os.path.join(release_dir, "**", "*.dmg"), recursive=True):
+            found["mac"].append(p)
 
-    # Linux: AppImage is the canonical auto-update target. deb is also listed
-    # for completeness but electron-updater's AppImageUpdater ignores it.
+    # ─── Linux ─────────────────────────────────────────────────────────
     for p in glob.glob(os.path.join(release_dir, "HakusAI-*.AppImage")):
         found["linux"].append(p)
+    if not found["linux"]:
+        for p in glob.glob(os.path.join(release_dir, "**", "*.AppImage"), recursive=True):
+            found["linux"].append(p)
+
+    # Dedupe (recursive glob may double-count when a file is also matched by a
+    # top-level pattern).
+    for k in found:
+        seen = set()
+        uniq = []
+        for p in found[k]:
+            rp = os.path.realpath(p)
+            if rp not in seen:
+                seen.add(rp)
+                uniq.append(p)
+        found[k] = uniq
 
     return found
+
+
+def dump_release_dir(release_dir: str) -> None:
+    """Print every file under release/ to stderr — used when no installers found,
+    so CI logs show what electron-builder actually produced."""
+    print(f"[manifest] dump of {release_dir}:", file=sys.stderr)
+    if not os.path.isdir(release_dir):
+        print(f"  (dir does not exist)", file=sys.stderr)
+        return
+    file_count = 0
+    for root, dirs, files in os.walk(release_dir):
+        rel = os.path.relpath(root, release_dir)
+        prefix = "." if rel == "." else rel
+        for f in sorted(files):
+            full = os.path.join(root, f)
+            try:
+                sz = os.path.getsize(full)
+            except OSError:
+                sz = -1
+            print(f"  {prefix}/{f}  ({sz} bytes)", file=sys.stderr)
+            file_count += 1
+        if not files and not dirs:
+            print(f"  {prefix}/  (empty)", file=sys.stderr)
+    print(f"[manifest] total {file_count} file(s) under {release_dir}", file=sys.stderr)
 
 
 def main() -> int:
@@ -149,6 +219,9 @@ def main() -> int:
     installers = find_installers(release_dir)
     if not any(installers.values()):
         print(f"[manifest] ERROR: no installers found in {release_dir}", file=sys.stderr)
+        # Dump everything under release/ to stderr so CI logs show what
+        # electron-builder actually produced (or didn't).
+        dump_release_dir(release_dir)
         return 1
 
     release_date = iso_now()
