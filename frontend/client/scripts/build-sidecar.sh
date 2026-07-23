@@ -92,7 +92,7 @@ cat > "$SIDECAR_DIR/hakusai_server_entry.py" <<'PYEOF'
 
 This script launches the FastAPI server with sensible defaults:
 - Host: 127.0.0.1 (loopback only, for security)
-- Port: 8080 (or first available)
+- Port: 48081 (or first available)
 - No SPA mount (the client provides its own UI)
 """
 import os
@@ -110,7 +110,7 @@ if getattr(sys, "frozen", False):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def find_free_port(start: int = 8080, attempts: int = 10) -> int:
+def find_free_port(start: int = 48081, attempts: int = 10) -> int:
     """Find the first free port starting from `start`."""
     for port in range(start, start + attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -126,7 +126,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     logger = logging.getLogger("hakusai.sidecar")
 
-    port = find_free_port(int(os.environ.get("HAKUSAI_PORT", "8080")))
+    port = find_free_port(int(os.environ.get("HAKUSAI_PORT", "48081")))
     logger.info("Starting HakusAI server on http://127.0.0.1:%d", port)
 
     # Pre-flight: try importing the server module BEFORE printing HAKUSAI_PORT.

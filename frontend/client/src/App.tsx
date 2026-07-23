@@ -84,7 +84,7 @@ function App() {
         {/* Sidebar */}
         <div
           className={cn(
-            'transition-all duration-200 ease-out',
+            'relative z-10 shrink-0 transition-all duration-200 ease-out',
             sidebarOpen ? 'w-[260px]' : 'w-0',
             'overflow-hidden',
           )}
@@ -93,7 +93,7 @@ function App() {
         </div>
 
         {/* Main area */}
-        <div className="flex flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
           <TopBar
             onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
             onOpenSettings={() => setSettingsOpen(true)}

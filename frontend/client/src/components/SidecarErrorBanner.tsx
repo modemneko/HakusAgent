@@ -5,7 +5,7 @@
  *   - Missing VC++ runtime (Windows)
  *   - Antivirus / Windows Defender false positive on UPX-compressed exe
  *   - Python module import error inside the PyInstaller bundle
- *   - Port 8080 already in use by another process
+ *   - Port 48081 already in use by another process
  *
  * This component reads the sidecar status + log buffer via IPC and shows
  * actionable diagnostics instead of leaving the user staring at a blank
@@ -73,7 +73,7 @@ export function SidecarErrorBanner({ onRetry }: Props) {
               </code>
               然后在「设置 → 连接」里把服务器地址指向
               <code className="mx-1 px-1.5 py-0.5 rounded bg-black/30 text-amber-200">
-                http://localhost:8080
+                http://127.0.0.1:48081
               </code>
             </div>
           </div>
@@ -151,7 +151,7 @@ export function SidecarErrorBanner({ onRetry }: Props) {
               <ul className="list-disc pl-4 space-y-0.5">
                 <li>Windows: 缺少 VC++ Redistributable 2015-2022</li>
                 <li>Windows Defender / 杀毒软件拦截了 hakusai-server.exe</li>
-                <li>8080 端口被其他程序占用</li>
+                <li>48081 端口被其他程序占用</li>
                 <li>Python 依赖在 PyInstaller 打包时缺失</li>
               </ul>
             </div>

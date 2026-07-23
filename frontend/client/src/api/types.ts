@@ -70,12 +70,14 @@ export interface SidecarVersionInfo {
  * 这里也要同步 bump，否则客户端不会提示用户升级。
  *
  * 历史:
+ *   v6 (0.6.0): + Phase 4 WS 心跳/重连 + Phase 5 /api/metrics 端点
+ *               + WS resume_session / interrupt / pong 协议
  *   v5 (0.5.0): + MCP 客户端支持 (/api/config/mcp-servers* + /api/mcp/servers/*)
  *   v4 (0.4.0): + SQLite 会话持久化 + 聊天记录导出/导入
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_SIDECAR_API_VERSION_INT = 5
+export const EXPECTED_SIDECAR_API_VERSION_INT = 6
 
 export interface AppConfig {
   version: string
@@ -253,6 +255,21 @@ export interface ExportConfigResponse {
   config: Record<string, any>
 }
 
+// ========== 文件上传 ==========
+
+/**
+ * POST /api/upload 响应中的单个文件条目，以及 GET /api/files 列表项。
+ * 与 src/hakusai_server/server.py 中的 /api/upload、/api/files 端点对应。
+ */
+export interface UploadedFile {
+  file_id: string
+  filename: string
+  size: number
+  content_type: string
+  text_preview?: string
+  is_text: boolean
+}
+
 // ========== SSE 流式事件 ==========
 
 /** SSE 流中的单条数据 */
@@ -404,7 +421,8 @@ export type AgentEvent =
 // ========== WebSocket 消息 ==========
 
 export interface WSIncomingMessage {
-  type: 'stream' | 'error' | 'pong' | 'event'
+  // Phase 4 新增: ping (服务端主动心跳), resume_ok/resume_failed, interrupt_ack
+  type: 'stream' | 'error' | 'pong' | 'event' | 'ping' | 'resume_ok' | 'resume_failed' | 'interrupt_ack'
   content?: string
   emotion?: string | null
   actions?: any[]
@@ -412,12 +430,46 @@ export interface WSIncomingMessage {
   message?: string
   // If server sends typed AgentEvent via WS:
   event?: AgentEvent
+  // Phase 4 — resume_session 回包
+  session_id?: string
+  messages_restored?: number
+  reason?: string
+  // Phase 4 — 服务端 ping 携带时间戳, 客户端可用来算 RTT
+  ts?: number
 }
 
 export interface WSOutgoingMessage {
-  type: 'message' | 'ping' | 'interrupt'
+  // Phase 4 新增: pong (响应服务端 ping), resume_session (重连后恢复会话)
+  type: 'message' | 'ping' | 'pong' | 'interrupt' | 'resume_session'
   content?: string
   session_id?: string
+  provider?: string
+}
+
+// ========== Phase 5: Metrics (服务端 /api/metrics 响应) ==========
+
+/**
+ * GET /api/metrics 响应 — 5h SWE 任务可观测性。
+ *
+ * 客户端 AdvancedPanel 显示这些数字, 让用户能直观看到:
+ *   - 服务运行了多久 (uptime_seconds)
+ *   - 处理了多少 turn / 多少 LLM 调用
+ *   - 错误率 (total_errors / total_turns)
+ *   - 当前有多少 WebSocket 连接
+ *   - checkpoint 保存次数 (5h 长任务的关键指标)
+ *
+ * 所有字段都是 "since process start" 的累计值, 不分时间窗口。
+ */
+export interface MetricsResponse {
+  uptime_seconds: number
+  total_turns: number
+  total_errors: number
+  active_websockets: number
+  checkpoints_saved: number
+  llm_calls: number
+  llm_retries: number
+  // 兼容字段 — 给前端更细的 breakdown
+  by_provider?: Record<string, { turns: number; errors: number; llm_calls: number }>
 }
 
 // ========== 客户端本地数据模型 ==========
@@ -582,7 +634,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   connection: {
-    serverUrl: 'http://localhost:8080',
+    serverUrl: 'http://127.0.0.1:48081',
     useWebSocket: false,
     timeout: 30000,
   },

@@ -2,7 +2,7 @@
  * Advanced panel — 诊断信息 + 配置导出/导入 + 重启 sidecar + 日志查看
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Settings as SettingsIcon,
   Activity,
@@ -16,6 +16,7 @@ import {
   XCircle,
   Database,
   Archive,
+  Gauge,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -25,11 +26,12 @@ import { useToast } from '@/components/ui/toast'
 import { apiClient } from '@/api/client'
 import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
-import type { DiagnosticsInfo } from '@/api/types'
+import type { DiagnosticsInfo, MetricsResponse } from '@/api/types'
 
 export function AdvancedPanel() {
   const toast = useToast()
   const [diag, setDiag] = useState<DiagnosticsInfo | null>(null)
+  const [metrics, setMetrics] = useState<MetricsResponse | null>(null)
   const [loadingDiag, setLoadingDiag] = useState(true)
   const [reloading, setReloading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -39,6 +41,8 @@ export function AdvancedPanel() {
   const [chatFileInputEl, setChatFileInputEl] = useState<HTMLInputElement | null>(null)
   const [exportingChat, setExportingChat] = useState(false)
   const [importingChat, setImportingChat] = useState(false)
+  // Phase 5: metrics 自动刷新 (10s 一次, 仅在面板可见时)
+  const metricsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshDiag = async () => {
     setLoadingDiag(true)
@@ -50,6 +54,12 @@ export function AdvancedPanel() {
     } finally {
       setLoadingDiag(false)
     }
+  }
+
+  const refreshMetrics = async () => {
+    // silent — 失败不弹 toast (metrics 是辅助信息)
+    const m = await apiClient.getMetrics()
+    setMetrics(m)
   }
 
   // sidecar log path (if available)
@@ -65,6 +75,15 @@ export function AdvancedPanel() {
 
   useEffect(() => {
     refreshDiag()
+    // Phase 5: 启动 metrics 轮询 (10s 间隔)
+    refreshMetrics()
+    metricsTimerRef.current = setInterval(refreshMetrics, 10000)
+    return () => {
+      if (metricsTimerRef.current) {
+        clearInterval(metricsTimerRef.current)
+        metricsTimerRef.current = null
+      }
+    }
   }, [])
 
   const handleReload = async () => {
@@ -301,6 +320,117 @@ export function AdvancedPanel() {
 
       <Separator />
 
+      {/* Phase 5: Metrics — 5h SWE 任务可观测性 */}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2">
+          <Gauge className="h-3.5 w-3.5" /> 运行指标
+          <button
+            onClick={refreshMetrics}
+            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
+            title="立即刷新指标"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </Label>
+        {metrics ? (
+          <div className="space-y-3">
+            {/* 总览卡片 */}
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              <MetricCard
+                label="运行时长"
+                value={formatUptime(metrics.uptime_seconds)}
+                title={`${metrics.uptime_seconds.toFixed(1)}s`}
+              />
+              <MetricCard
+                label="Turns"
+                value={String(metrics.total_turns)}
+                tone={metrics.total_turns > 0 ? 'success' : 'muted'}
+              />
+              <MetricCard
+                label="错误"
+                value={String(metrics.total_errors)}
+                tone={
+                  metrics.total_errors === 0
+                    ? 'muted'
+                    : metrics.total_errors > metrics.total_turns * 0.1
+                      ? 'error'
+                      : 'warning'
+                }
+              />
+              <MetricCard
+                label="WS 连接"
+                value={String(metrics.active_websockets)}
+                tone={metrics.active_websockets > 0 ? 'success' : 'muted'}
+              />
+            </div>
+
+            {/* 详细指标 */}
+            <div className="rounded-xl border border-border bg-card/40 p-4">
+              <div className="mb-2 text-[11px] text-muted-foreground">详细计数器</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 md:grid-cols-3">
+                <MetricRow label="LLM 调用" value={metrics.llm_calls} />
+                <MetricRow label="LLM 重试" value={metrics.llm_retries} />
+                <MetricRow label="Checkpoints" value={metrics.checkpoints_saved} />
+                <MetricRow
+                  label="错误率"
+                  value={
+                    metrics.total_turns > 0
+                      ? `${((metrics.total_errors / metrics.total_turns) * 100).toFixed(1)}%`
+                      : '-'
+                  }
+                />
+                <MetricRow
+                  label="平均 LLM/Turn"
+                  value={
+                    metrics.total_turns > 0
+                      ? (metrics.llm_calls / metrics.total_turns).toFixed(2)
+                      : '-'
+                  }
+                />
+                <MetricRow
+                  label="启动时间"
+                  value={new Date(Date.now() - metrics.uptime_seconds * 1000).toLocaleTimeString()}
+                />
+              </div>
+            </div>
+
+            {/* 按 provider 细分 */}
+            {metrics.by_provider && Object.keys(metrics.by_provider).length > 0 && (
+              <div className="rounded-xl border border-border bg-card/40 p-3">
+                <div className="mb-1.5 text-[11px] text-muted-foreground">按 Provider 细分</div>
+                <div className="space-y-1">
+                  {Object.entries(metrics.by_provider).map(([provider, stats]) => (
+                    <div
+                      key={provider}
+                      className="flex items-center gap-2 text-[11px] font-mono"
+                    >
+                      <Badge variant="secondary" className="text-[10px]">
+                        {provider}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        turns: <span className="text-foreground">{stats.turns}</span>
+                      </span>
+                      <span className="text-muted-foreground">
+                        errors: <span className="text-foreground">{stats.errors}</span>
+                      </span>
+                      <span className="text-muted-foreground">
+                        llm: <span className="text-foreground">{stats.llm_calls}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
+            指标不可用（sidecar 版本过旧或未启动）。
+          </div>
+        )}
+      </div>
+
+      <Separator />
+
       {/* 配置导出/导入 */}
       <div className="space-y-2">
         <Label>配置导出 / 导入</Label>
@@ -460,4 +590,60 @@ function DiagCard({
       </div>
     </div>
   )
+}
+
+/** Phase 5: Metric 卡片 (与 DiagCard 类似但更紧凑) */
+function MetricCard({
+  label,
+  value,
+  tone = 'default',
+  title,
+}: {
+  label: string
+  value: string
+  tone?: 'default' | 'success' | 'warning' | 'error' | 'muted'
+  title?: string
+}) {
+  const toneClass = {
+    default: 'text-foreground',
+    success: 'text-emerald-500',
+    warning: 'text-amber-500',
+    error: 'text-red-500',
+    muted: 'text-muted-foreground',
+  }[tone]
+  return (
+    <div className="rounded-xl border border-border bg-card/40 p-3">
+      <div className="mb-1 text-[11px] text-muted-foreground">{label}</div>
+      <div
+        className={cn('truncate text-sm font-semibold tabular-nums', toneClass)}
+        title={title ?? value}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+/** Phase 5: Metric 行 (label: value, 用于详细列表) */
+function MetricRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <code className="font-mono tabular-nums text-foreground/80">{value}</code>
+    </div>
+  )
+}
+
+/** Phase 5: 把秒数格式化为 "1h 23m 45s" / "23m 45s" / "45s" */
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(0)}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  if (m < 60) return `${m}m ${s}s`
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  if (h < 24) return `${h}h ${mm}m ${s}s`
+  const d = Math.floor(h / 24)
+  const hh = h % 24
+  return `${d}d ${hh}h ${mm}m`
 }

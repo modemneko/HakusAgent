@@ -25,6 +25,7 @@ class PlatformType(str, Enum):
     """平台类型"""
     BILIBILI = "bilibili"
     DISCORD = "discord"
+    WECHAT = "wechat"
     YOUTUBE = "youtube"
     TWITCH = "twitch"
     CUSTOM = "custom"

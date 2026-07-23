@@ -32,6 +32,7 @@ import {
   Sparkles,
   Info,
 } from 'lucide-react'
+import { WeChatPanel } from './panels/WeChatPanel'
 import {
   Dialog,
   DialogContent,
@@ -64,6 +65,7 @@ type CategoryId =
   | 'appearance'
   | 'tray'
   | 'mcp'
+  | 'wechat'
   | 'connection'
   | 'advanced'
   | 'about'
@@ -85,6 +87,7 @@ const CATEGORIES: Category[] = [
   { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
   { id: 'tray', label: '托盘与快捷键', desc: '任务栏图标与全局快捷键', icon: LayoutGrid },
   { id: 'mcp', label: 'MCP 服务器', desc: '外部 MCP server 接入与工具调用', icon: Plug },
+  { id: 'wechat', label: '微信', desc: 'ClawBot 扫码连接', icon: MessageSquare },
   { id: 'connection', label: '连接', desc: '服务地址与超时', icon: Server },
   { id: 'advanced', label: '高级', desc: '诊断 / 导入导出 / 重启', icon: SettingsIcon },
   { id: 'about', label: '关于与更新', desc: '版本信息 + 自动更新', icon: Sparkles },
@@ -176,6 +179,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {active === 'appearance' && <AppearancePanel />}
                 {active === 'tray' && <TrayPanel />}
                 {active === 'mcp' && <McpPanel />}
+                {active === 'wechat' && <WeChatPanel />}
                 {active === 'connection' && <ConnectionPanel />}
                 {active === 'advanced' && <AdvancedPanel />}
                 {active === 'about' && <AboutPanel />}

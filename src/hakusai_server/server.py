@@ -5,13 +5,15 @@ HakusAI 2.0 FastAPI服务器
 
 import asyncio
 import os
+import shutil
 import time
+import uuid
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +28,7 @@ from hakusai_core.models import model_registry, BaseModelAdapter, Message, Messa
 from hakusai_core.agent import BaseAgent, AgentContext
 from hakusai_core.memory import MemoryManager, MemoryStorage
 from hakusai_core.voice.tts import tts_registry
+from hakusai_core.v2.platform import platform_manager, SendMessage
 from .vtuber_websocket import vtuber_handler
 from .agent_bridge import (
     run_turn_stream as agentcore_run_turn_stream,
@@ -47,8 +50,11 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.5.0"
-SIDECAR_API_VERSION_INT = 5  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.6.0"
+SIDECAR_API_VERSION_INT = 6  # 整数版本，便于客户端比较
+# v0.6.0: + Phase 4 WS 心跳/重连 + Phase 5 /api/metrics 端点
+#         + WS resume_session / interrupt / pong 协议
+#         + cancel_session_turn (AgentCore _cancelled flag)
 # v0.5.0: + MCP 客户端支持 (/api/config/mcp-servers* + /api/mcp/servers/*)
 # v0.4.0: + SQLite 会话持久化 + 聊天记录导出/导入
 # v0.3.0: + 提供商配置 API (test connection / fetch models / multi-key / headers)
@@ -169,15 +175,15 @@ class HakusAIServer:
         self.app: Optional[FastAPI] = None
         self.config = config_manager.config
         self.websocket_manager = WebSocketManager()
-        
+
         # AI组件
         self.model_adapter: Optional[BaseModelAdapter] = None
         self.agent: Optional[BaseAgent] = None
         self.memory: Optional[MemoryManager] = None
-        
+
         # TTS组件
         self.tts_engine = None
-        
+
         # ---- 服务器状态机（Phase 1: /health 异步化）----
         # /health 在 lifespan yield 后立即可用，并通过 self._state 暴露真实状态。
         # AI 组件在后台 task 中初始化，失败不会阻塞 HTTP 服务。
@@ -191,6 +197,60 @@ class HakusAIServer:
         self._init_task: Optional[asyncio.Task] = None
         # init 完成事件（无论成功失败都会 set），供 chat 端点等待
         self._init_event: asyncio.Event = asyncio.Event()
+
+        # ---- Phase 5: Metrics (5h SWE 任务可观测性) ----
+        # 所有计数器都是 "since process start" 的累计值。
+        # active_websockets 不在这里存 — 直接从 websocket_manager 拿实时值。
+        # _start_time 用于算 uptime; 用 time.time() 而不是 monotonic, 跨进程重启可读。
+        self._metrics_start_time: float = time.time()
+        self._metrics: Dict[str, int] = {
+            "total_turns": 0,
+            "total_errors": 0,
+            "checkpoints_saved": 0,
+            "llm_calls": 0,
+            "llm_retries": 0,
+        }
+        # 按 provider 细分 — by_provider[provider] = {"turns": N, "errors": N, "llm_calls": N}
+        self._metrics_by_provider: Dict[str, Dict[str, int]] = {}
+        # metrics 锁 (虽然是单线程 asyncio, 但 _inc_metric 也可能被 sync 代码调)
+        self._metrics_lock = asyncio.Lock()
+
+    def _inc_metric(self, key: str, amount: int = 1, provider: Optional[str] = None) -> None:
+        """线程安全地递增一个 metric。
+
+        key 必须是 _metrics 中已存在的键 (total_turns / total_errors /
+        checkpoints_saved / llm_calls / llm_retries)。
+        provider 可选 — 如果给定, 同时更新 _metrics_by_provider。
+        """
+        if key in self._metrics:
+            self._metrics[key] += amount
+        if provider is not None:
+            bucket = self._metrics_by_provider.setdefault(provider, {
+                "turns": 0, "errors": 0, "llm_calls": 0,
+            })
+            # 映射 metric key -> by_provider key
+            mapping = {
+                "total_turns": "turns",
+                "total_errors": "errors",
+                "llm_calls": "llm_calls",
+            }
+            bp_key = mapping.get(key)
+            if bp_key:
+                bucket[bp_key] += amount
+
+    def get_metrics_snapshot(self) -> Dict[str, Any]:
+        """返回 /api/metrics 响应体 — 实时快照。"""
+        uptime = max(0.0, time.time() - self._metrics_start_time)
+        return {
+            "uptime_seconds": round(uptime, 2),
+            "total_turns": self._metrics["total_turns"],
+            "total_errors": self._metrics["total_errors"],
+            "active_websockets": len(self.websocket_manager.active_connections),
+            "checkpoints_saved": self._metrics["checkpoints_saved"],
+            "llm_calls": self._metrics["llm_calls"],
+            "llm_retries": self._metrics["llm_retries"],
+            "by_provider": dict(self._metrics_by_provider),
+        }
         
     async def _init_ai_components(self):
         """
@@ -234,6 +294,10 @@ class HakusAIServer:
                         "gemini": "gemini_api_key",
                         "qwen": "dashscope_api_key",
                         "glm": "glm_api_key",
+                        "opencode": "opencode_api_key",
+                        "anthropic": "anthropic_api_key",
+                        "mimo": "mimo_api_key",
+                        "openai": "openai_api_key",
                     }
                     key_name = api_keys_map.get(provider)
                     logger.info(f"Looking for API key: {key_name}")
@@ -263,6 +327,9 @@ class HakusAIServer:
                     "openai": "OPENAI_API_KEY",
                     "qwen": "DASHSCOPE_API_KEY",
                     "glm": "GLM_API_KEY",
+                    "opencode": "OPENCODE_API_KEY",
+                    "anthropic": "ANTHROPIC_API_KEY",
+                    "mimo": "MIMO_API_KEY",
                 }
                 env_var = env_var_map.get(provider)
                 if env_var:
@@ -279,6 +346,9 @@ class HakusAIServer:
                     "openai": "OPENAI_API_KEY",
                     "qwen": "DASHSCOPE_API_KEY",
                     "glm": "GLM_API_KEY",
+                    "opencode": "OPENCODE_API_KEY",
+                    "anthropic": "ANTHROPIC_API_KEY",
+                    "mimo": "MIMO_API_KEY",
                 }
                 critical_failure = (
                     f"Missing API key for provider '{provider}'. "
@@ -427,6 +497,86 @@ class HakusAIServer:
             self._init_finished_at = time.time()
             duration = self._init_finished_at - (self._init_started_at or self._init_finished_at)
             logger.info(f"AI init finished in {duration:.2f}s — state={self._state.value}")
+
+            # ---- 初始化微信 ClawBot 平台（可选组件）----
+            try:
+                from hakusai_core.v2.platform.wechat import WeChatPlatform, WeChatConfig
+                from hakusai_core.v2.platform.base import PlatformConfig, PlatformType
+                wechat_cfg = WeChatConfig(enabled=False)  # 默认不启用，需用户主动扫码
+                wechat = WeChatPlatform(
+                    config=PlatformConfig(platform_type=PlatformType.WECHAT, enabled=False),
+                    wechat_config=wechat_cfg,
+                )
+                platform_manager.register("wechat", wechat)
+
+                # 尝试自动复用已持久化的微信 session
+                # 这样后端重启/页面刷新后，如果之前扫码登录过且 session 仍存活，
+                # 会自动恢复为 connected 状态，无需重新扫码
+                try:
+                    await wechat.connect()
+                    if wechat.is_connected:
+                        logger.info(f"WeChat: Auto-restored session for account {wechat._account_id}")
+                    else:
+                        logger.info("WeChat: No persisted session to restore, need QR login")
+                except Exception as e:
+                    logger.debug(f"WeChat: Auto-restore session failed: {e}")
+
+                # 注册消息处理器：微信收到的消息转发给 AgentCore
+                async def _on_wechat_message(msg):
+                    """微信消息 → AgentCore → 回复（带 typing 状态），同时写入会话列表"""
+                    try:
+                        from .agent_bridge import run_turn_collect
+                        import time as _time
+                        import uuid
+                        user_id = msg.metadata.get("user_id", "")
+                        session_id = f"wechat_{user_id}"
+                        # 确保会话存在于 session_store，这样前端左侧栏能看到
+                        if not session_store.get_session(session_id):
+                            session_store.create_session(
+                                session_id,
+                                title=f"微信: {user_id}",
+                                provider="wechat",
+                            )
+                        # 存入用户消息
+                        user_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+                        session_store.add_message(
+                            session_id, user_msg_id, role="user", content=msg.content,
+                        )
+                        session_store.update_session(session_id, touch_updated=True)
+                        # 发送 typing 状态：对方正在输入…
+                        if wechat.wechat_config.typing_status:
+                            await wechat.send_typing(user_id, typing=True)
+                        # 调用 AgentCore 获取回复
+                        result = await run_turn_collect(msg.content, session_id, provider=None)
+                        reply_text = result.get("content", "") if result else ""
+                        # 存入 AI 回复
+                        if reply_text:
+                            ai_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+                            session_store.add_message(
+                                session_id, ai_msg_id, role="assistant", content=reply_text,
+                            )
+                            session_store.update_session(session_id, touch_updated=True)
+                        # 取消 typing 状态
+                        if wechat.wechat_config.typing_status:
+                            await wechat.send_typing(user_id, typing=False)
+                        if reply_text:
+                            from hakusai_core.v2.platform.base import SendMessage
+                            send_msg = SendMessage(content=reply_text, metadata={"user_id": user_id})
+                            await wechat.send_message(send_msg)
+                    except Exception as e:
+                        logger.error(f"WeChat message handler error: {e}")
+                        # 出错也要取消 typing
+                        try:
+                            if wechat.wechat_config.typing_status:
+                                await wechat.send_typing(user_id, typing=False)
+                        except Exception:
+                            pass
+
+                wechat.on_message(_on_wechat_message)
+                logger.info("WeChat ClawBot platform registered (disabled by default)")
+            except Exception as e:
+                logger.debug(f"WeChat ClawBot platform not available: {e}")
+
             # 无论成功失败都 set，让 chat 端点能感知初始化已结束
             self._init_event.set()
     
@@ -454,7 +604,7 @@ class HakusAIServer:
         return {
             "status": self._state.value,
             "ready": ready,
-            "version": "2.0.0",
+            "version": "0.1.0",
             "model_loaded": self.model_adapter is not None,
             "agent_ready": self.agent is not None,
             "memory_ready": self.memory is not None,
@@ -514,6 +664,18 @@ class HakusAIServer:
             """
             # 启动时
             logger.info("Starting HakusAI Server...")
+
+            # 加载用户配置 ~/.hakus/config.yaml。
+            # 之前这里没加载，导致 AI 初始化一直用 schema 默认值（deepseek），
+            # 即使用户在 UI 里设置了 OpenCode 也不生效。
+            config_path = os.path.expanduser("~/.hakus/config.yaml")
+            try:
+                await config_manager.load(config_path)
+                self.config = config_manager.config
+                logger.info(f"Loaded user config from {config_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load user config from {config_path}: {e}")
+
             await event_bus.start()
             # 标记进入初始化中（_init_ai_components 内部也会设）
             self._state = ServerState.INITIALIZING
@@ -548,7 +710,20 @@ class HakusAIServer:
                     )
             except Exception as e:
                 logger.warning(f"[MCP] startup failed (non-blocking): {e}", exc_info=True)
-            
+
+            # Phase 4: Start WebSocket heartbeat + cleanup background loops.
+            # Non-blocking: failures don't crash the sidecar.
+            try:
+                await self.websocket_manager.start_background_loops()
+                logger.info(
+                    f"[WS] background loops started "
+                    f"(heartbeat={self.websocket_manager.HEARTBEAT_INTERVAL_S}s, "
+                    f"cleanup={self.websocket_manager.CLEANUP_INTERVAL_S}s, "
+                    f"stale={self.websocket_manager.STALE_THRESHOLD_S}s)"
+                )
+            except Exception as e:
+                logger.warning(f"[WS] background loops start failed: {e}", exc_info=True)
+
             yield
             
             # 关闭时
@@ -594,11 +769,18 @@ class HakusAIServer:
                     logger.info("[MCP] all servers stopped")
             except Exception as e:
                 logger.warning(f"[MCP] stop_all failed: {e}")
+
+            # Phase 4: Stop WebSocket background loops (heartbeat + cleanup)
+            try:
+                await self.websocket_manager.stop_background_loops()
+                logger.info("[WS] background loops stopped")
+            except Exception as e:
+                logger.warning(f"[WS] background loops stop failed: {e}")
         
         app = FastAPI(
             title="HakusAI API",
-            description="HakusAI 2.0 AI虚拟助手API",
-            version="2.0.0",
+            description="HakusAI AI虚拟助手API",
+            version="0.1.0",
             lifespan=lifespan
         )
         
@@ -672,7 +854,7 @@ class HakusAIServer:
             """根路径"""
             return {
                 "name": "HakusAI",
-                "version": "2.0.0",
+                "version": "0.1.0",
                 "status": "running"
             }
 
@@ -692,7 +874,7 @@ class HakusAIServer:
             return {
                 "sidecar_api_version": SIDECAR_API_VERSION,
                 "sidecar_api_version_int": SIDECAR_API_VERSION_INT,
-                "server_version": "2.0.0",
+                "server_version": "0.1.0",
                 "use_agentcore_for_chat": USE_AGENTCORE_FOR_CHAT,
                 "agentcore_tools_count": 24,  # hakus/tools/builtin — kept in sync manually
                 "endpoints": [
@@ -703,6 +885,7 @@ class HakusAIServer:
                     "/api/permission",
                     "/api/config/export",
                     "/api/diagnostics",
+                    "/api/metrics",
                     "/api/agentcore/status",
                     "/api/sessions",
                     "/api/sessions/{id}/messages",
@@ -779,6 +962,23 @@ class HakusAIServer:
             except Exception as e:
                 payload["configured_provider"] = f"<error: {e}>"
             return payload
+
+        @app.get("/api/metrics")
+        async def get_metrics():
+            """
+            Phase 5: 服务端 metrics 端点 — 5h SWE 任务可观测性。
+
+            返回 since-process-start 的累计计数器 + 实时 active_websockets。
+            客户端 AdvancedPanel 显示这些数字, 让用户能直观看到:
+              - 服务运行了多久 (uptime_seconds)
+              - 处理了多少 turn / 多少 LLM 调用
+              - 错误率 (total_errors / total_turns)
+              - 当前 WebSocket 连接数
+              - checkpoint 保存次数 (5h 长任务的关键指标)
+
+            所有字段都是非负整数 (除 uptime_seconds 是 float)。
+            """
+            return self.get_metrics_snapshot()
         
         # ========== 聊天API ==========
         
@@ -816,10 +1016,14 @@ class HakusAIServer:
                     )
                 try:
                     logger.info(f"Chat (AgentCore): {request.message[:80]} provider={request.provider or 'default'}")
+                    # Phase 5: 非 streaming 也计 turn
+                    self._inc_metric("total_turns", provider=request.provider or "default")
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
                         provider=request.provider,
                     )
+                    if result.get("failed"):
+                        self._inc_metric("total_errors", provider=request.provider or "default")
                     logger.info(
                         f"Chat response: {result['content'][:100]}... "
                         f"(iter={result.get('iterations')}, "
@@ -829,6 +1033,7 @@ class HakusAIServer:
                     return result
                 except Exception as e:
                     logger.error(f"AgentCore chat error: {e}", exc_info=True)
+                    self._inc_metric("total_errors", provider=request.provider or "default")
                     raise HTTPException(status_code=500, detail=str(e))
 
             # 旧路径 (BaseAgent)
@@ -901,14 +1106,31 @@ class HakusAIServer:
                     )
 
                 async def generate_agentcore():
+                    # Phase 5: 计 turn + 跟踪 LLM/checkpoint 事件
+                    self._inc_metric("total_turns", provider=request.provider or "default")
+                    turn_failed = False
                     try:
                         async for chunk in agentcore_run_turn_stream(
                             request.message, request.session_id,
                             provider=request.provider,
                         ):
+                            # 从 chunk 中提取事件类型, 更新 metrics
+                            etype = chunk.get("event_type", "")
+                            if etype == "token_usage":
+                                # 每个 token_usage 事件 ≈ 一次 LLM 调用
+                                self._inc_metric("llm_calls", provider=request.provider or "default")
+                            elif etype == "checkpoint_saved":
+                                self._inc_metric("checkpoints_saved")
+                            elif etype == "turn_completed":
+                                pass  # 成功结束
+                            elif etype == "turn_failed":
+                                turn_failed = True
+                                self._inc_metric("total_errors", provider=request.provider or "default")
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                     except Exception as e:
                         logger.error(f"AgentCore stream error: {e}", exc_info=True)
+                        if not turn_failed:
+                            self._inc_metric("total_errors", provider=request.provider or "default")
                         err = {
                             "content": "",
                             "emotion": None,
@@ -2112,16 +2334,50 @@ class HakusAIServer:
         
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
-            """WebSocket聊天接口。
+            """WebSocket聊天接口 — Phase 4 加入心跳/超时/resume_session。
+
+            协议 (客户端 -> 服务端):
+              {"type": "message", "content": "...", "session_id": "...", "provider"?}
+                -> 流式响应: 多个 {"type":"stream", ...} + 最后 {"type":"stream", "done":true}
+              {"type": "ping"}
+                -> {"type": "pong"}
+              {"type": "pong"}
+                -> (无响应, 仅刷新服务端 last_seen)
+              {"type": "resume_session", "session_id": "..."}
+                -> {"type": "resume_ok", "session_id": "...", "messages_restored": N}
+                   或 {"type": "resume_failed", "reason": "..."}
+              {"type": "interrupt"}
+                -> 取消当前流式 turn (best-effort)
+
+            服务端 -> 客户端 (主动):
+              {"type": "ping", "ts": ...} — 每 30s 一次心跳, 客户端应回 pong
 
             AgentCore 路径下，stream 事件携带 event_type 字段
             (text_delta / tool_call_started / ... / turn_completed)，
             旧客户端只看 content + done 即可。
+
+            Phase 4 关键改动:
+              - receive_json 加 120s 超时 — 客户端崩溃/断网时服务端不会无限阻塞
+              - 收到任意消息都刷新 last_seen (阻止 cleanup_loop 收尸)
+              - resume_session: 客户端重连后恢复会话历史
+              - 服务端 _heartbeat_loop 主动 ping (在 WebSocketManager 内)
             """
             await self.websocket_manager.connect(websocket)
             try:
                 while True:
-                    data = await websocket.receive_json()
+                    # 120s 超时 — 正常情况下客户端至少每 30s 回一次 pong (响应服务端 ping),
+                    # 120s 都没动静 = 客户端挂了/网络断了, 主动断开。
+                    try:
+                        data = await asyncio.wait_for(
+                            websocket.receive_json(),
+                            timeout=120.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.info("WebSocket receive timeout (120s no message), closing.")
+                        break
+
+                    # 任意消息都刷新 last_seen
+                    self.websocket_manager.update_last_seen(websocket)
 
                     message_type = data.get("type", "message")
 
@@ -2159,13 +2415,28 @@ class HakusAIServer:
                                 })
                                 continue
                             try:
+                                # Phase 5: WS 路径也计 turn + 跟踪 LLM/checkpoint 事件
+                                self._inc_metric("total_turns", provider=ws_provider or "default")
+                                ws_turn_failed = False
                                 async for chunk in agentcore_run_turn_stream(content, session_id, provider=ws_provider):
+                                    etype = chunk.get("event_type", "")
+                                    if etype == "token_usage":
+                                        self._inc_metric("llm_calls", provider=ws_provider or "default")
+                                    elif etype == "checkpoint_saved":
+                                        self._inc_metric("checkpoints_saved")
+                                    elif etype == "turn_failed":
+                                        ws_turn_failed = True
+                                        self._inc_metric("total_errors", provider=ws_provider or "default")
                                     await websocket.send_json({
                                         "type": "stream",
                                         **chunk,
                                     })
+                                    # 每次成功 send 都刷新 last_seen
+                                    self.websocket_manager.update_last_seen(websocket)
                             except Exception as e:
                                 logger.error(f"WS AgentCore stream error: {e}", exc_info=True)
+                                if not ws_turn_failed:
+                                    self._inc_metric("total_errors", provider=ws_provider or "default")
                                 await websocket.send_json({
                                     "type": "error",
                                     "message": str(e),
@@ -2192,6 +2463,7 @@ class HakusAIServer:
                                 "emotion": response.emotion,
                                 "done": False
                             })
+                            self.websocket_manager.update_last_seen(websocket)
 
                         await websocket.send_json({
                             "type": "stream",
@@ -2202,10 +2474,53 @@ class HakusAIServer:
                     elif message_type == "ping":
                         await websocket.send_json({"type": "pong"})
 
+                    elif message_type == "pong":
+                        # 客户端响应服务端 ping — last_seen 已在上面刷新, 这里无需再发任何东西
+                        pass
+
+                    elif message_type == "interrupt":
+                        # Best-effort: 取消当前 AgentCore turn。AgentCore 内部
+                        # 会监听 session_id 的 cancel 信号。这里发完就 continue。
+                        try:
+                            from .agent_bridge import cancel_session_turn
+                            session_id = data.get("session_id", "default")
+                            cancel_session_turn(session_id)
+                            await websocket.send_json({"type": "interrupt_ack", "session_id": session_id})
+                        except Exception as e:
+                            logger.warning(f"WS interrupt failed: {e}")
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"interrupt failed: {e}",
+                                "code": "interrupt_failed",
+                            })
+
+                    elif message_type == "resume_session":
+                        # Phase 4: 客户端重连后恢复会话历史
+                        session_id = data.get("session_id", "default")
+                        try:
+                            from . import session_store
+                            msgs = session_store.list_messages(session_id)
+                            await websocket.send_json({
+                                "type": "resume_ok",
+                                "session_id": session_id,
+                                "messages_restored": len(msgs) if msgs else 0,
+                            })
+                        except Exception as e:
+                            logger.warning(f"WS resume_session failed: {e}")
+                            await websocket.send_json({
+                                "type": "resume_failed",
+                                "session_id": session_id,
+                                "reason": str(e),
+                            })
+
+                    else:
+                        # 未知消息类型 — 仅记录, 不 disconnect (宽容协议)
+                        logger.debug(f"WS unknown message type: {message_type}")
+
             except WebSocketDisconnect:
                 self.websocket_manager.disconnect(websocket)
             except Exception as e:
-                logger.error(f"WebSocket error: {e}")
+                logger.error(f"WebSocket error: {e}", exc_info=True)
                 self.websocket_manager.disconnect(websocket)
         
         @app.websocket("/ws/vtuber")
@@ -2263,7 +2578,198 @@ class HakusAIServer:
                     "sidecar_api_version": SIDECAR_API_VERSION,
                 },
             )
-    
+
+        # ========== 微信 ClawBot API ==========
+
+        @app.get("/api/wechat/status")
+        async def wechat_status():
+            """获取微信连接状态"""
+            wechat = platform_manager.get("wechat")
+            if not wechat:
+                return {"enabled": False, "status": "not_configured", "connected": False}
+            # 周期性验证 session 存活（每 60 秒最多一次，不阻塞快速返回）
+            if wechat.login_status == "connected":
+                await wechat.check_session_alive()
+            return {
+                "enabled": wechat.config.enabled or wechat.is_connected,
+                "status": wechat.login_status,
+                "connected": wechat.is_connected,
+                "account_id": wechat._account_id,
+            }
+
+        @app.post("/api/wechat/login")
+        async def wechat_login():
+            """触发微信扫码登录"""
+            wechat = platform_manager.get("wechat")
+            if not wechat:
+                raise HTTPException(status_code=404, detail="WeChat platform not configured")
+            try:
+                qrcode_b64 = await wechat.start_qrcode_login()
+                return {"status": "qrcode", "qrcode_base64": qrcode_b64}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/wechat/disconnect")
+        async def wechat_disconnect():
+            """断开微信连接"""
+            wechat = platform_manager.get("wechat")
+            if not wechat:
+                raise HTTPException(status_code=404, detail="WeChat platform not configured")
+            await wechat.disconnect()
+            return {"status": "disconnected"}
+
+        @app.post("/api/wechat/send")
+        async def wechat_send(request: dict):
+            """手动发送微信消息"""
+            wechat = platform_manager.get("wechat")
+            if not wechat or not wechat.is_connected:
+                raise HTTPException(status_code=400, detail="WeChat not connected")
+            user_id = request.get("user_id")
+            text = request.get("text", "")
+            if not user_id or not text:
+                raise HTTPException(status_code=400, detail="user_id and text required")
+            msg = SendMessage(content=text, metadata={"user_id": user_id})
+            success = await wechat.send_message(msg)
+            return {"success": success}
+
+        # ========== 文件上传 API ==========
+        # 文件存储位置: ~/.hakus/uploads/
+        # 单文件大小限制: 10MB. 文本文件会生成前 2000 字符的预览.
+
+        _UPLOAD_DIR = Path(os.path.expanduser("~/.hakus/uploads"))
+        _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 文本文件扩展名集合 — 这些类型的文件会生成 text_preview
+        _TEXT_EXTENSIONS = {
+            ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
+            ".xml", ".html", ".css", ".java", ".c", ".cpp", ".go", ".rs",
+            ".rb", ".sh", ".sql",
+        }
+
+        # 单文件大小限制: 10MB
+        _MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+
+        @app.post("/api/upload")
+        async def upload_files(files: List[UploadFile] = File(...)):
+            """上传文件 (支持多文件, multipart/form-data).
+
+            返回每个文件的元数据: file_id / filename / size / content_type /
+            text_preview (仅文本文件, 前 2000 字符) / is_text.
+
+            单文件限制 10MB. 文件存储到 ~/.hakus/uploads/{file_id}_{filename}.
+            支持所有文件类型, 但只有文本类型会生成 text_preview.
+            """
+            results = []
+            for upload in files:
+                # 读文件内容到内存 (限制 10MB)
+                content = await upload.read()
+                if len(content) > _MAX_UPLOAD_SIZE:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File '{upload.filename}' too large: "
+                            f"{len(content)} bytes (max {_MAX_UPLOAD_SIZE})"
+                        ),
+                    )
+
+                file_id = uuid.uuid4().hex
+                filename = upload.filename or f"upload_{file_id}"
+                content_type = upload.content_type or "application/octet-stream"
+
+                # 判断是否是文本文件 (按扩展名)
+                ext = Path(filename).suffix.lower()
+                is_text = ext in _TEXT_EXTENSIONS
+
+                # 生成 text_preview (仅文本文件, 前 2000 字符)
+                text_preview = None
+                if is_text:
+                    try:
+                        text = content.decode("utf-8", errors="replace")
+                        text_preview = text[:2000]
+                    except Exception as e:
+                        logger.warning(f"Failed to generate text_preview for {filename}: {e}")
+
+                # 存储文件: {file_id}_{filename} 避免重名覆盖
+                safe_filename = f"{file_id}_{filename}"
+                dest_path = _UPLOAD_DIR / safe_filename
+                try:
+                    with open(dest_path, "wb") as f:
+                        f.write(content)
+                except Exception as e:
+                    logger.error(f"Failed to save uploaded file {filename}: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+                logger.info(
+                    f"Uploaded file saved: {filename} -> {dest_path.name} "
+                    f"({len(content)} bytes, is_text={is_text})"
+                )
+
+                results.append({
+                    "file_id": file_id,
+                    "filename": filename,
+                    "size": len(content),
+                    "content_type": content_type,
+                    "text_preview": text_preview,
+                    "is_text": is_text,
+                })
+
+            return {"files": results}
+
+        @app.get("/api/files/{file_id}")
+        async def get_file(file_id: str):
+            """获取上传的文件内容.
+
+            返回文件流 (FileResponse). 如果找不到, 返回 404.
+            file_id 必须是 32 位 uuid hex, 防止路径穿越.
+            """
+            # file_id 是 uuid hex (32 位十六进制), 严格校验防止路径穿越
+            if len(file_id) != 32 or not all(c in "0123456789abcdef" for c in file_id.lower()):
+                raise HTTPException(status_code=400, detail="Invalid file_id")
+
+            # 在 uploads 目录中查找以 "{file_id}_" 开头的文件
+            matches = list(_UPLOAD_DIR.glob(f"{file_id}_*"))
+            if not matches:
+                raise HTTPException(status_code=404, detail="File not found")
+
+            file_path = matches[0]
+            # 去掉 "{file_id}_" 前缀还原原始文件名
+            original_name = file_path.name[len(file_id) + 1:]
+            return FileResponse(
+                path=file_path,
+                filename=original_name,
+            )
+
+        @app.get("/api/files")
+        async def list_files():
+            """列出所有已上传的文件.
+
+            返回每个文件的元数据 (不含文件内容).
+            按上传时间倒序排列 (最新在前).
+            """
+            files = []
+            for entry in _UPLOAD_DIR.iterdir():
+                if not entry.is_file():
+                    continue
+                name = entry.name
+                # 文件名格式: {file_id}_{original_filename}
+                if "_" not in name:
+                    continue
+                file_id, original_name = name.split("_", 1)
+                stat = entry.stat()
+                ext = Path(original_name).suffix.lower()
+                is_text = ext in _TEXT_EXTENSIONS
+                files.append({
+                    "file_id": file_id,
+                    "filename": original_name,
+                    "size": stat.st_size,
+                    "content_type": "application/octet-stream",  # 未持久化 content_type, 用默认值
+                    "is_text": is_text,
+                    "uploaded_at": stat.st_mtime,
+                })
+            # 按上传时间倒序 (最新在前)
+            files.sort(key=lambda x: x.get("uploaded_at", 0), reverse=True)
+            return {"files": files}
+
     async def start(self):
         """启动服务器"""
         if self.app is None:
@@ -2306,33 +2812,136 @@ class HakusAIServer:
 
 class WebSocketManager:
     """
-    WebSocket连接管理器
+    WebSocket连接管理器 — Phase 4 加入心跳/清理循环。
+
+    设计目标 (5h SWE 稳定性):
+      - 每个连接维护 ``_last_seen`` 时间戳，任何收到的消息都刷新它。
+      - 后台 ``_cleanup_loop`` 每 60s 扫描一次，关闭 180s 内无任何消息
+        (即没收到 ping/pong/任何数据) 的连接。这样客户端崩溃/断网时
+        服务端不会无限挂着 zombie 连接 — 对 5h 长任务尤其关键，否则
+        内存会缓慢累积。
+      - 服务端主动 ping: ``_heartbeat_loop`` 每 30s 向所有连接发 ping,
+        客户端应在 60s 内回 pong (或任意消息)。客户端不响应就靠
+        cleanup_loop 来收尸。
     """
-    
+
+    HEARTBEAT_INTERVAL_S = 30.0   # 服务端每 30s 发一次 ping
+    CLEANUP_INTERVAL_S = 60.0     # 每 60s 扫描一次僵尸连接
+    STALE_THRESHOLD_S = 180.0     # 180s 没消息 = zombie
+
     def __init__(self):
         self.active_connections: list = []
-    
-    async def connect(self, websocket: WebSocket):
-        """接受新连接"""
+        # websocket -> last seen unix timestamp (monotonic 不行, 跨线程/进程没意义)
+        # 用 wall time 即可, 心跳容忍秒级误差。
+        self._last_seen: Dict[WebSocket, float] = {}
+        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """接受新连接并初始化 last_seen。"""
         await websocket.accept()
         self.active_connections.append(websocket)
+        self._last_seen[websocket] = time.time()
         logger.info(f"WebSocket connected. Total: {len(self.active_connections)}")
-    
-    def disconnect(self, websocket: WebSocket):
-        """断开连接"""
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        """断开连接并清理 last_seen。"""
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        self._last_seen.pop(websocket, None)
         logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
-    
+
+    def update_last_seen(self, websocket: WebSocket) -> None:
+        """收到任意消息时调用 — 刷新 last_seen 以阻止 cleanup_loop 收尸。"""
+        self._last_seen[websocket] = time.time()
+
+    async def start_background_loops(self) -> None:
+        """启动心跳和清理后台任务。在 lifespan 启动阶段调用一次。"""
+        if self._heartbeat_task is None or self._heartbeat_task.done():
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
+    async def stop_background_loops(self) -> None:
+        """停止心跳和清理任务。在 lifespan 关闭阶段调用。"""
+        for task in (self._heartbeat_task, self._cleanup_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"WS background task error during stop: {e}")
+        self._heartbeat_task = None
+        self._cleanup_task = None
+
+    async def _heartbeat_loop(self) -> None:
+        """每 HEARTBEAT_INTERVAL_S 秒向所有连接发 ping。
+
+        这是服务端主动 ping —— 客户端只需在 onmessage 里识别 ``type=ping``
+        并回 ``type=pong`` 即可。即使客户端不回, 也无所谓 —— cleanup_loop
+        会按 last_seen 判定僵尸并收尸。
+        """
+        while True:
+            try:
+                await asyncio.sleep(self.HEARTBEAT_INTERVAL_S)
+                if not self.active_connections:
+                    continue
+                ping_msg = {"type": "ping", "ts": time.time()}
+                dead: list = []
+                for conn in list(self.active_connections):
+                    try:
+                        await conn.send_json(ping_msg)
+                    except Exception as e:
+                        logger.debug(f"Heartbeat send failed: {e}")
+                        dead.append(conn)
+                for conn in dead:
+                    self.disconnect(conn)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Heartbeat loop iteration error: {e}", exc_info=True)
+
+    async def _cleanup_loop(self) -> None:
+        """每 CLEANUP_INTERVAL_S 秒扫描, 关闭 STALE_THRESHOLD_S 内无消息的连接。"""
+        while True:
+            try:
+                await asyncio.sleep(self.CLEANUP_INTERVAL_S)
+                if not self._last_seen:
+                    continue
+                now = time.time()
+                stale = [
+                    ws for ws, ts in self._last_seen.items()
+                    if now - ts > self.STALE_THRESHOLD_S
+                ]
+                for ws in stale:
+                    logger.warning(
+                        f"Closing stale WebSocket: no message for "
+                        f"{now - self._last_seen.get(ws, now):.1f}s"
+                    )
+                    try:
+                        # 1001 = Going Away; 用 1008 (policy violation) 也行,
+                        # 但客户端对 1001 重连更友好。
+                        await ws.close(code=1001)
+                    except Exception as e:
+                        logger.debug(f"Stale ws close failed: {e}")
+                    self.disconnect(ws)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Cleanup loop iteration error: {e}", exc_info=True)
+
     async def broadcast(self, message: dict):
         """广播消息到所有连接"""
         disconnected = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
+                self._last_seen[connection] = time.time()
             except Exception:
                 disconnected.append(connection)
-        
+
         # 清理断开的连接
         for conn in disconnected:
             self.disconnect(conn)
@@ -2343,4 +2952,23 @@ server = HakusAIServer()
 
 
 if __name__ == "__main__":
+    import os
+    import socket as _socket
+
+    port = int(os.environ.get("HAKUSAI_PORT", "48081"))
+    host = server.config.server.host
+    for p in range(port, port + 10):
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+                port = p
+                break
+            except OSError:
+                continue
+
+    # Print the chosen port to stdout so Electron's sidecar.ts can parse it.
+    # This matches the behaviour of sidecar/hakusai_server_entry.py.
+    print(f"HAKUSAI_PORT={port}", flush=True)
+    server.config.server.host = host
+    server.config.server.port = port
     server.run()

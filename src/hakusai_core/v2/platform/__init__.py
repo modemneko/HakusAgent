@@ -26,6 +26,11 @@ from .discord import (
     VoiceState,
 )
 
+from .wechat import (
+    WeChatConfig,
+    WeChatPlatform,
+)
+
 
 __all__ = [
     # 基础
@@ -48,4 +53,8 @@ __all__ = [
     "DiscordConfig",
     "DiscordPlatform",
     "VoiceState",
+    
+    # WeChat
+    "WeChatConfig",
+    "WeChatPlatform",
 ]

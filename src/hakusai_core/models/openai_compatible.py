@@ -293,3 +293,22 @@ class OpenAIAdapter(OpenAICompatibleAdapter):
     def supports_vision(self) -> bool:
         """GPT-4o支持视觉输入"""
         return "vision" in self.model_name.lower() or "gpt-4o" in self.model_name.lower()
+
+
+@register_model("opencode")
+class OpenCodeAdapter(OpenAICompatibleAdapter):
+    """
+    OpenCode适配器
+    
+    支持OpenCode平台托管的OpenAI兼容模型
+    """
+    
+    DEFAULT_BASE_URL = "https://api.opencode.ai/v1"
+    
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.base_url = config.get("base_url") or self.DEFAULT_BASE_URL
+    
+    @property
+    def provider_name(self) -> str:
+        return "opencode"

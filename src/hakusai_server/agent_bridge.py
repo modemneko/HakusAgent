@@ -430,3 +430,42 @@ def clear_session_history(session_id: str) -> bool:
         drop_agent(session_id)
         return True
     return cleared_any or True
+
+
+# ============================================================================
+# Phase 4: Active turn cancellation
+# ============================================================================
+#
+# AgentCore exposes a ``self._cancelled`` bool flag that the orchestrator
+# checks between iterations (see hakus/agent.py:1482, 1558, etc.). Setting
+# this flag causes the next loop iteration to break and emit a
+# ``CancelledEvent`` — exactly what we want for the WebSocket ``interrupt``
+# message.
+#
+# We don't use asyncio.Task.cancel() here because the WebSocket turn runs
+# inline in the WS handler task (no separate Task wrapping run_turn_stream).
+# Cancelling the WS handler task itself would tear down the whole connection,
+# not just the current turn.
+
+def cancel_session_turn(session_id: str) -> int:
+    """Cancel all in-flight turns for a session. Returns count cancelled.
+
+    Called by the WebSocket ``interrupt`` message handler. Sets the
+    ``_cancelled`` flag on every AgentCore bound to this session_id
+    (across all providers). AgentCore's orchestrator checks the flag
+    between iterations and emits a ``cancelled`` AgentEvent.
+    """
+    cancelled = 0
+    with _agent_cache_lock:
+        matching = [(k, v) for k, v in _agent_cache.items() if k[0] == session_id]
+    for (sess, provider), agent in matching:
+        try:
+            if getattr(agent, "_running", False) and not getattr(agent, "_cancelled", False):
+                agent._cancelled = True
+                cancelled += 1
+                logger.info(
+                    f"Cancelled turn for session={sess} provider={provider}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to set _cancelled on agent {matching}: {e}")
+    return cancelled

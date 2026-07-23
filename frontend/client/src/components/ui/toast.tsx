@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -43,11 +43,14 @@ const useToastStore = create<ToastStore>((set, get) => ({
 /** Hook returning stable functions to fire toasts from anywhere. */
 export function useToast() {
   const push = useToastStore((s) => s.push)
-  return {
-    success: (m: string, d?: number) => push('success', m, d),
-    error: (m: string, d?: number) => push('error', m, d ?? 5000),
-    info: (m: string, d?: number) => push('info', m, d),
-  }
+  return useMemo(
+    () => ({
+      success: (m: string, d?: number) => push('success', m, d),
+      error: (m: string, d?: number) => push('error', m, d ?? 5000),
+      info: (m: string, d?: number) => push('info', m, d),
+    }),
+    [push],
+  )
 }
 
 const ICONS: Record<ToastVariant, typeof CheckCircle2> = {

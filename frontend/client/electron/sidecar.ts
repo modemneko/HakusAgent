@@ -6,9 +6,12 @@
  * the app. This module spawns it on startup and parses its stdout
  * to discover the chosen port (the server prints `HAKUSAI_PORT=8080`).
  *
- * In dev mode (no sidecar binary present), this is a no-op and the
- * client falls back to connecting to a separately-running server
- * (default: http://localhost:8080).
+ * In dev mode, if a Python interpreter and the project source are available,
+ * the sidecar is launched directly from src/hakusai_server via a small wrapper
+ * script. This avoids the slow PyInstaller one-file extraction and makes the
+ * dev loop much faster. If neither source nor a bundled binary is available,
+ * the client falls back to connecting to a separately-running server
+ * (default: http://127.0.0.1:48081).
  *
  * Diagnostics:
  *   - All stdout/stderr from the sidecar is tee'd to:
@@ -22,7 +25,17 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, appendFileSync, createWriteStream, type WriteStream } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  appendFileSync,
+  createWriteStream,
+  statSync,
+  renameSync,
+  unlinkSync,
+  type WriteStream,
+  type Stats,
+} from 'node:fs'
 import { app } from 'electron'
 
 let sidecarProcess: ChildProcess | null = null
@@ -69,9 +82,113 @@ export function isSidecarAvailable(): boolean {
   return getSidecarPath() !== null
 }
 
+/** Detect whether we can run the sidecar from Python source in dev mode. */
+function getDevSourceSidecar(): { command: string; args: string[]; cwd: string; env?: Record<string, string> } | null {
+  if (app.isPackaged) return null
+
+  // Project layout: frontend/client/electron/sidecar.ts -> ../../../src
+  const repoRoot = join(__dirname, '..', '..', '..')
+  const srcDir = join(repoRoot, 'src')
+  const serverPy = join(srcDir, 'hakusai_server', 'server.py')
+  if (!existsSync(serverPy)) return null
+
+  // Try to locate python/python3 on PATH. Use `python -m` so that
+  // server.py's `if __name__ == "__main__"` block runs and prints HAKUSAI_PORT.
+  // The RuntimeWarning from hakusai_server/__init__.py re-exporting .server is
+  // harmless in dev mode.
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  return {
+    command: pythonCmd,
+    args: ['-m', 'hakusai_server.server'],
+    cwd: srcDir,
+    // hakus/ and utils/ live at the repo root, not under src/. Add
+    // both to PYTHONPATH so `from hakus.agent import AgentCore` and
+    // `from utils.config import BASE_CONFIG` resolve correctly.
+    env: {
+      PYTHONPATH: [repoRoot, srcDir].join(process.platform === 'win32' ? ';' : ':'),
+    },
+  }
+}
+
+/** Resolve the command to spawn.
+ *
+ * Dev mode: prefer Python source (fast, no PyInstaller extraction) if available;
+ * fall back to the bundled binary for quick smoke tests of the packaged build.
+ * Production: always use the bundled binary.
+ */
+function getSidecarCommand(): { command: string; args: string[]; cwd?: string; env?: Record<string, string> } | null {
+  if (!app.isPackaged) {
+    const devSource = getDevSourceSidecar()
+    if (devSource) return devSource
+  }
+  const binPath = getSidecarPath()
+  if (binPath) {
+    return { command: binPath, args: [] }
+  }
+  return null
+}
+
+export function isSidecarLaunchable(): boolean {
+  return getSidecarCommand() !== null
+}
+
 /** Open a persistent log file under the user's userData directory. */
 function getLogPath(): string {
   return join(app.getPath('userData'), 'sidecar.log')
+}
+
+// ============================================================================
+// Phase 5c: Log rotation — 防止 sidecar.log 无限增长
+// ============================================================================
+//
+// 5h SWE 任务期间, sidecar 会产生大量日志 (LLM 调用 / 工具调用 / checkpoint
+// 等)。没有 rotation 的话, log 文件会涨到几个 GB, 把磁盘塞满。
+//
+// 策略: 每次启动 sidecar (即 ensureLogStream 第一次被调) 时检查文件大小。
+// 如果 > MAX_LOG_SIZE_BYTES (10MB), 把现有的 log 重命名为 .1, .1 -> .2,
+// .2 -> .3, 删除 .3。然后新建一个空的 sidecar.log。
+//
+// 保留最多 3 份历史 (sidecar.log + .1 + .2 + .3), 总计约 40MB。
+
+const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024  // 10 MB
+const MAX_LOG_FILES = 3  // sidecar.log.1 / .2 / .3
+
+/**
+ * 如果 sidecar.log 超过 MAX_LOG_SIZE_BYTES, 执行 rotation。
+ * 顺序: 删 .3 → .2→.3 → .1→.2 → sidecar.log→.1。
+ * 失败的 rename/unlink 只记录, 不抛 — 日志 rotation 失败不应该阻塞 sidecar 启动。
+ */
+function rotateLogIfNeeded(logPath: string): void {
+  let st: Stats
+  try {
+    st = statSync(logPath)
+  } catch {
+    // 文件不存在, 不需要 rotation
+    return
+  }
+  if (st.size < MAX_LOG_SIZE_BYTES) return
+
+  try {
+    // 从最老的开始删 / rename, 避免覆盖
+    // sidecar.log.3 -> 删除
+    const oldest = `${logPath}.${MAX_LOG_FILES}`
+    if (existsSync(oldest)) {
+      try { unlinkSync(oldest) } catch (e) { /* 可能被占用, 忽略 */ }
+    }
+    // .2 -> .3, .1 -> .2, ...
+    for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
+      const src = `${logPath}.${i}`
+      const dst = `${logPath}.${i + 1}`
+      if (existsSync(src)) {
+        try { renameSync(src, dst) } catch (e) { /* 忽略 */ }
+      }
+    }
+    // sidecar.log -> sidecar.log.1
+    try { renameSync(logPath, `${logPath}.1`) } catch (e) { /* 忽略 */ }
+    console.log(`[sidecar] log rotated: ${st.size} bytes > ${MAX_LOG_SIZE_BYTES}`)
+  } catch (e) {
+    console.error('[sidecar] log rotation failed (non-blocking):', e)
+  }
 }
 
 function ensureLogStream(): WriteStream | null {
@@ -80,6 +197,8 @@ function ensureLogStream(): WriteStream | null {
     const logPath = getLogPath()
     const dir = app.getPath('userData')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    // Phase 5c: 启动前检查 log 大小, 超过 10MB 就 rotate
+    rotateLogIfNeeded(logPath)
     logStream = createWriteStream(logPath, { flags: 'a' })
     writeLog(`\n\n=== HakusAI sidecar session: ${new Date().toISOString()} ===\n`)
     return logStream
@@ -113,16 +232,16 @@ export function startSidecar(): Promise<{
   error: string | null
   logPath: string
 }> {
-  const binPath = getSidecarPath()
+  const cmd = getSidecarCommand()
   const logPath = getLogPath()
 
-  if (!binPath) {
-    lastError = 'Sidecar binary not found (no hakusai-server in resources/sidecar/dist)'
+  if (!cmd) {
+    lastError = 'Sidecar not found: no bundled binary and no Python source available'
     writeLog(lastError)
     return Promise.resolve({ port: null, error: lastError, logPath })
   }
 
-  writeLog(`Binary path: ${binPath}`)
+  writeLog(`Launch command: ${cmd.command} ${cmd.args.join(' ')}${cmd.cwd ? ` (cwd: ${cmd.cwd})` : ''}`)
 
   return new Promise((resolve) => {
     let portFound = false
@@ -134,11 +253,13 @@ export function startSidecar(): Promise<{
     }
 
     try {
-      sidecarProcess = spawn(binPath, [], {
+      sidecarProcess = spawn(cmd.command, cmd.args, {
         env: {
           ...process.env,
-          HAKUSAI_PORT: process.env.HAKUSAI_PORT || '8080',
+          ...cmd.env,
+          HAKUSAI_PORT: process.env.HAKUSAI_PORT || '48081',
         },
+        cwd: cmd.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } catch (e: any) {
@@ -157,11 +278,10 @@ export function startSidecar(): Promise<{
         detectedPort = Number(m[1])
         writeLog(`Detected port: ${detectedPort}`)
         // Now wait for /health to actually respond before resolving.
-        // Phase 1: timeout reduced from 30s → 15s, because /health now returns
-        // 200 within ~1s of the Python process starting (AI init is async).
-        // If we get to 15s without healthy/degraded/failed, something is
-        // genuinely wrong (e.g. Python crash, port conflict).
-        waitForHealth(detectedPort!, 15000).then((ok) => {
+        // In dev mode the Python source import can take 20-30s on first boot
+        // (heavy AI libs). Allow up to 60s for /health to reach a terminal
+        // state before treating the sidecar as failed.
+        waitForHealth(detectedPort!, 60000).then((ok) => {
           if (ok) {
             // Even if status=failed, we still resolve OK so the UI can load
             // and surface /api/diagnostics. lastError is preserved for
@@ -171,7 +291,7 @@ export function startSidecar(): Promise<{
             // True timeout — /health never reached a terminal state.
             lastError = lastError
               ? `Sidecar health check failed: ${lastError}`
-              : `Sidecar started on port ${detectedPort} but /health did not reach a terminal state within 15s. Check ${getLogPath()} for details.`
+              : `Sidecar started on port ${detectedPort} but /health did not reach a terminal state within 60s. Check ${getLogPath()} for details.`
             writeLog(lastError)
             finish(null, lastError)
           }

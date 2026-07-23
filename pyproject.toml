@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hakusai"
-version = "2.0.0"
+version = "0.1.0"
 description = "HakusAI - AI虚拟助手平台"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -96,6 +96,8 @@ memory = [
 live = [
     "blivedm>=0.3.0",
     "discord.py>=2.3.0",
+    "wechat-clawbot-sdk>=0.4.0",
+    "qrcode[pil]>=8.0",
 ]
 
 # 开发依赖

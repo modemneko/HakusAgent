@@ -29,7 +29,7 @@
   .dark {
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 5.5%;
+    --card: 240 8% 7%;
     --card-foreground: 0 0% 98%;
     --popover: 240 10% 5.5%;
     --popover-foreground: 0 0% 98%;
@@ -39,11 +39,11 @@
     --secondary-foreground: 0 0% 98%;
     --muted: 240 3.7% 12%;
     --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
+    --accent: 240 5% 14%;
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 50.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 14%;
+    --border: 240 4% 13%;
     --input: 240 3.7% 14%;
     --ring: 240 4.9% 83.9%;
   }
@@ -108,6 +108,8 @@
 /* Markdown rendering styles */
 .markdown-body {
   @apply text-sm leading-relaxed;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .markdown-body p {
   @apply my-2;
@@ -145,7 +147,11 @@
   @apply bg-muted px-1.5 py-0.5 rounded text-[0.85em] font-mono;
 }
 .markdown-body pre {
-  @apply bg-zinc-950 text-zinc-100 rounded-lg p-3 my-3 overflow-x-auto text-xs;
+  @apply bg-zinc-950/80 text-zinc-100 rounded-lg p-3 my-3 overflow-x-auto text-xs border border-violet-500/10;
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.03);
+}
+.markdown-body pre code {
+  @apply text-[0.85em];
 }
 .markdown-body table {
   @apply w-full border-collapse my-3;
@@ -197,4 +203,31 @@
 .hljs-template-variable,
 .hljs-deletion {
   color: #ffa657;
+}
+
+/* Refined animations */
+@keyframes slide-up-fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up-fade {
+  animation: slide-up-fade 0.3s ease-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.1) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Subtle ambient gradients for dark theme */
+.dark body {
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(139, 92, 246, 0.04) 0%, transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(217, 70, 239, 0.03) 0%, transparent 25%);
+  background-attachment: fixed;
 }

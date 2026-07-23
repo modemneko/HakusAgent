@@ -36,6 +36,7 @@ import type {
   PermissionMode,
   MemoryDetails,
   DiagnosticsInfo,
+  MetricsResponse,
   TtsVoicesResponse,
   ExportConfigResponse,
   SidecarVersionInfo,
@@ -53,6 +54,7 @@ import type {
   McpTestResult,
   McpServerToolsResponse,
   McpInvokeResult,
+  UploadedFile,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -84,12 +86,41 @@ export class SidecarOutdatedError extends Error {
 }
 
 export class HakusAIClient {
-  private baseUrl: string = 'http://localhost:8080'
-  private wsBaseUrl: string = 'ws://localhost:8080'
+  private baseUrl: string = 'http://127.0.0.1:48081'
+  private wsBaseUrl: string = 'ws://127.0.0.1:48081'
   private ws: WebSocket | null = null
   private timeout: number = 30000
 
-  constructor(baseUrl: string = 'http://localhost:8080', timeout = 30000) {
+  // ============ Phase 4: WebSocket 自动重连 + ping/pong ============
+  //
+  // 5h SWE 任务期间, 客户端网络可能短暂抖动 (Wi-Fi 切换 / 系统休眠唤醒 /
+  // 笔记本盖子合上)。没有自动重连的话, 用户回来一看 — WebSocket 已断 30 分钟,
+  // 任务卡死, 只能手动刷新。Phase 4 加上指数退避重连 + session resume。
+  //
+  // 重连策略:
+  //   - 最多 10 次 (WS_MAX_RECONNECT_ATTEMPTS)
+  //   - 第 1 次 1s, 第 2 次 2s, ... 第 5 次 16s, 之后封顶 30s (WS_MAX_RECONNECT_DELAY_MS)
+  //   - 用户主动调 wsDisconnect() 时, _wsManualClose = true, 不重连
+  //   - 重连成功后, 自动发 resume_session 恢复上次 session
+  //
+  // ping/pong:
+  //   - 服务端每 30s 主动发 {"type":"ping"}, 客户端收到后立刻回 {"type":"pong"}
+  //   - 客户端不再主动 ping (服务端有 cleanup_loop 兜底)
+  private _wsReconnectAttempts = 0
+  private _wsMaxReconnectAttempts = 10
+  private _wsBaseReconnectDelayMs = 1000
+  private _wsMaxReconnectDelayMs = 30000
+  private _wsManualClose = false
+  private _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // 当前活跃的 session_id — 重连后用这个发 resume_session
+  private _wsActiveSessionId: string | null = null
+  // 持有上次的 onMessage/onError/onClose 回调, 重连后重新绑定
+  private _wsOnMessage: ((msg: WSIncomingMessage) => void) | null = null
+  private _wsOnError: ((e: Event) => void) | null = null
+  private _wsOnClose: ((e: CloseEvent) => void) | null = null
+  private _wsOnReconnect: ((attempt: number, sessionId: string | null) => void) | null = null
+
+  constructor(baseUrl: string = 'http://127.0.0.1:48081', timeout = 30000) {
     this.setBaseUrl(baseUrl)
     this.timeout = timeout
   }
@@ -636,6 +667,24 @@ export class HakusAIClient {
     return res.json()
   }
 
+  // ============ Phase 5: Metrics ============
+
+  /**
+   * 拉取服务端 metrics 快照。失败时返回 null (调用方可显示占位 UI)。
+   *
+   * 用于 AdvancedPanel 显示 uptime / turns / errors / checkpoints /
+   * active websockets / llm_calls 等指标。
+   */
+  async getMetrics(): Promise<MetricsResponse | null> {
+    try {
+      const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/metrics`, {}, 5000)
+      if (!res.ok) return null
+      return await res.json() as MetricsResponse
+    } catch {
+      return null
+    }
+  }
+
   // ============ TTS ============
 
   async textToSpeech(text: string, voice?: string, speed?: number): Promise<Blob> {
@@ -652,6 +701,41 @@ export class HakusAIClient {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tts/voices`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get TTS voices failed: ${res.status}`)
     return res.json()
+  }
+
+  // ============ 文件上传 ============
+
+  /**
+   * 上传文件到 /api/upload (multipart/form-data)。
+   * 返回每个文件的元信息 (file_id / filename / size / content_type / is_text)，
+   * 文本文件还会带 text_preview。
+   *
+   * 注意: FormData 由浏览器自动设置 Content-Type + boundary, 这里不能手动设置。
+   */
+  async uploadFiles(files: File[]): Promise<UploadedFile[]> {
+    if (files.length === 0) return []
+    const formData = new FormData()
+    files.forEach((f) => formData.append('files', f))
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/upload`,
+      { method: 'POST', body: formData },
+      60000, // generous — large file uploads can take a while
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/upload`, 'Upload failed')
+    }
+    const data = await res.json()
+    return data.files as UploadedFile[]
+  }
+
+  /** 列出已上传的文件 (GET /api/files)。供 @ 提及菜单使用。 */
+  async listFiles(): Promise<UploadedFile[]> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/files`, {}, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/files`, 'List files failed')
+    }
+    const data = await res.json()
+    return data.files as UploadedFile[]
   }
 
   // ============ Non-streaming chat ============
@@ -759,7 +843,7 @@ export class HakusAIClient {
   private eventToChunk(event: AgentEvent): ChatStreamChunk {
     switch (event.event_type) {
       case 'text_delta':
-        return { content: event.text, done: false }
+        return { content: (event as any).text || (event as any).content, done: false }
       case 'turn_completed':
         return { content: event.content, done: true }
       case 'turn_failed':
@@ -777,49 +861,184 @@ export class HakusAIClient {
   }
 
   // ============ WebSocket chat (full-duplex, supports interrupt) ============
+  //
+  // Phase 4: 增强版 — 自动重连 + 响应服务端 ping + resume session
 
+  /**
+   * 连接 WebSocket, 带自动重连。
+   *
+   * 调用方传的 onMessage/onError/onClose 会被客户端持有, 重连时重新绑定到
+   * 新的 WebSocket 实例上 — 调用方无需感知重连。
+   *
+   * 可选 onReconnect: 每次重连成功后调一次, 通知调用方 "刚才断过线, 已恢复"
+   * (调用方可以用来刷新 UI 状态 / 显示 toast)。
+   */
   wsConnect(
     onMessage: (msg: WSIncomingMessage) => void,
     onError?: (e: Event) => void,
     onClose?: (e: CloseEvent) => void,
+    onReconnect?: (attempt: number, sessionId: string | null) => void,
   ): void {
+    // 持有回调供重连时重新绑定
+    this._wsOnMessage = onMessage
+    this._wsOnError = onError ?? null
+    this._wsOnClose = onClose ?? null
+    this._wsOnReconnect = onReconnect ?? null
+    this._wsManualClose = false
+    this._wsReconnectAttempts = 0
+    this._wsConnectInternal()
+  }
+
+  /**
+   * 内部: 创建一个 WebSocket 实例并绑定事件处理器。
+   * 不直接调, 走 wsConnect 或 _scheduleReconnect。
+   */
+  private _wsConnectInternal(): void {
     if (this.ws && this.ws.readyState <= 1) {
+      this.ws.onclose = null  // 防止触发旧 ws 的 onclose 重连
       this.ws.close()
     }
     this.ws = new WebSocket(`${this.wsBaseUrl}/ws/chat`)
+
+    this.ws.onopen = () => {
+      // 重连成功 (attempts > 0 说明不是首次连接)
+      const wasReconnect = this._wsReconnectAttempts > 0
+      this._wsReconnectAttempts = 0
+      if (wasReconnect && this._wsActiveSessionId) {
+        // Phase 4: 重连后发 resume_session, 让服务端确认 session 仍可恢复
+        try {
+          this.ws!.send(JSON.stringify({
+            type: 'resume_session',
+            session_id: this._wsActiveSessionId,
+          }))
+        } catch (err) {
+          console.warn('[WS] resume_session send failed:', err)
+        }
+        this._wsOnReconnect?.(0, this._wsActiveSessionId)
+      } else if (wasReconnect) {
+        this._wsOnReconnect?.(0, null)
+      }
+    }
+
     this.ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data) as WSIncomingMessage
-        onMessage(data)
+        // Phase 4: 服务端主动 ping → 客户端立刻回 pong
+        if (data.type === 'ping') {
+          try {
+            this.ws?.send(JSON.stringify({ type: 'pong' }))
+          } catch (err) {
+            // 连接可能已关闭, 忽略
+          }
+          // ping 也是个 "连接还活着" 的信号, 不再继续走 onMessage
+          // (但仍然交给 onMessage, 让调用方可以记录 RTT)
+        }
+        this._wsOnMessage?.(data)
       } catch (err) {
         console.error('Failed to parse WS message:', err)
       }
     }
-    this.ws.onerror = (e) => onError?.(e)
-    this.ws.onclose = (e) => onClose?.(e)
+
+    this.ws.onerror = (e) => {
+      this._wsOnError?.(e)
+    }
+
+    this.ws.onclose = (e) => {
+      this._wsOnClose?.(e)
+      // 手动 close 不重连
+      if (this._wsManualClose) return
+      this._scheduleReconnect()
+    }
+  }
+
+  /**
+   * 指数退避重连。第 N 次重连延迟 = min(baseDelay * 2^(N-1), maxDelay)。
+   * 第 1 次 1s, 2 次 2s, 3 次 4s, 4 次 8s, 5 次 16s, 6+ 次 30s。
+   */
+  private _scheduleReconnect(): void {
+    if (this._wsReconnectAttempts >= this._wsMaxReconnectAttempts) {
+      console.error(
+        `[WS] Max reconnect attempts (${this._wsMaxReconnectAttempts}) reached, giving up. ` +
+        `Call wsConnect() again to retry.`
+      )
+      return
+    }
+    this._wsReconnectAttempts += 1
+    const attempt = this._wsReconnectAttempts
+    const delay = Math.min(
+      this._wsBaseReconnectDelayMs * Math.pow(2, attempt - 1),
+      this._wsMaxReconnectDelayMs,
+    )
+    console.warn(
+      `[WS] scheduling reconnect attempt ${attempt}/${this._wsMaxReconnectAttempts} in ${delay}ms`
+    )
+    if (this._wsReconnectTimer) clearTimeout(this._wsReconnectTimer)
+    this._wsReconnectTimer = setTimeout(() => {
+      this._wsReconnectTimer = null
+      this._wsConnectInternal()
+    }, delay)
+  }
+
+  /**
+   * 立即取消任何待重连 (用于 wsDisconnect / setBaseUrl)。
+   */
+  private _wsCancelReconnect(): void {
+    if (this._wsReconnectTimer) {
+      clearTimeout(this._wsReconnectTimer)
+      this._wsReconnectTimer = null
+    }
+    this._wsReconnectAttempts = 0
   }
 
   wsSend(msg: WSOutgoingMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg))
+      // 记录当前 session_id 供重连后 resume
+      if (msg.type === 'message' && msg.session_id) {
+        this._wsActiveSessionId = msg.session_id
+      }
     } else {
       throw new HakusAIError('WebSocket is not connected')
     }
   }
 
-  wsInterrupt(): void {
-    this.wsSend({ type: 'interrupt' })
+  wsInterrupt(sessionId?: string): void {
+    // 记录 session_id 供重连后 resume
+    if (sessionId) this._wsActiveSessionId = sessionId
+    this.wsSend({ type: 'interrupt', session_id: sessionId })
   }
 
+  /**
+   * 主动断开, 不再重连。如需重连, 调用方需重新调 wsConnect()。
+   */
   wsDisconnect(): void {
+    this._wsManualClose = true
+    this._wsCancelReconnect()
     if (this.ws) {
-      this.ws.close()
+      this.ws.onclose = null  // 防止触发自动重连
+      try { this.ws.close() } catch {}
       this.ws = null
     }
   }
 
   get wsConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  /**
+   * 当前重连尝试次数 (0 = 已连接或未连接过)。
+   * 调用方可以用来在 UI 上显示 "重连中 (3/10)"。
+   */
+  get wsReconnectAttempts(): number {
+    return this._wsReconnectAttempts
+  }
+
+  /**
+   * 设置当前活跃 session_id — 重连后会自动 resume 这个 session。
+   * ChatView 应在切换 session 时调这个。
+   */
+  wsSetActiveSession(sessionId: string | null): void {
+    this._wsActiveSessionId = sessionId
   }
 
   // ============ Session persistence (SQLite) ============
@@ -942,6 +1161,40 @@ export class HakusAIClient {
   async wipeAllSessions(): Promise<{ deleted_sessions: number }> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions`, 'Wipe sessions failed')
+    return res.json()
+  }
+
+  // ---- 微信 ClawBot ----
+  async getWeChatStatus(): Promise<any> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/status`, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, 'wechat/status', 'Get wechat status failed')
+    return res.json()
+  }
+
+  async weChatLogin(): Promise<{ status: string; qrcode_base64?: string }> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, 30000)
+    if (!res.ok) await this._throwForResponse(res, 'wechat/login', 'WeChat login failed')
+    return res.json()
+  }
+
+  async weChatDisconnect(): Promise<void> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/disconnect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, 'wechat/disconnect', 'WeChat disconnect failed')
+  }
+
+  async weChatSend(userId: string, text: string): Promise<{ success: boolean }> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, text }),
+    }, 15000)
+    if (!res.ok) await this._throwForResponse(res, 'wechat/send', 'WeChat send failed')
     return res.json()
   }
 }

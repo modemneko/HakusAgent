@@ -41,6 +41,7 @@ try:
         QwenAdapter,
         GLMAdapter,
         OllamaAdapter,
+        OpenCodeAdapter,
     )
 except ImportError as e:
     import logging
@@ -65,4 +66,5 @@ __all__ = [
     "QwenAdapter",
     "GLMAdapter",
     "OllamaAdapter",
+    "OpenCodeAdapter",
 ]

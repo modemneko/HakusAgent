@@ -1,7 +1,8 @@
 import { app, BrowserWindow, shell, ipcMain, globalShortcut } from 'electron'
 import { join } from 'path'
 import Store from 'electron-store'
-import { startSidecar, stopSidecar, isSidecarAvailable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
+import { startSidecar, stopSidecar, isSidecarLaunchable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
+import { startGateway, stopGateway, setTargetBaseUrl } from './gateway'
 import { syncTray, destroyTray, isTrayActive, setWindowCallbacks } from './tray'
 import {
   registerToggleShortcut,
@@ -45,7 +46,7 @@ const DEFAULT_TOGGLE_SHORTCUT = defaultAccelerator()
 const store = new Store<PersistedSettings>({
   defaults: {
     windowBounds: { width: 1280, height: 800 },
-    serverUrl: 'http://localhost:8080',
+    serverUrl: 'http://127.0.0.1:48081',
     useWebSocket: false,
     timeout: 30000,
     theme: 'dark',
@@ -155,24 +156,45 @@ ipcMain.handle('store:getAll', () => {
 })
 
 app.whenReady().then(async () => {
-  // If a bundled sidecar exists, start it and update the default server URL
-  if (isSidecarAvailable()) {
-    console.log('[main] Bundled sidecar detected — starting...')
+  let gatewayUrl = 'http://127.0.0.1:23980'
+
+  // If a sidecar is available (bundled binary or Python source in dev), start
+  // it and then start the Node gateway. The renderer always talks to the fixed
+  // gateway port; the gateway proxies to the actual (possibly ephemeral) sidecar port.
+  if (isSidecarLaunchable()) {
+    console.log('[main] Sidecar launchable — starting...')
     const result = await startSidecar()
     if (result.port) {
       const sidecarUrl = `http://127.0.0.1:${result.port}`
       console.log(`[main] Sidecar URL: ${sidecarUrl}`)
-      // Only set as default if user hasn't customized
-      const current = store.get('serverUrl', sidecarUrl)
-      if (!current || current === 'http://localhost:8080') {
-        store.set('serverUrl', sidecarUrl)
+      setTargetBaseUrl(sidecarUrl)
+      try {
+        const gw = await startGateway()
+        gatewayUrl = gw.url
+        console.log(`[main] Gateway URL: ${gatewayUrl}`)
+      } catch (e: any) {
+        console.error('[main] Failed to start gateway:', e?.message || e)
+      }
+      // Point the renderer at the gateway unless the user already customized it.
+      const current = store.get('serverUrl', gatewayUrl)
+      if (!current || current.includes('://localhost:') || current.startsWith('http://127.0.0.1:')) {
+        store.set('serverUrl', gatewayUrl)
       }
     } else {
       console.error(`[main] Sidecar failed to start: ${result.error}`)
       console.error(`[main] Sidecar log: ${result.logPath}`)
     }
   } else {
-    console.warn('[main] No bundled sidecar detected — using external server URL')
+    console.warn('[main] No sidecar launchable — using external server URL')
+    // Still start the gateway so an external sidecar can be swapped in later
+    // via settings without changing the renderer's base URL.
+    try {
+      const gw = await startGateway()
+      gatewayUrl = gw.url
+      console.log(`[main] Gateway URL: ${gatewayUrl}`)
+    } catch (e: any) {
+      console.error('[main] Failed to start gateway:', e?.message || e)
+    }
   }
   createWindow()
 
@@ -319,10 +341,11 @@ ipcMain.handle('shortcuts:validate', (_event, accelerator: string) => {
   return { valid: isValidAcceleratorSyntax(accelerator) }
 })
 
-// Stop sidecar + tear down tray + unregister shortcuts on quit
+// Stop sidecar + gateway + tear down tray + unregister shortcuts on quit
 app.on('before-quit', () => {
   // Signal the close handler that this is a real quit, not a hide-to-tray.
   app.quitting = true
+  stopGateway()
   stopSidecar()
   destroyTray()
   unregisterAllShortcuts()

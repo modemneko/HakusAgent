@@ -223,6 +223,10 @@ export class WebSocketTransport implements IpcTransport {
           try {
             const data = JSON.parse(e.data)
             const type = data?.type || data?.event_type || 'message'
+            // Phase 4: 响应服务端主动 ping, 防止被 cleanup_loop 收尸
+            if (type === 'ping') {
+              try { this.ws?.send(JSON.stringify({ type: 'pong' })) } catch {}
+            }
             // 路由到所有订阅了该 topic 的 handler
             const handlers = this.subscribers.get(type)
             if (handlers) {

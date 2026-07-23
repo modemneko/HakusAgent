@@ -16,26 +16,7 @@ from .base import (
     register_asr,
 )
 
-# 导入并注册所有ASR引擎
-# 这些导入会自动注册引擎到注册表
 
-try:
-    from .sherpa_onnx import SherpaONNXASR
-except ImportError as e:
-    import logging
-    logging.getLogger(__name__).debug(f"Sherpa-ONNX ASR not available: {e}")
-
-try:
-    from .whisper import WhisperASR
-except ImportError as e:
-    import logging
-    logging.getLogger(__name__).debug(f"Whisper ASR not available: {e}")
-
-try:
-    from .funasr import FunASR
-except ImportError as e:
-    import logging
-    logging.getLogger(__name__).debug(f"FunASR not available: {e}")
 
 
 __all__ = [

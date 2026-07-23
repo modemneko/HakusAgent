@@ -79,7 +79,7 @@ export function ConnectionPanel() {
           id="server-url"
           value={serverUrl}
           onChange={(e) => setServerUrl(e.target.value)}
-          placeholder="http://localhost:8080"
+          placeholder="http://127.0.0.1:48081"
           className="font-mono"
         />
         <p className="text-[11px] text-muted-foreground">

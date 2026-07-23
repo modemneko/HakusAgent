@@ -83,7 +83,14 @@
         "from": "sidecar",
         "to": "sidecar",
         "filter": [
-          "**/*"
+          "!build",
+          "!build/**/*",
+          "!__pycache__",
+          "!__pycache__/**/*",
+          "!*.pyc",
+          "dist/**/*",
+          "hakusai_server.spec",
+          "hakusai_server_entry.py"
         ]
       },
       {

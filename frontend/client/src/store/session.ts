@@ -32,12 +32,23 @@ interface SessionStore {
   activeSessionId: string | null
   messages: Record<string, ChatMessage[]>
   isStreaming: boolean
+  /** AbortController for the in-flight SSE stream. Stored in the store so
+   *  clearMessages() can abort it — otherwise isStreaming gets stuck true
+   *  and the user can't send any new messages in any session. */
+  streamingAbort: AbortController | null
   /** True until the first successful loadFromServer(). UI shows skeleton. */
   loaded: boolean
   /** Set if the last loadFromServer() failed. UI can show retry. */
   loadError: Error | null
   /** Sessions whose messages have been fetched from server. */
   hydratedSessionIds: Set<string>
+  /**
+   * Pending tool_call_started events keyed by `${sessionId}:${messageId}:${callId}`.
+   * They are not rendered until the matching tool_call_finished arrives, so
+   * the user never sees a stack of empty/blank cards while the agent is
+   * still streaming. See cacheStartedToolCall / applyFinishedToolCall.
+   */
+  pendingStartedToolCalls: Map<string, ToolCall>
 
   // Session CRUD
   createSession: (title?: string) => Promise<string>
@@ -53,8 +64,24 @@ interface SessionStore {
   updateMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void
   appendTextToMessage: (sessionId: string, messageId: string, text: string) => void
   appendReasoningToMessage: (sessionId: string, messageId: string, text: string) => void
-  addToolCall: (sessionId: string, messageId: string, toolCall: ToolCall) => void
-  finishToolCall: (sessionId: string, messageId: string, callId: string, result: string, success: boolean, duration: number) => void
+  /**
+   * Cache a tool_call_started event. The card is NOT rendered yet — we wait
+   * for the matching tool_call_finished (which has full arguments) so the
+   * user never sees a row of empty/blank cards. See applyFinishedToolCall.
+   */
+  cacheStartedToolCall: (sessionId: string, messageId: string, toolCall: ToolCall) => void
+  /**
+   * Materialize a finished tool call into the message's tool_calls list.
+   * If a matching started event was cached, we use its started_at; otherwise
+   * synthesize one from the call_id so the order is stable.
+   */
+  applyFinishedToolCall: (sessionId: string, messageId: string, callId: string, result: string, success: boolean, duration: number, name: string, args: Record<string, any>) => void
+  /**
+   * Drop any pending tool_call_started events for this message. Called when
+   * a stream ends (success / fail / abort) so a future stream for the same
+   * messageId doesn't try to pair against stale entries.
+   */
+  clearPendingToolCalls: (sessionId: string, messageId: string) => void
   clearMessages: (sessionId: string) => void
   /** Write the current in-memory message to the server (used at stream end). */
   persistMessage: (sessionId: string, messageId: string) => Promise<void>
@@ -62,7 +89,7 @@ interface SessionStore {
   persistNewMessage: (sessionId: string, messageId: string) => Promise<void>
 
   // Streaming state
-  setStreaming: (streaming: boolean) => void
+  setStreaming: (streaming: boolean, abort?: AbortController | null) => void
 
   // Server sync
   loadFromServer: () => Promise<void>
@@ -88,9 +115,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   activeSessionId: null,
   messages: {},
   isStreaming: false,
+  streamingAbort: null,
   loaded: false,
   loadError: null,
   hydratedSessionIds: new Set<string>(),
+  pendingStartedToolCalls: new Map(),
 
   // ===========================================================================
   // Session CRUD
@@ -250,18 +279,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   appendTextToMessage: (sessionId, messageId, text) => {
+    if (!text) return
     const list = get().messages[sessionId] || []
     set({
       messages: {
         ...get().messages,
         [sessionId]: list.map((m) =>
-          m.id === messageId ? { ...m, content: m.content + text, updated_at: Date.now() } : m,
+          m.id === messageId ? { ...m, content: (m.content || '') + text, updated_at: Date.now() } : m,
         ),
       },
     })
   },
 
   appendReasoningToMessage: (sessionId, messageId, text) => {
+    if (!text) return
     const list = get().messages[sessionId] || []
     set({
       messages: {
@@ -275,9 +306,40 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
-  addToolCall: (sessionId, messageId, toolCall) => {
+  cacheStartedToolCall: (sessionId, messageId, toolCall) => {
+    // Don't render yet — stash so we can pair it with the matching finished
+    // event and present one card with both started_at and full arguments.
+    const pending = new Map(get().pendingStartedToolCalls)
+    pending.set(`${sessionId}:${messageId}:${toolCall.call_id}`, toolCall)
+    set({ pendingStartedToolCalls: pending })
+  },
+
+  applyFinishedToolCall: (sessionId, messageId, callId, result, success, duration, name, args) => {
+    // Recover the started_at from the pending cache so order is stable.
+    const key = `${sessionId}:${messageId}:${callId}`
+    const pending = new Map(get().pendingStartedToolCalls)
+    const cached = pending.get(key)
+    pending.delete(key)
+
+    // If the tool_call_started was somehow never sent (e.g. dropped event),
+    // use the finished event's arguments — still render a card.
+    const toolCall: ToolCall = {
+      call_id: callId,
+      name: name || cached?.name || 'tool',
+      arguments: args ?? cached?.arguments ?? {},
+      result,
+      success,
+      duration,
+      started_at: cached?.started_at ?? Date.now(),
+      finished_at: Date.now(),
+    }
+    if (!success) {
+      toolCall.finished_at = Date.now()
+    }
+
     const list = get().messages[sessionId] || []
     set({
+      pendingStartedToolCalls: pending,
       messages: {
         ...get().messages,
         [sessionId]: list.map((m) =>
@@ -289,31 +351,33 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
-  finishToolCall: (sessionId, messageId, callId, result, success, duration) => {
-    const list = get().messages[sessionId] || []
-    set({
-      messages: {
-        ...get().messages,
-        [sessionId]: list.map((m) =>
-          m.id === messageId
-            ? {
-                ...m,
-                tool_calls: m.tool_calls.map((tc) =>
-                  tc.call_id === callId
-                    ? { ...tc, result, success, duration, finished_at: Date.now() }
-                    : tc,
-                ),
-                updated_at: Date.now(),
-              }
-            : m,
-        ),
-      },
-    })
+  clearPendingToolCalls: (sessionId, messageId) => {
+    const pending = new Map(get().pendingStartedToolCalls)
+    let changed = false
+    for (const key of Array.from(pending.keys())) {
+      if (key.startsWith(`${sessionId}:${messageId}:`)) {
+        pending.delete(key)
+        changed = true
+      }
+    }
+    if (changed) {
+      set({ pendingStartedToolCalls: pending })
+    }
   },
 
   clearMessages: (sessionId) => {
+    // Abort any in-flight SSE stream before clearing. Without this, the
+    // stream's finally-block in ChatView never runs (the SSE connection
+    // hangs after the server-side session context is wiped), leaving
+    // isStreaming stuck at true — which blocks sending in ALL sessions.
+    const abort = get().streamingAbort
+    if (abort) {
+      abort.abort()
+    }
     set({
       messages: { ...get().messages, [sessionId]: [] },
+      isStreaming: false,
+      streamingAbort: null,
     })
     // Fire-and-forget server-side clear. If it fails the in-memory state is
     // already correct for the current session; next app boot will re-load
@@ -370,7 +434,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  setStreaming: (streaming) => set({ isStreaming: streaming }),
+  setStreaming: (streaming, abort) => {
+    if (streaming && abort) {
+      set({ isStreaming: true, streamingAbort: abort })
+    } else if (!streaming) {
+      set({ isStreaming: false, streamingAbort: null })
+    } else {
+      set({ isStreaming: streaming })
+    }
+  },
 
   // ===========================================================================
   // Server sync

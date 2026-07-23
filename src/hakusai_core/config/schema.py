@@ -26,6 +26,7 @@ class ModelProvider(str, Enum):
     QWEN = "qwen"
     GLM = "glm"
     OLLAMA = "ollama"
+    OPENCODE = "opencode"
 
 
 class ASRProvider(str, Enum):
@@ -231,7 +232,7 @@ class HakusAIConfig(BaseModel):
     
     这是配置文件的根模式，包含所有子配置
     """
-    version: str = Field(default="2.0.0", description="配置版本")
+    version: str = Field(default="0.1.0", description="配置版本")
     
     # 服务器配置
     server: ServerConfig = Field(default_factory=ServerConfig, description="服务器配置")

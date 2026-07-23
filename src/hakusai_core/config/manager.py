@@ -93,6 +93,52 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"Error in config change callback: {e}")
     
+    def _sync_models_to_model(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        同步 UI 保存的 models.* 配置到顶层 model.*。
+
+        桌面端把 provider 配置保存在 ~/.hakus/config.yaml 的 `models` 节点下：
+            models:
+              default_model: opencode
+              opencode:
+                model_name: deepseek-v4-flash-free
+                base_url: https://api.opencode.ai/v1
+            api_keys:
+              opencode_api_key: sk-xxx
+
+        但后端初始化时读取的是 schema.ModelConfig（model.provider / model.api_key / ...），
+        两者没有自动打通，导致 UI 设置了 OpenCode 后端仍用默认 deepseek 启动。
+        这里根据 models.default_model 把对应 provider 的配置同步到顶层 model.*。
+        """
+        import os
+
+        models_cfg = config_dict.get("models") or {}
+        default_provider = models_cfg.get("default_model")
+        if not default_provider:
+            return config_dict
+
+        # 如果用户通过环境变量明确指定了 provider，尊重环境变量。
+        if os.getenv("HAKUSAI_MODEL_PROVIDER"):
+            return config_dict
+
+        provider_cfg = models_cfg.get(default_provider) or {}
+        api_keys = config_dict.get("api_keys") or {}
+        key_name = f"{default_provider}_api_key"
+
+        model_cfg = config_dict.setdefault("model", {})
+        model_cfg["provider"] = default_provider
+        if provider_cfg.get("model_name"):
+            model_cfg["model_name"] = provider_cfg["model_name"]
+        if provider_cfg.get("base_url"):
+            model_cfg["base_url"] = provider_cfg["base_url"]
+        if api_keys.get(key_name):
+            model_cfg["api_key"] = api_keys[key_name]
+
+        logger.info(
+            f"Synced default provider '{default_provider}' from models.* to model.*"
+        )
+        return config_dict
+
     def _apply_env_overrides(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         应用环境变量覆盖
@@ -162,7 +208,16 @@ class ConfigManager:
             if not self._config_path.exists():
                 logger.info(f"Config file not found, creating default: {config_path}")
                 self._config_path.parent.mkdir(parents=True, exist_ok=True)
-                await self.save()
+                # 直接写入默认配置（不能调 self.save()，会再次获取 _lock 死锁）
+                try:
+                    # model_dump(mode='json') 确保枚举等类型转成纯 JSON 兼容值
+                    # 避免 yaml.dump 产生 !!python/object tag
+                    config_dict = self._config.model_dump(mode='json')
+                    with open(self._config_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True, Dumper=yaml.SafeDumper)
+                    logger.info(f"Default config saved to: {config_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save default config: {e}")
                 return self._config
             
             # 读取配置文件
@@ -170,6 +225,9 @@ class ConfigManager:
                 with open(self._config_path, 'r', encoding='utf-8') as f:
                     config_dict = yaml.safe_load(f) or {}
                 
+                # 把 UI 保存的 models.* 同步到顶层 model.*
+                config_dict = self._sync_models_to_model(config_dict)
+
                 # 应用环境变量覆盖
                 config_dict = self._apply_env_overrides(config_dict)
                 
@@ -199,7 +257,7 @@ class ConfigManager:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             
             # 转换为字典并保存
-            config_dict = self._config.model_dump()
+            config_dict = self._config.model_dump(mode='json')
             
             with open(save_path, 'w', encoding='utf-8') as f:
                 yaml.dump(
@@ -208,6 +266,7 @@ class ConfigManager:
                     allow_unicode=True, 
                     sort_keys=False,
                     default_flow_style=False,
+                    Dumper=yaml.SafeDumper,
                     width=80
                 )
             
@@ -224,6 +283,9 @@ class ConfigManager:
             try:
                 with open(self._config_path, 'r', encoding='utf-8') as f:
                     config_dict = yaml.safe_load(f) or {}
+
+                # 把 UI 保存的 models.* 同步到顶层 model.*
+                config_dict = self._sync_models_to_model(config_dict)
                 
                 # 应用环境变量覆盖
                 config_dict = self._apply_env_overrides(config_dict)

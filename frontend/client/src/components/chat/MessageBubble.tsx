@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight'
 import type { ChatMessage } from '@/api/types'
 import { cn, copyToClipboard, formatTime } from '@/lib/utils'
 import { ToolCallCard } from './ToolCallCard'
+import { CodeBlock } from './CodeBlock'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/store/settings'
 
@@ -42,7 +43,7 @@ export const MessageBubble = memo(function MessageBubble({
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
           isUser
             ? 'bg-blue-500/15 text-blue-500'
-            : 'bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-sm',
+            : 'bg-gradient-to-br from-violet-600 via-purple-500 to-fuchsia-500 text-white shadow-sm',
         )}
       >
         {isUser ? <User className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
@@ -75,9 +76,9 @@ export const MessageBubble = memo(function MessageBubble({
             className={cn(
               'selectable rounded-2xl px-4 py-2.5 shadow-sm',
               isUser
-                ? 'bg-blue-500 text-white'
-                : 'bg-card text-card-foreground border border-border/60',
-              message.streaming && 'border-violet-500/40',
+                ? 'bg-gradient-to-br from-blue-600 to-blue-500 text-white'
+                : 'bg-card text-card-foreground border border-border/60 shadow-[0_0_15px_rgba(139,92,246,0.05)]',
+              message.streaming && 'border-violet-500/40 shadow-[0_0_20px_rgba(139,92,246,0.1)]',
             )}
             style={{ fontSize: `${fontSize}px` }}
           >
@@ -86,6 +87,7 @@ export const MessageBubble = memo(function MessageBubble({
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+                  components={{ pre: CodeBlock }}
                 >
                   {message.content}
                 </ReactMarkdown>

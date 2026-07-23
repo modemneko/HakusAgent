@@ -9,7 +9,7 @@ HakusAI是一个AI虚拟助手平台，提供：
 - 工具调用（MCP）
 """
 
-__version__ = "2.0.0"
+__version__ = "0.1.0"
 
 # 配置
 from .config import config_manager, HakusAIConfig

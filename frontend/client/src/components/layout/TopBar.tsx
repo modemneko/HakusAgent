@@ -87,7 +87,7 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
   }
 
   return (
-    <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-background/80 px-3 backdrop-blur">
+    <header className="flex h-11 shrink-0 items-center justify-between border-b border-border/40 bg-background/80 px-3 backdrop-blur">
       <div className="flex items-center gap-2">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -121,7 +121,7 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/60 px-2.5 text-xs font-medium transition-all duration-200 hover:border-violet-500/50 hover:bg-accent/50"
+              className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/60 px-2.5 text-xs font-medium transition-all duration-200 hover:border-violet-500/50 hover:bg-gradient-to-r hover:from-violet-500/10 hover:to-fuchsia-500/10"
               disabled={switching || providersLoading}
               aria-label="切换默认模型"
             >

@@ -19,8 +19,9 @@ export function ChatView() {
   const updateMessage = useSessionStore((s) => s.updateMessage)
   const appendTextToMessage = useSessionStore((s) => s.appendTextToMessage)
   const appendReasoningToMessage = useSessionStore((s) => s.appendReasoningToMessage)
-  const addToolCall = useSessionStore((s) => s.addToolCall)
-  const finishToolCall = useSessionStore((s) => s.finishToolCall)
+  const cacheStartedToolCall = useSessionStore((s) => s.cacheStartedToolCall)
+  const applyFinishedToolCall = useSessionStore((s) => s.applyFinishedToolCall)
+  const clearPendingToolCalls = useSessionStore((s) => s.clearPendingToolCalls)
   const renameSession = useSessionStore((s) => s.renameSession)
   const isStreaming = useSessionStore((s) => s.isStreaming)
   const setStreaming = useSessionStore((s) => s.setStreaming)
@@ -82,7 +83,7 @@ export function ChatView() {
       // 4. Start SSE stream
       const ctrl = new AbortController()
       setAbortCtrl(ctrl)
-      setStreaming(true)
+      setStreaming(true, ctrl)
 
       try {
         // Pass the current default provider (from settings store) so the
@@ -139,8 +140,9 @@ export function ChatView() {
         setStreaming(false)
         setAbortCtrl(null)
       }
+
     },
-    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming, persistNewMessage, persistMessage, settings.defaultModel],
+    [activeId, addMessage, appendTextToMessage, updateMessage, renameSession, setStreaming, persistNewMessage, persistMessage, settings.defaultModel, clearPendingToolCalls],
   )
 
   // Handle typed AgentEvent from the protocol layer
@@ -151,30 +153,44 @@ export function ChatView() {
   ) => {
     switch (event.event_type) {
       case 'text_delta':
-        appendTextToMessage(sessionId, messageId, event.text)
+        appendTextToMessage(sessionId, messageId, (event as any).text || (event as any).content)
         break
       case 'reasoning_delta':
-        appendReasoningToMessage(sessionId, messageId, event.text)
+        appendReasoningToMessage(sessionId, messageId, (event as any).text || (event as any).content)
         break
       case 'tool_call_started': {
+        // Don't render the card yet — the started event often has empty
+        // arguments (they arrive with the finished event). Stash so we can
+        // pair it with the finished event and present one card per tool call.
+        // The name/arguments live in a nested `tool_call` object on the
+        // server-side event (see agent_bridge.py).
+        const tc = (event as any).tool_call || event
         const toolCall: ToolCall = {
-          call_id: event.call_id || generateId('tc_'),
-          name: event.name,
-          arguments: event.arguments,
+          call_id: tc.call_id || event.call_id || generateId('tc_'),
+          name: tc.name || event.name || '',
+          arguments: tc.arguments || event.arguments || {},
           started_at: Date.now(),
         }
-        addToolCall(sessionId, messageId, toolCall)
+        cacheStartedToolCall(sessionId, messageId, toolCall)
         break
       }
       case 'tool_call_finished':
-        finishToolCall(
-          sessionId,
-          messageId,
-          event.call_id,
-          event.result,
-          event.success,
-          event.duration,
-        )
+        // Materialize: the tool card only appears when the call is fully done,
+        // with complete arguments and result, so the user never sees a stack
+        // of empty placeholder cards.
+        {
+          const tc = (event as any).tool_call || event
+          applyFinishedToolCall(
+            sessionId,
+            messageId,
+            tc.call_id || event.call_id,
+            event.result || '',
+            event.success !== false,
+            event.duration || 0,
+            tc.name || event.name,
+            tc.arguments || event.arguments || {},
+          )
+        }
         break
       case 'token_usage':
         updateMessage(sessionId, messageId, {
@@ -199,7 +215,7 @@ export function ChatView() {
       case 'cancelled':
         updateMessage(sessionId, messageId, {
           streaming: false,
-          content: event.partial_content,
+          content: event.partial_content || '',
         })
         break
       case 'orchestrator_phase_changed':
@@ -250,7 +266,7 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-background">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
       {/* Connection warning */}
       {connState === 'error' && (
         <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-xs text-destructive">
@@ -265,7 +281,7 @@ export function ChatView() {
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {activeMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow">

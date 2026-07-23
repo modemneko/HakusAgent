@@ -40,7 +40,7 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
     return {
       connection: {
         ...DEFAULT_SETTINGS.connection,
-        serverUrl: all?.serverUrl || DEFAULT_SETTINGS.connection.serverUrl,
+        serverUrl: migrateUrl(all?.serverUrl || DEFAULT_SETTINGS.connection.serverUrl),
         useWebSocket: all?.useWebSocket ?? DEFAULT_SETTINGS.connection.useWebSocket,
         timeout: all?.timeout ?? DEFAULT_SETTINGS.connection.timeout,
       },
@@ -62,12 +62,23 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
   const raw = localStorage.getItem('hakusai-settings')
   if (raw) {
     try {
-      return JSON.parse(raw)
+      const parsed = JSON.parse(raw)
+      // Migrate old localhost URLs to 127.0.0.1 (IPv6 resolution causes ERR_EMPTY_RESPONSE)
+      if (parsed?.connection?.serverUrl) {
+        parsed.connection.serverUrl = migrateUrl(parsed.connection.serverUrl)
+      }
+      return parsed
     } catch {
       /* ignore */
     }
   }
   return {}
+}
+
+/** Replace localhost with 127.0.0.1 to avoid IPv6 resolution issues. */
+function migrateUrl(url: string): string {
+  if (!url) return url
+  return url.replace('://localhost:', '://127.0.0.1:').replace('://localhost/', '://127.0.0.1/')
 }
 
 async function saveSettings(settings: AppSettings): Promise<void> {
