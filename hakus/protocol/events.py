@@ -55,6 +55,9 @@ class AgentEventType(str, Enum):
     PATCH_APPLIED = "patch_applied"
     PATCH_APPROVAL = "patch_approval"
 
+    QUESTION_ASKED = "question_asked"
+    QUESTION_ANSWERED = "question_answered"
+
     REFLECTION_STARTED = "reflection_started"
     REFLECTION_COMPLETED = "reflection_completed"
 
@@ -362,6 +365,39 @@ class PatchApproval(AgentEvent):
     patch_id: str = ""
     path: str = ""
     diff: str = ""
+
+
+# ============================================================
+# 交互式提问
+# ============================================================
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionAsked(AgentEvent):
+    """Agent 在执行过程中需要向用户提问并等待选择.
+
+    前端收到此事件后渲染选项卡片, 用户选择后通过 AnswerOp
+    回传, Agent 收到选择后继续执行.
+    """
+
+    event_type: AgentEventType = field(
+        default=AgentEventType.QUESTION_ASKED, init=False,
+    )
+    question_id: str = ""
+    question: str = ""
+    options: tuple = ()  # tuple[str, ...]
+    allow_free_text: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionAnswered(AgentEvent):
+    """用户已回答 Agent 的提问 — 用于前端状态同步."""
+
+    event_type: AgentEventType = field(
+        default=AgentEventType.QUESTION_ANSWERED, init=False,
+    )
+    question_id: str = ""
+    choice: str = ""
 
 
 # ============================================================

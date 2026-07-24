@@ -35,6 +35,8 @@ from .events import (
     TokenUsage,
     PatchApplied,
     PatchApproval,
+    QuestionAsked,
+    QuestionAnswered,
     ReflectionStarted,
     ReflectionCompleted,
 )
@@ -47,6 +49,7 @@ from .ops import (
     PauseOp,
     ResumeOp,
     PatchApprovalOp,
+    AnswerOp,
 )
 
 

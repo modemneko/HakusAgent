@@ -9,6 +9,7 @@ class name to `BUILTIN_TOOL_CLASSES` below. No other wiring needed.
 """
 from __future__ import annotations
 
+from .ask_user import AskUser
 from .browser import BrowserUse
 from .directory import ListDir, Tree
 from .file import (
@@ -51,6 +52,7 @@ BUILTIN_TOOL_CLASSES = [
     BrowserUse,         # browser
     TaskManage,         # long-running background tasks
     TaskDoneTool,       # task completion signal (trae-agent style)
+    AskUser,            # interactive clarification
 ]
 
 
@@ -67,5 +69,6 @@ __all__ = [
     "BrowserUse",
     "TaskManage",
     "TaskDoneTool",
+    "AskUser",
     "BUILTIN_TOOL_CLASSES",
 ]

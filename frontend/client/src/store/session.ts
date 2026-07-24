@@ -43,6 +43,12 @@ interface SessionStore {
   /** Sessions whose messages have been fetched from server. */
   hydratedSessionIds: Set<string>
   /**
+   * Per-session id of the assistant message currently receiving the stream.
+   * This lets stream appenders target a single log without threading the id
+   * through every event handler.
+   */
+  streamingLogId: Record<string, string | null>
+  /**
    * Pending tool_call_started events keyed by `${sessionId}:${messageId}:${callId}`.
    * They are not rendered until the matching tool_call_finished arrives, so
    * the user never sees a stack of empty/blank cards while the agent is
@@ -58,12 +64,37 @@ interface SessionStore {
   pinSession: (id: string, pinned: boolean) => Promise<void>
   /** Fetch messages for a session if not already fetched. */
   hydrateSession: (id: string) => Promise<void>
+  /**
+   * Rewind a session to before a given user message: delete the target
+   * message and every message after it, both in-memory and on the server.
+   * Returns the target message's content so the caller can refill the
+   * composer input.
+   */
+  rewindToMessage: (sessionId: string, messageId: string) => Promise<string | null>
 
   // Message operations — all in-memory during stream; persisted on stream end
   addMessage: (sessionId: string, msg: Omit<ChatMessage, 'id' | 'session_id' | 'created_at' | 'updated_at'>) => string
   updateMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void
   appendTextToMessage: (sessionId: string, messageId: string, text: string) => void
   appendReasoningToMessage: (sessionId: string, messageId: string, text: string) => void
+  /**
+   * Create an assistant placeholder for streaming and remember it as the
+   * current streaming log for the session. Returns the new message id.
+   */
+  startStreamingLog: (sessionId: string) => string
+  /**
+   * Append text to the current streaming log for the session.
+   * Falls back to appendTextToMessage if no streaming log is tracked.
+   */
+  appendToStreamingLog: (sessionId: string, text: string) => void
+  /**
+   * Append reasoning text to the current streaming log for the session.
+   */
+  appendReasoningToStreamingLog: (sessionId: string, text: string) => void
+  /**
+   * Clear the tracked streaming log id for a session.
+   */
+  stopStreamingLog: (sessionId: string) => void
   /**
    * Cache a tool_call_started event. The card is NOT rendered yet — we wait
    * for the matching tool_call_finished (which has full arguments) so the
@@ -100,6 +131,22 @@ interface SessionStore {
 const LEGACY_STORAGE_KEY = 'hakusai-sessions-v1'
 const MIGRATION_FLAG_KEY = 'hakusai-sessions-migrated-to-sqlite'
 
+function isNotFoundError(e: unknown): boolean {
+  // Backend returns 404 when the message row does not exist.
+  // The apiClient throws HakusAIError with status === 404, or a generic
+  // Error whose message contains "404" / "not found".
+  if (e && typeof e === 'object') {
+    const anyE = e as any
+    if (anyE.status === 404 || anyE.statusCode === 404) return true
+    if (typeof anyE.message === 'string') {
+      const msg = anyE.message.toLowerCase()
+      return msg.includes('404') || msg.includes('not found')
+    }
+  }
+  const msg = String(e).toLowerCase()
+  return msg.includes('404') || msg.includes('not found')
+}
+
 function loadLegacyFromStorage(): { sessions: ChatSession[]; messages: Record<string, ChatMessage[]> } {
   try {
     const raw = localStorage.getItem(LEGACY_STORAGE_KEY)
@@ -119,6 +166,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   loaded: false,
   loadError: null,
   hydratedSessionIds: new Set<string>(),
+  streamingLogId: {},
   pendingStartedToolCalls: new Map(),
 
   // ===========================================================================
@@ -245,6 +293,41 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
+  rewindToMessage: async (sessionId, messageId) => {
+    const list = get().messages[sessionId] || []
+    const idx = list.findIndex((m) => m.id === messageId)
+    if (idx === -1) return null
+    const target = list[idx]
+    if (target.role !== 'user') return null
+
+    const kept = list.slice(0, idx)
+    const removed = list.slice(idx)
+    const prevMessages = get().messages
+
+    // Optimistic UI update
+    set({
+      messages: { ...prevMessages, [sessionId]: kept },
+    })
+
+    // Sync deletions to server in parallel. Some messages (e.g. a still-
+    // streaming assistant placeholder) may not have been persisted yet, so a
+    // 404 from the backend means "already gone" and should not fail the rewind.
+    const results = await Promise.allSettled(
+      removed.map((m) => apiClient.deleteMessage(sessionId, m.id)),
+    )
+    const hardErrors = results
+      .map((r, i) => ({ r, m: removed[i] }))
+      .filter(({ r }) => r.status === 'rejected')
+      .filter(({ r }) => !isNotFoundError((r as PromiseRejectedResult).reason))
+    if (hardErrors.length > 0) {
+      // Rollback only for real server errors (network / 5xx), not 404s.
+      set({ messages: prevMessages })
+      throw hardErrors[0].r
+    }
+
+    return target.content || null
+  },
+
   // ===========================================================================
   // Message operations (in-memory during stream)
   // ===========================================================================
@@ -304,6 +387,37 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         ),
       },
     })
+  },
+
+  startStreamingLog: (sessionId) => {
+    const id = get().addMessage(sessionId, {
+      role: 'assistant',
+      content: '',
+      tool_calls: [],
+      streaming: true,
+    })
+    set({ streamingLogId: { ...get().streamingLogId, [sessionId]: id } })
+    return id
+  },
+
+  appendToStreamingLog: (sessionId, text) => {
+    if (!text) return
+    const logId = get().streamingLogId[sessionId]
+    if (logId) {
+      get().appendTextToMessage(sessionId, logId, text)
+    }
+  },
+
+  appendReasoningToStreamingLog: (sessionId, text) => {
+    if (!text) return
+    const logId = get().streamingLogId[sessionId]
+    if (logId) {
+      get().appendReasoningToMessage(sessionId, logId, text)
+    }
+  },
+
+  stopStreamingLog: (sessionId) => {
+    set({ streamingLogId: { ...get().streamingLogId, [sessionId]: null } })
   },
 
   cacheStartedToolCall: (sessionId, messageId, toolCall) => {
@@ -378,6 +492,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       messages: { ...get().messages, [sessionId]: [] },
       isStreaming: false,
       streamingAbort: null,
+      streamingLogId: { ...get().streamingLogId, [sessionId]: null },
     })
     // Fire-and-forget server-side clear. If it fails the in-memory state is
     // already correct for the current session; next app boot will re-load

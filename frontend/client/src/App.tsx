@@ -26,19 +26,12 @@ function App() {
   const connState = useConnectionStore((s) => s.state)
 
   // Initialize on first mount.
-  // We need settings (server URL) loaded before we can hit /api/sessions,
-  // so the flow is: loadSettings -> migrateFromLocalStorage (one-shot,
-  // best-effort) -> loadFromServer -> ensure at least one session exists.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       await loadSettings()
       if (cancelled) return
-      // Best-effort migration of legacy localStorage data — never blocks app boot.
       void migrateSessions().catch((e) => console.warn('session migrate failed:', e))
-      // Load sessions from server. If sidecar is down, loadError is set in store
-      // and the UI can show a retry — but we still create a placeholder session
-      // below so the composer is usable.
       await loadSessions()
       if (cancelled) return
       const st = useSessionStore.getState()
@@ -53,7 +46,7 @@ function App() {
     }
   }, [loadSessions, loadSettings, migrateSessions])
 
-  // Phase 3: listen for "new chat" requests fired from the tray menu
+  // Listen for "new chat" requests fired from the tray menu
   useEffect(() => {
     const electron = (window as any).electron
     if (!electron?.tray?.onNewChat) return
@@ -73,7 +66,6 @@ function App() {
   // Watch for server URL changes
   useEffect(() => {
     if (serverUrl) {
-      // Trigger re-check on URL change
       useConnectionStore.getState().check(serverUrl)
     }
   }, [serverUrl])
@@ -83,9 +75,10 @@ function App() {
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
         {/* Sidebar */}
         <div
+          data-testid="sidebar-wrapper"
           className={cn(
-            'relative z-10 shrink-0 transition-all duration-200 ease-out',
-            sidebarOpen ? 'w-[260px]' : 'w-0',
+            'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
+            sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
             'overflow-hidden',
           )}
         >

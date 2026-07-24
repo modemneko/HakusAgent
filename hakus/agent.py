@@ -4,6 +4,8 @@ import os
 import re
 import time
 import threading
+import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
@@ -34,6 +36,63 @@ from .timeout import SSEChunkTimeout, RetryManager, TimeoutConfig
 from .recovery import RecoveryManager, SessionSnapshot, ToolState, recovery_manager
 
 logger = get_logger(__name__)
+
+# #region debug-point helper
+_DEBUG_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".dbg", "agent-stalls-after-tools.env",
+)
+_DEBUG_URL = "http://127.0.0.1:7777/event"
+_DEBUG_SESSION = "agent-stalls-after-tools"
+
+
+def _debug_log(hypothesis_id: str, location: str, msg: str, data: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        url = _DEBUG_URL
+        session = _DEBUG_SESSION
+        try:
+            with open(_DEBUG_ENV_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("DEBUG_SERVER_URL="):
+                        url = line.split("=", 1)[1].strip()
+                    elif line.startswith("DEBUG_SESSION_ID="):
+                        session = line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        payload = {
+            "sessionId": session,
+            "runId": "pre",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "msg": f"[DEBUG] {msg}",
+            "data": data or {},
+            "ts": time.time(),
+        }
+        body = json.dumps(payload).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=1).read()
+        except Exception:
+            pass
+        try:
+            local_log = os.path.join(
+                os.path.dirname(_DEBUG_ENV_PATH),
+                f"trae-debug-log-{session}.ndjson.local",
+            )
+            with open(local_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# #endregion
 
 _PLAN_MODE_BLOCKED_TOOLS = frozenset({
     "Write", "Edit", "MultiEdit", "Bash", "BashOutput", "PowerShell", "GitCommit",
@@ -1427,6 +1486,15 @@ class AgentCore:
                     lookup_name, arguments, f"Blocked by hook: {lookup_name}",
                     False, time.time() - start,
                 )
+        # ask_user is handled directly by the streaming/non-streaming turn
+        # loops so they can yield QuestionAsked and wait for an AnswerOp.
+        if lookup_name.lower() == "ask_user":
+            return ToolCallResult(
+                lookup_name, arguments,
+                "Error: ask_user must be handled by the AgentCore turn loop.",
+                False, time.time() - start,
+            )
+
         tool = self._tool_registry.get(lookup_name)
         if not tool:
             return ToolCallResult(lookup_name, arguments, f"Unknown tool: {lookup_name}", False, time.time() - start)
@@ -1476,6 +1544,59 @@ class AgentCore:
                 except Exception:
                     pass
             return ToolCallResult(lookup_name, arguments, f"Error: {e}", False, time.time() - start)
+
+    async def _wait_for_answer(
+        self,
+        question_id: str,
+        op_receiver: "Optional[asyncio.Queue]",
+    ) -> str:
+        """Wait for an AnswerOp matching ``question_id`` on ``op_receiver``.
+
+        Used by the ``ask_user`` tool flow. Periodically yields control so
+        the event loop can process inbound messages (WebSocket/REST answer
+        endpoints) and checks the agent's cancel flag.
+
+        Raises:
+            asyncio.CancelledError: if the turn is cancelled before an answer
+                arrives.
+        """
+        from .protocol import AnswerOp
+
+        # #region debug-point A:wait-for-answer
+        _debug_log("A", "agent.py:_wait_for_answer", "enter wait", {"question_id": question_id, "has_receiver": op_receiver is not None})
+        _loop_counter = 0
+        # #endregion
+
+        while True:
+            if self._cancelled:
+                # #region debug-point A:cancelled
+                _debug_log("A", "agent.py:_wait_for_answer", "cancelled while waiting", {"question_id": question_id})
+                # #endregion
+                raise asyncio.CancelledError("user_interrupted")
+
+            if op_receiver is not None:
+                try:
+                    op = op_receiver.get_nowait()
+                    if isinstance(op, AnswerOp) and op.question_id == question_id:
+                        # #region debug-point A:answer-received
+                        _debug_log("A", "agent.py:_wait_for_answer", "answer received", {"question_id": question_id, "choice": op.choice})
+                        # #endregion
+                        return op.choice
+                    # Not for us — put it back (best-effort)
+                    try:
+                        op_receiver.put_nowait(op)
+                    except asyncio.QueueFull:
+                        logger.warning("op_receiver full when requeueing op")
+                except asyncio.QueueEmpty:
+                    pass
+
+            _loop_counter += 1
+            if _loop_counter % 100 == 0:
+                # #region debug-point A:still-waiting
+                _debug_log("A", "agent.py:_wait_for_answer", "still waiting", {"question_id": question_id, "loops": _loop_counter})
+                # #endregion
+
+            await asyncio.sleep(0.05)
 
     async def _reflect_on_results(self, user_message: str, tool_results: List[ToolCallResult],
                                    iteration: int) -> ReflectionResult:
@@ -2402,6 +2523,7 @@ class AgentCore:
         """
         from .protocol import (
             Cancelled as CancelledEvent,
+            QuestionAsked,
             TextDelta,
             TokenUsage,
             ToolCallFinished,
@@ -2437,6 +2559,9 @@ class AgentCore:
         try:
             for iteration in range(self._max_iterations):
                 self._current_iteration = iteration
+                # #region debug-point D:iteration-start
+                _debug_log("D", "agent.py:_do_streaming_turn_events", "iteration start", {"iteration": iteration, "max_iterations": self._max_iterations})
+                # #endregion
                 # Harness: increment iteration counter
                 if self._harness_guard:
                     try:
@@ -2799,15 +2924,35 @@ class AgentCore:
                     )
                     return
 
-                # 6) Execute tools. Single-tool or unsafe → sequential.
-                #    Multi-tool AND all concurrency-safe → parallel gather.
-                results: List[ToolCallResult] = await self._execute_tool_batch(
-                    api_tool_calls,
-                )
+                # 6) Execute tools. Handle ask_user specially: it pauses the
+                #    turn and asks the user to choose before continuing.
+                #    Other tools execute normally; ask_user runs after them so
+                #    the answer can depend on any already-gathered results.
+                ask_user_calls = [
+                    tc for tc in api_tool_calls
+                    if _name(tc).lower() == "ask_user"
+                ]
+                non_ask_user_calls = [
+                    tc for tc in api_tool_calls
+                    if _name(tc).lower() != "ask_user"
+                ]
+                # #region debug-point B:tool-branch
+                _debug_log("B", "agent.py:_do_streaming_turn_events", "tool calls split", {"iteration": iteration, "ask_user_count": len(ask_user_calls), "non_ask_count": len(non_ask_user_calls)})
+                # #endregion
+
+                results: List[ToolCallResult] = []
+                if non_ask_user_calls:
+                    # #region debug-point C:batch-start
+                    _debug_log("C", "agent.py:_do_streaming_turn_events", "executing non-ask tool batch", {"iteration": iteration, "count": len(non_ask_user_calls), "tools": [_name(tc) for tc in non_ask_user_calls]})
+                    # #endregion
+                    results = await self._execute_tool_batch(non_ask_user_calls)
+                    # #region debug-point C:batch-done
+                    _debug_log("C", "agent.py:_do_streaming_turn_events", "non-ask tool batch done", {"iteration": iteration, "count": len(results)})
+                    # #endregion
                 all_tool_results.extend(results)
 
                 # 7) Doom Loop detection - record tool calls and check for patterns
-                for tc_in, result in zip(api_tool_calls, results):
+                for tc_in, result in zip(non_ask_user_calls, results):
                     tool_name = tc_in.get("function", {}).get("name", "")
                     tool_args = self._safe_parse_args(
                         tc_in.get("function", {}).get("arguments", ""),
@@ -2831,7 +2976,7 @@ class AgentCore:
                 # 8) Emit ToolCallFinished for each result + persist
                 #    the tool message into context. Order matches the
                 #    order in which tool_calls were emitted.
-                for tc_in, result in zip(api_tool_calls, results):
+                for tc_in, result in zip(non_ask_user_calls, results):
                     # ── Debug: log tool execution ──
                     _dbg = _get_dbg()
                     if _dbg:
@@ -2918,6 +3063,66 @@ class AgentCore:
                         except Exception:
                             pass
 
+                # 8b) ask_user: pause the turn and ask the user to choose.
+                #     We yield QuestionAsked, wait for AnswerOp on the
+                #     op_receiver, then persist the answer as a tool result.
+                for ask_call in ask_user_calls:
+                    ask_args = _args(ask_call)
+                    question_id = str(uuid.uuid4())
+                    question = ask_args.get("question", "")
+                    options = tuple(ask_args.get("options", []))
+                    allow_free_text = bool(ask_args.get("allow_free_text", False))
+                    # #region debug-point B:ask-user-start
+                    _debug_log("B", "agent.py:_do_streaming_turn_events", "ask_user start", {"iteration": iteration, "question_id": question_id, "question": question, "options": list(options)})
+                    # #endregion
+
+                    yield QuestionAsked(
+                        question_id=question_id,
+                        question=question,
+                        options=options,
+                        allow_free_text=allow_free_text,
+                    )
+
+                    try:
+                        answer = await self._wait_for_answer(
+                            question_id, op_receiver,
+                        )
+                    except asyncio.CancelledError:
+                        # #region debug-point B:ask-user-cancelled
+                        _debug_log("B", "agent.py:_do_streaming_turn_events", "ask_user cancelled", {"iteration": iteration, "question_id": question_id})
+                        # #endregion
+                        yield CancelledEvent(
+                            reason="user_interrupted",
+                            partial_content=final_text,
+                        )
+                        return
+
+                    # #region debug-point B:ask-user-resumed
+                    _debug_log("B", "agent.py:_do_streaming_turn_events", "ask_user resumed", {"iteration": iteration, "question_id": question_id, "answer": answer})
+                    # #endregion
+
+                    ask_result = ToolCallResult(
+                        tool_name="ask_user",
+                        arguments=ask_args,
+                        result=f"User selected: {answer}",
+                        success=True,
+                        execution_time=0.0,
+                    )
+                    all_tool_results.append(ask_result)
+                    yield ToolCallFinished(
+                        call_id=ask_call.get("id", ""),
+                        name="ask_user",
+                        result=ask_result.result,
+                        success=True,
+                        duration=0.0,
+                        arguments=ask_args,
+                    )
+                    self._context.add_tool_result(
+                        "ask_user",
+                        ask_result.result,
+                        tool_call_id=ask_call.get("id", ""),
+                    )
+
                 # 8) Loop back to step 1 — the model will see the
                 #    tool messages we just persisted and decide whether
                 #    to keep iterating, call more tools, or wrap up.
@@ -2987,6 +3192,9 @@ class AgentCore:
         same order. Input dicts are in the OpenAI ``tool_calls`` format
         (with ``function.name`` / ``function.arguments`` nested).
         """
+        # #region debug-point C:execute-batch-enter
+        _debug_log("C", "agent.py:_execute_tool_batch", "enter", {"count": len(tool_calls), "tools": [(tc.get("function", {}).get("name", "") or tc.get("name", "")) for tc in tool_calls]})
+        # #endregion
         if not tool_calls:
             return []
 
@@ -3011,7 +3219,11 @@ class AgentCore:
                 self._execute_tool_call(_name(tc), _args(tc))
                 for tc in tool_calls
             ]
-            return list(await asyncio.gather(*coros, return_exceptions=False))
+            results = list(await asyncio.gather(*coros, return_exceptions=False))
+            # #region debug-point C:execute-batch-exit
+            _debug_log("C", "agent.py:_execute_tool_batch", "parallel exit", {"count": len(results)})
+            # #endregion
+            return results
 
         # Sequential fallback
         results: List[ToolCallResult] = []
@@ -3019,6 +3231,9 @@ class AgentCore:
             results.append(
                 await self._execute_tool_call(_name(tc), _args(tc))
             )
+        # #region debug-point C:execute-batch-exit
+        _debug_log("C", "agent.py:_execute_tool_batch", "sequential exit", {"count": len(results)})
+        # #endregion
         return results
 
     @staticmethod
@@ -3072,6 +3287,7 @@ class AgentCore:
         """
         from .protocol import (
             Cancelled as CancelledEvent,
+            QuestionAsked,
             TextDelta,
             ToolCallFinished,
             TurnCompleted,
@@ -3154,10 +3370,33 @@ class AgentCore:
                     )
                     return
 
-                results = await self._execute_tool_batch(api_tool_calls)
+                def _name(tc: Dict[str, Any]) -> str:
+                    return tc.get("function", {}).get("name", "") or tc.get("name", "")
+
+                def _args(tc: Dict[str, Any]) -> Dict[str, Any]:
+                    raw = tc.get("function", {}).get("arguments", "")
+                    if isinstance(raw, str):
+                        try:
+                            return json.loads(raw) if raw else {}
+                        except json.JSONDecodeError:
+                            return {}
+                    return raw or {}
+
+                ask_user_calls = [
+                    tc for tc in api_tool_calls
+                    if _name(tc).lower() == "ask_user"
+                ]
+                non_ask_user_calls = [
+                    tc for tc in api_tool_calls
+                    if _name(tc).lower() != "ask_user"
+                ]
+
+                results: List[ToolCallResult] = []
+                if non_ask_user_calls:
+                    results = await self._execute_tool_batch(non_ask_user_calls)
                 all_tool_results.extend(results)
 
-                for tc_in, result in zip(api_tool_calls, results):
+                for tc_in, result in zip(non_ask_user_calls, results):
                     yield ToolCallFinished(
                         call_id=tc_in.get("id", ""),
                         name=tc_in.get("function", {}).get("name", ""),
@@ -3230,6 +3469,53 @@ class AgentCore:
                             )
                         except Exception:
                             pass
+
+                for ask_call in ask_user_calls:
+                    ask_args = _args(ask_call)
+                    question_id = str(uuid.uuid4())
+                    question = ask_args.get("question", "")
+                    options = tuple(ask_args.get("options", []))
+                    allow_free_text = bool(ask_args.get("allow_free_text", False))
+
+                    yield QuestionAsked(
+                        question_id=question_id,
+                        question=question,
+                        options=options,
+                        allow_free_text=allow_free_text,
+                    )
+
+                    try:
+                        answer = await self._wait_for_answer(
+                            question_id, op_receiver,
+                        )
+                    except asyncio.CancelledError:
+                        yield CancelledEvent(
+                            reason="user_interrupted",
+                            partial_content=final_text,
+                        )
+                        return
+
+                    ask_result = ToolCallResult(
+                        tool_name="ask_user",
+                        arguments=ask_args,
+                        result=f"User selected: {answer}",
+                        success=True,
+                        execution_time=0.0,
+                    )
+                    all_tool_results.append(ask_result)
+                    yield ToolCallFinished(
+                        call_id=ask_call.get("id", ""),
+                        name="ask_user",
+                        result=ask_result.result,
+                        success=True,
+                        duration=0.0,
+                        arguments=ask_args,
+                    )
+                    self._context.add_tool_result(
+                        "ask_user",
+                        ask_result.result,
+                        tool_call_id=ask_call.get("id", ""),
+                    )
 
             # Iteration limit
             yield TurnCompleted(

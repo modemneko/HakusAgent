@@ -1,7 +1,7 @@
 {
   "name": "hakusai-client",
   "version": "0.1.0",
-  "description": "HakusAI Desktop Client - Cherry Studio inspired AI chat client for HakusAgent",
+  "description": "HakusAI Desktop Client - macOS/Codex-style AI chat client for HakusAgent",
   "main": "dist-electron/main.js",
   "author": {
     "name": "Lightneko",
@@ -16,6 +16,9 @@
     "build:electron": "tsc -b && vite build",
     "typecheck:electron": "tsc --noEmit -p tsconfig.electron.json || true",
     "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
     "pack": "npm run build:electron && electron-builder --dir",
     "dist": "npm run build:electron && electron-builder",
     "dist:win": "npm run build:electron && electron-builder --win",
@@ -49,6 +52,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

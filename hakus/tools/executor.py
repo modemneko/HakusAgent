@@ -14,17 +14,83 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import shutil
+import tempfile
 import time
-from typing import Any, Dict, List, Optional
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 from .base import Tool, ToolCall, ToolResult
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+# #region debug-point helper
+_DEBUG_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    ".dbg", "agent-stalls-after-tools.env",
+)
+_DEBUG_URL = "http://127.0.0.1:7777/event"
+_DEBUG_SESSION = "agent-stalls-after-tools"
+
+
+def _debug_log(hypothesis_id: str, location: str, msg: str, data: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        url = _DEBUG_URL
+        session = _DEBUG_SESSION
+        try:
+            with open(_DEBUG_ENV_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("DEBUG_SERVER_URL="):
+                        url = line.split("=", 1)[1].strip()
+                    elif line.startswith("DEBUG_SESSION_ID="):
+                        session = line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        payload = {
+            "sessionId": session,
+            "runId": "pre",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "msg": f"[DEBUG] {msg}",
+            "data": data or {},
+            "ts": time.time(),
+        }
+        body = json.dumps(payload).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=1).read()
+        except Exception:
+            pass
+        try:
+            local_log = os.path.join(
+                os.path.dirname(_DEBUG_ENV_PATH),
+                f"trae-debug-log-{session}.ndjson.local",
+            )
+            with open(local_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# #endregion
+
 # 工具结果最大字符数 (超过则截断)
 MAX_TOOL_RESULT_LENGTH = 3000
+
+# 参数/元数据里可能包含文件路径的键名
+_PATH_KEYS = ("file_path", "directory", "path", "dir", "source", "destination")
 
 
 class ToolExecutor:
@@ -35,11 +101,82 @@ class ToolExecutor:
     - 异常安全执行
     - 并行执行 (asyncio.gather)
     - 结果截断
+    - 临时文件路径追踪与清理
     """
 
     def __init__(self, registry: ToolRegistry, max_result_length: int = MAX_TOOL_RESULT_LENGTH):
         self._registry = registry
         self._max_result_length = max_result_length
+        self._temp_paths: Set[str] = set()
+
+    def _is_temp_path(self, path: str) -> bool:
+        """判断路径是否位于系统临时目录下。"""
+        try:
+            resolved = Path(path).resolve()
+            temp_dirs = [
+                Path(tempfile.gettempdir()).resolve(),
+                Path(os.environ.get("TEMP", "") or tempfile.gettempdir()).resolve(),
+                Path(os.environ.get("TMP", "") or tempfile.gettempdir()).resolve(),
+            ]
+            if os.name == "nt":
+                temp_dirs.append(Path("C:/Temp").resolve())
+                temp_dirs.append(Path("C:/Windows/Temp").resolve())
+            return any(
+                resolved == td or str(resolved).lower().startswith(str(td).lower() + os.sep)
+                for td in temp_dirs
+                if td.exists() or str(td).startswith(str(temp_dirs[0]))
+            )
+        except Exception:
+            return False
+
+    def _register_temp_path(self, result: ToolResult, arguments: Dict[str, Any]) -> None:
+        """从工具结果元数据和参数中识别并登记临时文件/目录。"""
+        paths: List[str] = []
+        # 1) 优先读取 metadata 里声明的路径
+        metadata = getattr(result, "metadata", None) or {}
+        for key in _PATH_KEYS:
+            val = metadata.get(key)
+            if isinstance(val, str) and val:
+                paths.append(val)
+        # 2) 回退到参数中的路径（如 write_file 的 path 参数）
+        for key in _PATH_KEYS:
+            val = arguments.get(key)
+            if isinstance(val, str) and val:
+                paths.append(val)
+        # 3) 去重并过滤为系统临时目录
+        seen: Set[str] = set()
+        for p in paths:
+            if p in seen:
+                continue
+            seen.add(p)
+            if self._is_temp_path(p):
+                self._temp_paths.add(p)
+
+    def cleanup_temp_paths(self) -> List[str]:
+        """清理本回合登记的临时路径，返回成功删除的列表。"""
+        # #region debug-point C:cleanup-start
+        _debug_log("C", "executor.py:cleanup_temp_paths", "start", {"count": len(self._temp_paths), "paths": list(self._temp_paths)})
+        # #endregion
+        removed: List[str] = []
+        remaining: Set[str] = set()
+        for p in self._temp_paths:
+            try:
+                path = Path(p)
+                if path.exists():
+                    if path.is_file() or path.is_symlink():
+                        path.unlink()
+                    elif path.is_dir():
+                        shutil.rmtree(path)
+                removed.append(p)
+            except Exception as e:
+                # 清理失败不阻塞主流程，记录后保留以便调试
+                remaining.add(p)
+                logger.warning(f"Failed to clean up temp path {p}: {e}")
+        self._temp_paths = remaining
+        # #region debug-point C:cleanup-done
+        _debug_log("C", "executor.py:cleanup_temp_paths", "done", {"removed": removed, "remaining": list(remaining)})
+        # #endregion
+        return removed
 
     def get(self, name: str) -> Optional[Tool]:
         """按名称查找工具 (支持别名)."""
@@ -70,19 +207,31 @@ class ToolExecutor:
                 error=f"Unknown tool: {tool_call.name}",
             )
 
+        # #region debug-point C:tool-execute-start
+        _debug_log("C", "executor.py:execute", "tool execute start", {"tool": tool_call.name, "call_id": tool_call.call_id})
+        # #endregion
         try:
             result = await tool.execute(**tool_call.arguments)
-            result_str = str(result)
+            if not isinstance(result, ToolResult):
+                result = ToolResult(
+                    call_id=tool_call.call_id,
+                    name=tool_call.name,
+                    success=True,
+                    result=str(result),
+                )
             # 截断超长结果
+            result_str = result.result or ""
             if len(result_str) > self._max_result_length:
-                result_str = result_str[:self._max_result_length] + "\n...[truncated]"
-            return ToolResult(
-                call_id=tool_call.call_id,
-                name=tool_call.name,
-                success=True,
-                result=result_str,
-            )
+                result.result = result_str[:self._max_result_length] + "\n...[truncated]"
+            self._register_temp_path(result, tool_call.arguments)
+            # #region debug-point C:tool-execute-done
+            _debug_log("C", "executor.py:execute", "tool execute done", {"tool": tool_call.name, "call_id": tool_call.call_id, "success": result.success})
+            # #endregion
+            return result
         except Exception as e:
+            # #region debug-point C:tool-execute-error
+            _debug_log("C", "executor.py:execute", "tool execute error", {"tool": tool_call.name, "call_id": tool_call.call_id, "error": f"{type(e).__name__}: {e}"})
+            # #endregion
             logger.error(f"Tool '{tool_call.name}' execution failed: {e}")
             return ToolResult(
                 call_id=tool_call.call_id,

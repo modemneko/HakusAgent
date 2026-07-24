@@ -301,6 +301,8 @@ export type AgentEventType =
   | 'token_usage'
   | 'patch_applied'
   | 'patch_approval'
+  | 'question_asked'
+  | 'question_answered'
   | 'reflection_started'
   | 'reflection_completed'
 
@@ -403,6 +405,20 @@ export interface TaskProgressEvent extends BaseAgentEvent {
   detail: string
 }
 
+export interface QuestionAskedEvent extends BaseAgentEvent {
+  event_type: 'question_asked'
+  question_id: string
+  question: string
+  options: string[]
+  allow_free_text?: boolean
+}
+
+export interface QuestionAnsweredEvent extends BaseAgentEvent {
+  event_type: 'question_answered'
+  question_id: string
+  choice: string
+}
+
 export type AgentEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -417,6 +433,8 @@ export type AgentEvent =
   | TokenUsageEvent
   | PatchAppliedEvent
   | TaskProgressEvent
+  | QuestionAskedEvent
+  | QuestionAnsweredEvent
 
 // ========== WebSocket 消息 ==========
 
@@ -488,6 +506,22 @@ export interface ToolCall {
   finished_at?: number
 }
 
+export interface QuestionAttachment {
+  question_id: string
+  question: string
+  options: string[]
+  allow_free_text?: boolean
+  answered?: boolean
+  selected?: string
+}
+
+export interface TaskProgressAttachment {
+  completed: number
+  total: number
+  current_task: string
+  tasks?: string[]
+}
+
 export interface ChatMessage {
   id: string
   session_id: string
@@ -508,6 +542,10 @@ export interface ChatMessage {
   // Phase / activity (for orchestrator)
   phase?: string
   activity?: string
+  // Interactive question surfaced during agent execution
+  question?: QuestionAttachment
+  // Live task progress / TODO list surfaced during agent execution
+  task_progress?: TaskProgressAttachment
 }
 
 export interface ChatSession {
@@ -630,6 +668,8 @@ export interface AppSettings {
   trayEnabled: boolean
   minimizeToTray: boolean
   toggleShortcut: string
+  // How tool calls are rendered in the chat timeline
+  toolCallDisplayMode: 'stacked' | 'inline'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -651,6 +691,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trayEnabled: true,
   minimizeToTray: true,
   toggleShortcut: 'Shift+CommandOrControl+H',
+  toolCallDisplayMode: 'stacked',
 }
 
 // =====================================================================

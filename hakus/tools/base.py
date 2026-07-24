@@ -46,6 +46,7 @@ class ToolResult:
     success: bool = True
     result: Optional[str] = None
     error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 # ── 步骤状态机 (trae-agent AgentStepState 风格) ───────────────────

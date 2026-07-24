@@ -26,6 +26,7 @@ class OpType(str, Enum):
     PAUSE = "pause"
     RESUME = "resume"
     PATCH_APPROVAL = "patch_approval"
+    ANSWER = "answer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,3 +129,17 @@ class PatchApprovalOp(Op):
     op_type: OpType = field(default=OpType.PATCH_APPROVAL, init=False)
     patch_id: str = ""
     decision: str = "reject"  # "accept" | "reject"
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerOp(Op):
+    """用户回答了 Agent 在执行过程中提出的选择性问题.
+
+    question_id 对应 QuestionAsked 事件的 question_id.
+    choice 为用户选择的选项文本; 若 allow_free_text=True,
+    也可以是用户自由输入的文本.
+    """
+
+    op_type: OpType = field(default=OpType.ANSWER, init=False)
+    question_id: str = ""
+    choice: str = ""

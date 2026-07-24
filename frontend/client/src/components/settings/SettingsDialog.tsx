@@ -109,7 +109,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         // Override default `grid` with `flex flex-col` — grid doesn't
         // honor min-h-0 on children, so flex is required for the middle
         // row to shrink and let ScrollArea work (Issue 4 fix).
-        className="flex max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl"
+        className="flex max-w-4xl flex-col gap-0 overflow-hidden border-border/60 bg-card/75 p-0 shadow-2xl backdrop-blur-3xl sm:rounded-2xl"
         // Use flex column with explicit max-height so the dialog itself
         // never grows taller than the viewport. The middle row (main
         // content) uses flex-1 + min-h-0 so it shrinks to fit, letting
@@ -117,9 +117,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         // into the footer.
         style={{ maxHeight: '90vh', height: 'min(90vh, 720px)' }}
       >
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
+        <DialogHeader className="shrink-0 border-b border-border/40 bg-card/30 px-6 py-4 backdrop-blur-xl">
           <DialogTitle className="flex items-center gap-2 text-base">
-            <ActiveIcon className="h-4 w-4 text-violet-500" />
+            <ActiveIcon className="h-4 w-4 text-primary" />
             设置 · {activeCat.label}
           </DialogTitle>
           <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
@@ -132,7 +132,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="flex min-h-0 flex-1">
           {/* Left: categories */}
           <nav
-            className="w-[200px] shrink-0 overflow-y-auto border-r border-border bg-muted/30 p-2"
+            className="w-[200px] shrink-0 overflow-y-auto border-r border-border/40 bg-muted/20 p-2 backdrop-blur-xl"
             aria-label="设置分类"
           >
             <ul className="space-y-0.5">
@@ -144,17 +144,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     <button
                       onClick={() => setActive(c.id)}
                       className={cn(
-                        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-all duration-200',
+                        'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition-all duration-200',
                         isActive
-                          ? 'bg-violet-500/15 font-medium text-violet-500'
-                          : 'text-foreground/80 hover:bg-accent/60 hover:text-foreground',
+                        ? 'bg-primary/10 font-medium text-primary'
+                        : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground',
                       )}
                       aria-current={isActive ? 'page' : undefined}
                     >
                       <Icon
                         className={cn(
                           'h-4 w-4 shrink-0',
-                          isActive ? 'text-violet-500' : 'text-muted-foreground',
+                          isActive ? 'text-primary' : 'text-muted-foreground',
                         )}
                       />
                       <span className="truncate">{c.label}</span>
@@ -189,14 +189,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-between border-t border-border bg-muted/30 px-6 py-3">
+        <div className="flex shrink-0 items-center justify-between border-t border-border/40 bg-card/30 px-6 py-3 backdrop-blur-xl">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Info className="h-3 w-3" />
             客户端设置本地持久化；模型/角色/工具配置写入 ~/.hakus/config.yaml
           </span>
           <button
             onClick={() => onOpenChange(false)}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="rounded-full px-4 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
           >
             关闭
           </button>

@@ -12,6 +12,37 @@ from ....schema.models import ToolDefinition, ToolResult
 from ....schema.errors import ToolError
 
 
+def _decode_process_output(data: bytes) -> str:
+    """Decode subprocess output robustly across platforms.
+
+    Windows Chinese editions default to GBK (cp936) for legacy console
+    applications, while macOS/Linux typically use UTF-8. We try UTF-8 first,
+    then fall back to platform-appropriate legacy encodings to avoid the
+    diamond-question-mark mojibake that made the agent hallucinate errors.
+    """
+    if not data:
+        return ""
+
+    # Try UTF-8 first — preferred on modern systems.
+    try:
+        text = data.decode('utf-8')
+        # If it decoded cleanly and has no replacement characters, use it.
+        if '\ufffd' not in text:
+            return text
+    except UnicodeDecodeError:
+        pass
+
+    if sys.platform == 'win32':
+        for enc in ('gbk', 'gb2312', 'cp936'):
+            try:
+                return data.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+    # Final fallback: UTF-8 with replacement characters.
+    return data.decode('utf-8', errors='replace')
+
+
 class BashTool:
     """Shell 执行工具"""
     
@@ -71,9 +102,9 @@ class BashTool:
                     error=f"Command timed out after {timeout} seconds"
                 )
             
-            # 解码输出
-            stdout_str = stdout.decode('utf-8', errors='replace')
-            stderr_str = stderr.decode('utf-8', errors='replace')
+            # 解码输出（处理 Windows 中文编码）
+            stdout_str = _decode_process_output(stdout)
+            stderr_str = _decode_process_output(stderr)
             
             # 截断过长的输出
             max_output = 10000
@@ -143,8 +174,8 @@ class PowerShellTool:
                     error=f"Command timed out after {timeout} seconds"
                 )
             
-            stdout_str = stdout.decode('utf-8', errors='replace')
-            stderr_str = stderr.decode('utf-8', errors='replace')
+            stdout_str = _decode_process_output(stdout)
+            stderr_str = _decode_process_output(stderr)
             
             output = ""
             if stdout_str:

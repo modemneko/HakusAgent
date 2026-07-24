@@ -35,6 +35,7 @@ from .agent_bridge import (
     run_turn_collect as agentcore_run_turn_collect,
     clear_session_history as agentcore_clear_session,
     get_or_create_agent as agentcore_get_or_create,
+    post_answer as agentcore_post_answer,
 )
 from . import session_store
 
@@ -50,8 +51,10 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.6.0"
-SIDECAR_API_VERSION_INT = 6  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.7.0"
+SIDECAR_API_VERSION_INT = 7  # 整数版本，便于客户端比较
+# v0.7.0: + /api/question/answer 端点 + WS answer 消息
+#         + ask_user 工具交互式提问 (QuestionAsked / AnswerOp)
 # v0.6.0: + Phase 4 WS 心跳/重连 + Phase 5 /api/metrics 端点
 #         + WS resume_session / interrupt / pong 协议
 #         + cancel_session_turn (AgentCore _cancelled flag)
@@ -154,6 +157,13 @@ class MessageUpdateRequest(BaseModel):
     output_tokens: Optional[int] = None
     error: Optional[str] = None
     streaming: Optional[bool] = None
+
+
+class AnswerQuestionRequest(BaseModel):
+    """回答 Agent 在执行过程中提出的问题"""
+    session_id: str
+    question_id: str
+    choice: str
 
 
 class BulkImportRequest(BaseModel):
@@ -1265,6 +1275,32 @@ class HakusAIServer:
                     "error": str(e)
                 }
 
+        @app.post("/api/question/answer")
+        async def answer_question(request: AnswerQuestionRequest):
+            """回答 Agent 在执行过程中通过 ask_user 提出的问题.
+
+            客户端收到 event_type=question_asked 的流式事件后,展示选项;
+            用户选择后调用此端点,把 AnswerOp 推入对应 session 的
+            op_receiver 队列,AgentCore 收到后继续执行.
+            """
+            try:
+                ok = agentcore_post_answer(
+                    request.session_id,
+                    request.question_id,
+                    request.choice,
+                )
+                if not ok:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No active question for this session",
+                    )
+                return {"success": True}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"answer_question error: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
         # ========== Session 持久化 API (SQLite) ==========
         # 替代前端 localStorage 的会话存储. 用户在桌面客户端看到的所有
         # chat 历史 (sessions + messages) 都持久化在 ~/.hakus/sessions.db.
@@ -2348,12 +2384,14 @@ class HakusAIServer:
                    或 {"type": "resume_failed", "reason": "..."}
               {"type": "interrupt"}
                 -> 取消当前流式 turn (best-effort)
+              {"type": "answer", "session_id": "...", "question_id": "...", "choice": "..."}
+                -> 回答 ask_user 提出的问题, {"type":"answer_ack", "accepted": true|false}
 
             服务端 -> 客户端 (主动):
               {"type": "ping", "ts": ...} — 每 30s 一次心跳, 客户端应回 pong
 
             AgentCore 路径下，stream 事件携带 event_type 字段
-            (text_delta / tool_call_started / ... / turn_completed)，
+            (text_delta / tool_call_started / ... / turn_completed / question_asked)，
             旧客户端只看 content + done 即可。
 
             Phase 4 关键改动:
@@ -2511,6 +2549,29 @@ class HakusAIServer:
                                 "type": "resume_failed",
                                 "session_id": session_id,
                                 "reason": str(e),
+                            })
+
+                    elif message_type == "answer":
+                        # 回答 ask_user 提出的问题
+                        session_id = data.get("session_id", "default")
+                        question_id = data.get("question_id", "")
+                        choice = data.get("choice", "")
+                        try:
+                            ok = agentcore_post_answer(
+                                session_id, question_id, choice,
+                            )
+                            await websocket.send_json({
+                                "type": "answer_ack",
+                                "session_id": session_id,
+                                "question_id": question_id,
+                                "accepted": ok,
+                            })
+                        except Exception as e:
+                            logger.warning(f"WS answer failed: {e}")
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"answer failed: {e}",
+                                "code": "answer_failed",
                             })
 
                     else:

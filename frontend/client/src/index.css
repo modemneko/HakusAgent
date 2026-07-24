@@ -4,53 +4,56 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    /* macOS 26 — pale lavender system palette — light */
+    --background: 258 18% 97.5%;
+    --foreground: 258 12% 11%;
+    --card: 258 15% 99%;
+    --card-foreground: 258 12% 11%;
+    --popover: 258 15% 99%;
+    --popover-foreground: 258 12% 11%;
+    --primary: 258 52% 73%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 258 14% 93%;
+    --secondary-foreground: 258 12% 11%;
+    --muted: 258 12% 92%;
+    --muted-foreground: 258 8% 42%;
+    --accent: 258 18% 90%;
+    --accent-foreground: 258 12% 11%;
+    --destructive: 0 70% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --border: 258 12% 88%;
+    --input: 258 12% 86%;
+    --ring: 258 52% 73%;
+    --radius: 0.875rem;
+
+    /* Layout tokens */
+    --titlebar-height: 2.5rem;
+    --sidebar-width: 16.5rem;
+    --glass-border: 0.16;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 8% 7%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 5.5%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 12%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 12%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 5% 14%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 50.6%;
+    /* macOS 26 — luminous dark with visible glass borders */
+    --background: 258 12% 10%;
+    --foreground: 0 0% 96%;
+    --card: 258 10% 15%;
+    --card-foreground: 0 0% 96%;
+    --popover: 258 10% 14%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 258 52% 73%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 258 10% 18%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 258 10% 18%;
+    --muted-foreground: 258 8% 58%;
+    --accent: 258 12% 21%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 60% 55%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 4% 13%;
-    --input: 240 3.7% 14%;
-    --ring: 240 4.9% 83.9%;
-  }
-
-  /* Light theme override for body */
-  html:not(.dark) body {
-    --background: 0 0% 100%;
+    --border: 258 10% 28%;
+    --input: 258 10% 24%;
+    --ring: 258 52% 73%;
+    --glass-border: 0.28;
   }
 }
 
@@ -65,8 +68,10 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter',
+      'Segoe UI', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     user-select: none;
   }
   /* Allow text selection in chat / code blocks */
@@ -76,85 +81,111 @@
   }
 }
 
-/* Custom scrollbar */
+/* Native macOS-style scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 4px;
+  background: hsl(var(--muted-foreground) / 0.22);
+  border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.38);
 }
 
-/* Settings dialog: prefer rounded-xl + transitions for cards/borders */
+/* macOS 26 Liquid Glass utilities */
 @layer components {
+  .hk-sidebar {
+    @apply border-r border-border/70 bg-card/60 backdrop-blur-2xl;
+  }
+  .hk-titlebar {
+    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/50 backdrop-blur-2xl;
+  }
+  .hk-glass {
+    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/50 backdrop-blur-2xl shadow-sm;
+  }
+  .hk-glass-strong {
+    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/75 backdrop-blur-3xl shadow-md;
+  }
   .hk-card {
-    @apply rounded-xl border border-border bg-card/50 backdrop-blur-sm transition-all duration-200;
+    @apply rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-all duration-200;
   }
   .hk-card-hover {
-    @apply hover:border-violet-500/50 hover:bg-accent/50;
+    @apply hover:border-primary/30 hover:bg-accent/50;
   }
   .hk-input {
-    @apply rounded-lg border border-input bg-transparent transition-all duration-200 focus-visible:border-violet-500/50;
+    @apply rounded-xl border border-input/80 bg-background/60 transition-all duration-200 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/15 focus-visible:bg-background/80;
+  }
+  .hk-pill {
+    @apply rounded-full border border-border/70 bg-background/60 backdrop-blur-xl;
+  }
+  .hk-sidebar-item {
+    @apply flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] transition-colors;
+  }
+  .hk-sidebar-item-active {
+    @apply bg-primary/10 font-medium text-primary;
+  }
+  .hk-sidebar-item-inactive {
+    @apply text-foreground/80 hover:bg-accent/60 hover:text-foreground;
   }
 }
 
-/* Markdown rendering styles */
+/* Markdown rendering styles — clean, native reader look */
 .markdown-body {
-  @apply text-sm leading-relaxed;
+  @apply text-sm leading-7;
   overflow-wrap: break-word;
   word-break: break-word;
 }
+.markdown-body > *:first-child {
+  @apply mt-0;
+}
 .markdown-body p {
-  @apply my-2;
+  @apply my-3;
 }
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
-  @apply font-semibold mt-4 mb-2;
+  @apply font-semibold tracking-tight mt-6 mb-3;
 }
 .markdown-body h1 {
-  @apply text-xl;
+  @apply text-2xl;
 }
 .markdown-body h2 {
-  @apply text-lg;
+  @apply text-xl;
 }
 .markdown-body h3 {
   @apply text-base;
 }
 .markdown-body ul {
-  @apply list-disc pl-6 my-2;
+  @apply list-disc pl-6 my-3;
 }
 .markdown-body ol {
-  @apply list-decimal pl-6 my-2;
+  @apply list-decimal pl-6 my-3;
 }
 .markdown-body li {
   @apply my-1;
 }
 .markdown-body a {
-  @apply text-blue-500 hover:underline;
+  @apply text-primary hover:underline;
 }
 .markdown-body blockquote {
-  @apply border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground my-2;
+  @apply border-l-4 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
-  @apply bg-muted px-1.5 py-0.5 rounded text-[0.85em] font-mono;
+  @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
 }
 .markdown-body pre {
-  @apply bg-zinc-950/80 text-zinc-100 rounded-lg p-3 my-3 overflow-x-auto text-xs border border-violet-500/10;
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.03);
+  @apply bg-zinc-950/90 text-zinc-100 rounded-xl p-4 my-4 overflow-x-auto text-xs border border-border/40;
 }
 .markdown-body pre code {
-  @apply text-[0.85em];
+  @apply text-[0.9em];
 }
 .markdown-body table {
-  @apply w-full border-collapse my-3;
+  @apply w-full border-collapse my-4;
 }
 .markdown-body th,
 .markdown-body td {
@@ -214,20 +245,22 @@
   animation: slide-up-fade 0.3s ease-out;
 }
 
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
-.animate-shimmer {
-  background: linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.1) 50%, transparent 100%);
-  background-size: 200% 100%;
-  animation: shimmer 2s infinite;
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
-/* Subtle ambient gradients for dark theme */
-.dark body {
-  background-image:
-    radial-gradient(circle at 15% 50%, rgba(139, 92, 246, 0.04) 0%, transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(217, 70, 239, 0.03) 0%, transparent 25%);
-  background-attachment: fixed;
+/* Electron / macOS draggable regions */
+.app-region-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
+.app-region-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+

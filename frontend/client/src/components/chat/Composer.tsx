@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Send, Square, Paperclip, AtSign, X, FileText, Loader2 } from 'lucide-react'
+import { Send, Square, Paperclip, AtSign, X, FileText, Loader2, AlertTriangle } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -20,6 +20,18 @@ interface ComposerProps {
   isStreaming: boolean
   disabled?: boolean
   placeholder?: string
+  /** External value override — used by rewind to refill the composer. */
+  draftValue?: string
+  /** Called when the external draftValue has been consumed. */
+  onDraftConsumed?: () => void
+  /** Current session id — used to keep per-session input drafts. */
+  sessionId?: string
+}
+
+function formatTime(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
+  return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`
 }
 
 // 文本文件扩展名 → 代码语言映射（用于 [File: ...] 预览代码块）
@@ -81,7 +93,16 @@ interface MentionItem {
   hint?: string
 }
 
-export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }: ComposerProps) {
+export function Composer({
+  onSend,
+  onStop,
+  isStreaming,
+  disabled,
+  placeholder,
+  draftValue,
+  onDraftConsumed,
+  sessionId,
+}: ComposerProps) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
@@ -90,12 +111,37 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([])
   const [mentionIndex, setMentionIndex] = useState(0)
   const [mentionLoading, setMentionLoading] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const mentionPosRef = useRef<number>(-1)
+  const composingRef = useRef(false)
+  const prevSessionIdRef = useRef<string | undefined>(undefined)
   const sendOnEnter = useSettingsStore((s) => s.sendOnEnter)
+
+  // Apply external draft value (e.g. from rewind) and notify consumer.
+  useEffect(() => {
+    if (draftValue !== undefined) {
+      setValue(draftValue)
+      onDraftConsumed?.()
+      // Focus the textarea after refilling
+      setTimeout(() => taRef.current?.focus(), 0)
+    }
+  }, [draftValue])
+
+  // Per-session drafts: restore draft when switching sessions.
+  useEffect(() => {
+    if (!sessionId) return
+    const prevId = prevSessionIdRef.current
+    if (prevId && prevId !== sessionId) {
+      setDrafts((d) => ({ ...d, [prevId]: value }))
+    }
+    prevSessionIdRef.current = sessionId
+    setValue(drafts[sessionId] || '')
+  }, [sessionId])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -104,6 +150,16 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
     ta.style.height = 'auto'
     ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`
   }, [value])
+
+  // Response elapsed timer + slow response hint
+  useEffect(() => {
+    if (!isStreaming) {
+      setElapsed(0)
+      return
+    }
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [isStreaming])
 
   // Close mention menu on outside click
   useEffect(() => {
@@ -195,6 +251,13 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
     onSend(finalText)
     setValue('')
     setAttachments([])
+    if (sessionId) {
+      setDrafts((d) => {
+        const next = { ...d }
+        delete next[sessionId]
+        return next
+      })
+    }
   }
 
   const insertMention = (item: MentionItem) => {
@@ -230,10 +293,16 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
     })
   }
 
+  const saveDraft = (sid: string | undefined, text: string) => {
+    if (!sid) return
+    setDrafts((d) => ({ ...d, [sid]: text }))
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     const cursorPos = e.target.selectionStart
     setValue(newValue)
+    saveDraft(sessionId, newValue)
 
     // Detect @ typed at cursor (preceded by whitespace or start of input)
     const before = newValue.slice(0, cursorPos)
@@ -259,6 +328,14 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Prevent Enter from sending while an IME composition is in progress (e.g. CJK input).
+    if (e.nativeEvent.isComposing || composingRef.current) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+      }
+      return
+    }
+
     if (mentionOpen && mentionItems.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -318,15 +395,15 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
   }
 
   return (
-    <div className="border-t border-border bg-background/80 backdrop-blur px-4 py-3">
+    <div className="border-t border-border/60 bg-background/80 backdrop-blur px-4 py-3">
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          'relative flex flex-col gap-1 rounded-2xl border bg-card p-2 shadow-sm transition-colors',
-          'focus-within:border-violet-500/40 focus-within:ring-2 focus-within:ring-violet-500/20 focus-within:shadow-[0_0_20px_rgba(139,92,246,0.08)]',
-          dragOver && 'border-violet-500/60 ring-2 ring-violet-500/30',
+          'relative flex flex-col gap-1 rounded-[1.25rem] border border-border/70 bg-card/80 p-2 shadow-sm backdrop-blur-xl transition-colors',
+          'focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/15',
+          dragOver && 'border-primary/40 ring-1 ring-primary/25',
         )}
       >
         {/* Hidden file input */}
@@ -401,6 +478,23 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
           </div>
         )}
 
+        {/* Streaming status */}
+        {isStreaming && (
+          <div className={cn(
+            'flex items-center gap-2 px-1 text-xs',
+            elapsed >= 60 ? 'text-amber-500' : 'text-muted-foreground',
+          )}>
+            {elapsed >= 60 ? (
+              <AlertTriangle className="h-3.5 w-3.5" />
+            ) : (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
+            <span>处理中 {formatTime(elapsed)}</span>
+            {elapsed >= 30 && elapsed < 60 && <span className="text-muted-foreground/80">响应较慢，可点击停止</span>}
+            {elapsed >= 60 && <span className="font-medium">响应异常缓慢，建议停止后重试</span>}
+          </div>
+        )}
+
         {/* Input row */}
         <div className="flex items-end gap-2">
           {/* Left actions */}
@@ -442,6 +536,12 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { composingRef.current = true }}
+            onCompositionEnd={(e) => {
+              composingRef.current = false
+              setValue(e.currentTarget.value)
+              saveDraft(sessionId, e.currentTarget.value)
+            }}
             placeholder={placeholder || 'Send a message... (Enter to send, Shift+Enter for newline)'}
             disabled={disabled}
             rows={1}
@@ -454,7 +554,7 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
               <Button
                 size="icon"
                 variant="destructive"
-                className="h-8 w-8 rounded-lg"
+                className="h-8 w-8 rounded-full"
                 onClick={onStop}
                 title="Stop"
               >
@@ -463,7 +563,7 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
             ) : (
               <Button
                 size="icon"
-                className="h-8 w-8 rounded-lg"
+                className="h-8 w-8 rounded-full"
                 onClick={submit}
                 disabled={(!value.trim() && attachments.length === 0) || disabled || uploading}
                 title="Send"
@@ -479,11 +579,11 @@ export function Composer({ onSend, onStop, isStreaming, disabled, placeholder }:
         </div>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground">
+      <div className="mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground/70">
         <span>
-          {sendOnEnter ? 'Enter to send · Shift+Enter for newline' : 'Ctrl/Cmd+Enter to send'}
+          {sendOnEnter ? 'Enter 发送 · Shift+Enter 换行' : 'Ctrl/Cmd+Enter 发送'}
         </span>
-        <span>{value.length} chars</span>
+        <span>{value.length} 字符</span>
       </div>
     </div>
   )

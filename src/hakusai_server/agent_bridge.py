@@ -34,9 +34,12 @@ Two reasons:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import threading
+import time
+import urllib.request
 from typing import Any, AsyncIterator, Dict, Optional
 
 # Lazy imports — hakus/ pulls in openai, anthropic, etc. which may
@@ -46,6 +49,79 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Project root is two levels above src/hakusai_server/agent_bridge.py
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+_SIDECAR_SYSTEM_PROMPT = """\
+You are HakusAI, an AI-powered development assistant running inside the HakusAI sidecar.
+
+CRITICAL WORKFLOW RULES:
+1. **Use file-operation tools first** — For reading, writing, or editing files, ALWAYS use the dedicated tools (read_file, write_file, edit_file, glob, grep, tree, list_dir) instead of writing a Python or shell script to do the same job. Bash is reserved for shell-specific tasks only (e.g., git, npm, running tests).
+2. **Respect the working directory** — All file paths are relative to the configured workspace root. Do NOT create files outside the workspace unless the user explicitly asks for a different path.
+3. **Read before Edit** — Always read a file before editing. The edit tool's old_string must be unique; if not, use more context or replace_all.
+4. **Plan complex tasks** — For non-trivial work, break it into steps and track progress with TodoWrite.
+5. **Do not generate throwaway scripts** — Never write a temporary Python script to inspect or transform files when a built-in tool can do it directly.
+
+Current workspace root: {working_dir}
+"""
+
+# #region debug-point helper
+_DEBUG_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".dbg", "agent-stalls-after-tools.env",
+)
+_DEBUG_URL = "http://127.0.0.1:7777/event"
+_DEBUG_SESSION = "agent-stalls-after-tools"
+
+
+def _debug_log(hypothesis_id: str, location: str, msg: str, data: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        url = _DEBUG_URL
+        session = _DEBUG_SESSION
+        try:
+            with open(_DEBUG_ENV_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("DEBUG_SERVER_URL="):
+                        url = line.split("=", 1)[1].strip()
+                    elif line.startswith("DEBUG_SESSION_ID="):
+                        session = line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        payload = {
+            "sessionId": session,
+            "runId": "pre",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "msg": f"[DEBUG] {msg}",
+            "data": data or {},
+            "ts": time.time(),
+        }
+        body = json.dumps(payload).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=1).read()
+        except Exception:
+            pass
+        try:
+            local_log = os.path.join(
+                os.path.dirname(_DEBUG_ENV_PATH),
+                f"trae-debug-log-{session}.ndjson.local",
+            )
+            with open(local_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# #endregion
+
 
 # Per-session AgentCore cache. Each (session_id, provider) pair gets its
 # own AgentCore with its own ContextManager — sessions are isolated, and
@@ -53,6 +129,55 @@ logger = logging.getLogger(__name__)
 # "switch to OpenCode" actually takes effect instead of being ignored).
 _agent_cache: Dict[tuple, Any] = {}
 _agent_cache_lock = threading.Lock()
+
+# Per-session op_receiver queue. Frontends push AnswerOp (and other Op)
+# instances here to interact with a running turn (e.g. answer an
+# ask_user question). The queue is keyed by session_id only, so both
+# SSE and WebSocket turns on the same session share the same inbound
+# channel. Multiple concurrent turns on the same session will all read
+# from the same queue; each AnswerOp carries a question_id so only the
+# matching turn consumes it.
+_session_op_receivers: Dict[str, asyncio.Queue] = {}
+_session_op_lock = threading.Lock()
+
+
+def _get_or_create_op_receiver(session_id: str) -> asyncio.Queue:
+    """Return the per-session op queue, creating it if necessary."""
+    with _session_op_lock:
+        if session_id not in _session_op_receivers:
+            _session_op_receivers[session_id] = asyncio.Queue(maxsize=100)
+        return _session_op_receivers[session_id]
+
+
+def post_answer(session_id: str, question_id: str, choice: str) -> bool:
+    """Push an AnswerOp into the session's op_receiver.
+
+    Returns True if the op was queued, False if the queue does not exist
+    or is full (the turn may have already ended or the question timed out).
+    """
+    from hakus.protocol import AnswerOp
+
+    # #region debug-point A:post-answer
+    _debug_log("A", "agent_bridge.py:post_answer", "answer posted", {"session_id": session_id, "question_id": question_id, "choice": choice})
+    # #endregion
+    with _session_op_lock:
+        queue = _session_op_receivers.get(session_id)
+    if queue is None:
+        # #region debug-point A:post-answer-no-queue
+        _debug_log("A", "agent_bridge.py:post_answer", "no queue for session", {"session_id": session_id})
+        # #endregion
+        return False
+    try:
+        queue.put_nowait(AnswerOp(question_id=question_id, choice=choice))
+        # #region debug-point A:post-answer-queued
+        _debug_log("A", "agent_bridge.py:post_answer", "answer queued", {"session_id": session_id, "question_id": question_id, "queue_size": queue.qsize()})
+        # #endregion
+        return True
+    except asyncio.QueueFull:
+        logger.warning(
+            f"op_receiver full for session={session_id}, dropping answer"
+        )
+        return False
 
 
 def _resolve_provider(explicit: Optional[str] = None) -> str:
@@ -140,6 +265,7 @@ def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
                 permission_mode=PermissionMode.ASK,
                 confirm_callback=_make_confirm_callback(),
                 session_id=session_id,
+                working_dir=_REPO_ROOT,
                 # Sidecar runs headless — no Textual event loop. The
                 # async confirm callback path is used because run_turn
                 # is async. The sync callback would also work (it's
@@ -147,6 +273,10 @@ def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
                 # is set), but setting both keeps the behavior
                 # identical regardless of which code path runs.
             )
+            try:
+                agent.set_system_prompt(_SIDECAR_SYSTEM_PROMPT.format(working_dir=_REPO_ROOT))
+            except Exception as e:
+                logger.warning(f"Could not set sidecar system prompt: {e}")
             # Install async callback too — AgentCore uses it when
             # _tui_mode is False (which is the case here).
             try:
@@ -223,14 +353,18 @@ async def run_turn_stream(
     from hakus.protocol.serialization import serialize_event
 
     agent = get_or_create_agent(session_id, provider=provider)
+    op_receiver = _get_or_create_op_receiver(session_id)
 
     accumulated = ""
     input_tokens = 0
     output_tokens = 0
     iterations = 0
 
+    # #region debug-point E:stream-start
+    _debug_log("E", "agent_bridge.py:run_turn_stream", "stream start", {"session_id": session_id, "provider": provider})
+    # #endregion
     try:
-        async for event in agent.run_turn(message):
+        async for event in agent.run_turn(message, op_receiver=op_receiver):
             try:
                 evt_dict = serialize_event(event)
             except Exception as e:
@@ -238,6 +372,10 @@ async def run_turn_stream(
                 continue
 
             etype = evt_dict.get("event_type", "")
+            if etype in ("question_asked", "question_answered"):
+                # #region debug-point E:question-event-forward
+                _debug_log("E", "agent_bridge.py:run_turn_stream", f"forwarding {etype}", {"session_id": session_id, "question_id": evt_dict.get("question_id")})
+                # #endregion
 
             if etype == "text_delta":
                 text = evt_dict.get("text", "")
@@ -296,6 +434,10 @@ async def run_turn_stream(
                 # The terminal event will include totals.
             elif etype == "turn_completed":
                 iterations = evt_dict.get("iterations", 0)
+                try:
+                    agent._tool_executor.cleanup_temp_paths()
+                except Exception as e:
+                    logger.warning(f"Temp cleanup failed after turn_completed: {e}")
                 yield {
                     "content": "",  # already streamed via text_delta
                     "emotion": None,
@@ -309,6 +451,10 @@ async def run_turn_stream(
                 }
                 return
             elif etype == "turn_failed":
+                try:
+                    agent._tool_executor.cleanup_temp_paths()
+                except Exception as e:
+                    logger.warning(f"Temp cleanup failed after turn_failed: {e}")
                 yield {
                     "content": "",
                     "emotion": None,
@@ -320,6 +466,10 @@ async def run_turn_stream(
                 }
                 return
             elif etype == "cancelled":
+                try:
+                    agent._tool_executor.cleanup_temp_paths()
+                except Exception as e:
+                    logger.warning(f"Temp cleanup failed after cancelled: {e}")
                 yield {
                     "content": accumulated,
                     "emotion": None,
@@ -348,6 +498,10 @@ async def run_turn_stream(
         raise
     except Exception as e:
         logger.exception(f"run_turn_stream error (session={session_id}): {e}")
+        try:
+            agent._tool_executor.cleanup_temp_paths()
+        except Exception as cleanup_err:
+            logger.warning(f"Temp cleanup failed after stream error: {cleanup_err}")
         yield {
             "content": "",
             "emotion": None,

@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { AlertTriangle, AlertCircle } from 'lucide-react'
 
 interface SidecarStatus {
   available: boolean
@@ -61,7 +62,7 @@ export function SidecarErrorBanner({ onRetry }: Props) {
     return (
       <div className="border border-amber-500/40 bg-amber-500/10 rounded-lg p-4 m-4">
         <div className="flex items-start gap-3">
-          <div className="text-amber-400 text-xl">⚠️</div>
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
           <div className="flex-1 text-sm">
             <div className="font-medium text-amber-300 mb-1">
               未检测到内嵌 Python 后端
@@ -87,7 +88,7 @@ export function SidecarErrorBanner({ onRetry }: Props) {
     return (
       <div className="border border-red-500/40 bg-red-500/10 rounded-lg p-4 m-4">
         <div className="flex items-start gap-3">
-          <div className="text-red-400 text-xl">🚨</div>
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
           <div className="flex-1 text-sm">
             <div className="font-medium text-red-300 mb-1">
               Python 后端启动失败

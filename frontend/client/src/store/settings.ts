@@ -56,6 +56,7 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       trayEnabled: all?.trayEnabled ?? DEFAULT_SETTINGS.trayEnabled,
       minimizeToTray: all?.minimizeToTray ?? DEFAULT_SETTINGS.minimizeToTray,
       toggleShortcut: all?.toggleShortcut || DEFAULT_SETTINGS.toggleShortcut,
+      toolCallDisplayMode: all?.toolCallDisplayMode || DEFAULT_SETTINGS.toolCallDisplayMode,
     }
   }
   // Browser dev fallback — localStorage
@@ -99,6 +100,7 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('trayEnabled', settings.trayEnabled)
     await api.set('minimizeToTray', settings.minimizeToTray)
     await api.set('toggleShortcut', settings.toggleShortcut)
+    await api.set('toolCallDisplayMode', settings.toolCallDisplayMode)
     return
   }
   localStorage.setItem('hakusai-settings', JSON.stringify(settings))
@@ -168,7 +170,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         providersLoadingSince: null,
       })
     } catch (e: any) {
-      console.error('[settings] loadProviders failed:', e)
+      // 后端不可用或 /api/config/providers 端点缺失是预期情况（如 sidecar 过旧），
+      // 错误状态已存入 store 供 UI 提示，无需输出控制台错误。
       set({
         providersLoading: false,
         // 保留 Error 对象本身，UI 用 instanceof SidecarOutdatedError 判断

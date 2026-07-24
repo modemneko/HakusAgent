@@ -6,7 +6,7 @@ import os
 import tempfile
 from typing import Any, Dict, Optional
 
-from ..base import Tool
+from ..base import Tool, ToolResult
 
 # Singleton browser state
 _browser = None
@@ -184,13 +184,18 @@ class BrowserUse(Tool):
         # Also return visible text summary so non-vision models get useful info
         visible_text = await self._extract_visible_text(page)
         text_summary = visible_text[:2000] if visible_text else "(no visible text)"
-        return (
+        result_text = (
             f"Screenshot saved: {path}\n"
             f"Page: {title}\n"
             f"URL: {url}\n"
             f"Size: {len(screenshot_bytes)} bytes\n\n"
             f"--- Visible text (for non-vision models) ---\n"
             f"{text_summary}"
+        )
+        return ToolResult(
+            success=True,
+            result=result_text,
+            metadata={"file_path": path},
         )
 
     async def _get_visible_text(self, page, kwargs):

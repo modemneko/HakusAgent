@@ -853,10 +853,31 @@ export class HakusAIClient {
       case 'token_usage':
         // Token usage is metadata, no direct chunk content
         return { done: false }
+      case 'question_asked':
+      case 'question_answered':
+        // Interactive questions are surfaced via the event parameter
+        return { done: false }
       default:
         // Other events (tool_call_*, orchestrator_phase_changed, etc.)
         // are surfaced via the event parameter to onChunk
         return { done: false }
+    }
+  }
+
+  // ============ Interactive question (ask_user tool) ============
+
+  async answerQuestion(sessionId: string, questionId: string, choice: string): Promise<void> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/question/answer`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, question_id: questionId, choice }),
+      },
+      10000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/question/answer`, 'Answer question failed')
     }
   }
 

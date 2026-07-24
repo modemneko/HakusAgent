@@ -63,6 +63,9 @@ from .events import (
     # File changes / Diff
     PatchApplied,
     PatchApproval,
+    # Interactive question
+    QuestionAsked,
+    QuestionAnswered,
     # Reflection (stage 2)
     ReflectionStarted,
     ReflectionCompleted,
@@ -77,6 +80,7 @@ from .ops import (
     PauseOp,
     ResumeOp,
     PatchApprovalOp,
+    AnswerOp,
 )
 from .serialization import (
     serialize_event,
@@ -109,6 +113,8 @@ __all__ = [
     "TokenUsage",
     "PatchApplied",
     "PatchApproval",
+    "QuestionAsked",
+    "QuestionAnswered",
     "ReflectionStarted",
     "ReflectionCompleted",
     "ReflectionDecision",
@@ -121,6 +127,7 @@ __all__ = [
     "PauseOp",
     "ResumeOp",
     "PatchApprovalOp",
+    "AnswerOp",
     # Serialization
     "serialize_event",
     "deserialize_event",
