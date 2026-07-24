@@ -1,7 +1,8 @@
 {
   "name": "hakusai-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HakusAI Desktop Client - macOS/Codex-style AI chat client for HakusAgent",
+  "type": "module",
   "main": "dist-electron/main.js",
   "author": {
     "name": "Lightneko",
