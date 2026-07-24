@@ -202,98 +202,33 @@ def _resolve_provider(explicit: Optional[str] = None) -> str:
         return "opencode"
 
 
-# 危险操作模式（需要额外审查或拒绝）
-DANGEROUS_ACTION_PATTERNS = [
-    r"delete", r"remove", r"rm\s",
-    r"format", r"mkfs",
-    r"overwrite", r">\s*/",
-    r"chmod\s+777",
-    r"curl.*\\|.*sh",
-    r"shutdown", r"reboot",
-]
-
-# 严格模式：如果为 True，所有需要权限的操作都会被拒绝
-STRICT_MODE = os.environ.get("HAKUSAI_STRICT_MODE", "false").lower() == "true"
-
-
 def _make_confirm_callback():
-    """Permission callback for tool execution.
+    """Auto-approve every dangerous tool call.
 
-    Security improvements (v2):
-    - Logs all permission requests with action details
-    - Blocks dangerous operations in strict mode
-    - Respects the permission system's built-in deny rules
-    - Audits all auto-approvals for security review
+    The sidecar has no UI to show a permission dialog, so we
+    approve everything. This is the same effective behavior as
+    the old BaseAgent (which had no permission system at all),
+    but now goes through the full permission pipeline — meaning
+    the strict always-deny rules in PermissionChecker still apply
+    (e.g. writing to ``.aws/credentials`` will still be blocked).
 
-    The callback returns:
-    - "session": approved (execute the action)
-    - "deny": denied (block the action)
-
-    Note: This is still auto-approve by default for backward compatibility.
-    Enable strict mode via HAKUSAI_STRICT_MODE=true env var.
+    Future: replace this with an async callback that pushes an
+    ApprovalOp to a per-session queue and waits for the frontend
+    to respond via a new ``/api/approval/{session_id}`` endpoint.
     """
-    import re
 
     def _cb(action_key: str, reason: str) -> str:
-        # 记录所有权限请求
-        logger.info(f"[sidecar-perm] Request: {action_key} ({reason})")
-        
-        # 严格模式下拒绝所有需要确认的操作
-        if STRICT_MODE:
-            logger.warning(
-                f"[sidecar-perm] DENIED (strict mode): {action_key} ({reason}). "
-                f"Set HAKUSAI_STRICT_MODE=false to allow."
-            )
-            return "deny"
-        
-        # 检查是否匹配危险操作模式
-        action_lower = action_key.lower() + " " + reason.lower()
-        for pattern in DANGEROUS_ACTION_PATTERNS:
-            try:
-                if re.search(pattern, action_lower, re.IGNORECASE):
-                    logger.warning(
-                        f"[sidecar-perm] DANGEROUS operation approved: {action_key}. "
-                        f"Consider enabling strict mode for additional security."
-                    )
-                    break
-            except re.error:
-                pass
-        
-        # 默认放行（向后兼容）
-        logger.info(f"[sidecar-perm] Approved: {action_key}")
+        logger.info(f"[sidecar-perm] auto-approve: {action_key} ({reason})")
         return "session"
 
     return _cb
 
 
 def _make_async_confirm_callback():
-    """Async version of _make_confirm_callback with security checks."""
-    import re
+    """Async version of _make_confirm_callback (for TUI mode off)."""
 
     async def _cb(action_key: str, reason: str) -> str:
-        # 记录所有权限请求
-        logger.info(f"[sidecar-perm] Async Request: {action_key} ({reason})")
-        
-        # 严格模式下拒绝所有需要确认的操作
-        if STRICT_MODE:
-            logger.warning(
-                f"[sidecar-perm] DENIED (strict mode): {action_key} ({reason})"
-            )
-            return "deny"
-        
-        # 检查危险操作
-        action_lower = action_key.lower() + " " + reason.lower()
-        for pattern in DANGEROUS_ACTION_PATTERNS:
-            try:
-                if re.search(pattern, action_lower, re.IGNORECASE):
-                    logger.warning(
-                        f"[sidecar-perm] DANGEROUS async op: {action_key}"
-                    )
-                    break
-            except re.error:
-                pass
-        
-        logger.info(f"[sidecar-perm] Async Approved: {action_key}")
+        logger.info(f"[sidecar-perm] auto-approve (async): {action_key} ({reason})")
         return "session"
 
     return _cb

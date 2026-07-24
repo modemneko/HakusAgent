@@ -30,56 +30,30 @@
     --titlebar-height: 2.5rem;
     --sidebar-width: 16.5rem;
     --glass-border: 0.16;
-
-    /* Codex-specific tokens */
-    --codex-bg-deep: 240 10% 6%;
-    --codex-surface: 240 8% 10%;
-    --codex-surface-raised: 240 7% 14%;
-    --codex-border-subtle: 240 5% 20%;
-    --codex-text-primary: 0 0% 95%;
-    --codex-text-secondary: 220 13% 65%;
-    --codex-text-muted: 220 10% 45%;
-    --codex-accent-violet: 263 70% 58%;
-    --codex-accent-blue: 217 91% 60%;
-    --codex-success: 142 71% 45%;
-    --codex-error: 0 72% 51%;
   }
 
   .dark {
-    /* macOS Codex Dark Theme — inspired by OpenAI Codex desktop / terminal aesthetics */
-    --background: 240 10% 7%;
-    --foreground: 0 0% 94%;
-    --card: 240 8% 11%;
-    --card-foreground: 0 0% 94%;
-    --popover: 240 9% 12%;
-    --popover-foreground: 0 0% 94%;
-    --primary: 263 70% 58%;
+    /* macOS 26 — luminous dark with visible glass borders */
+    --background: 258 12% 10%;
+    --foreground: 0 0% 96%;
+    --card: 258 10% 15%;
+    --card-foreground: 0 0% 96%;
+    --popover: 258 10% 14%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 258 52% 73%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 6% 16%;
-    --secondary-foreground: 0 0% 94%;
-    --muted: 240 6% 17%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 240 7% 19%;
-    --accent-foreground: 0 0% 94%;
-    --destructive: 0 63% 48%;
+    --secondary: 258 10% 18%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 258 10% 18%;
+    --muted-foreground: 258 8% 58%;
+    --accent: 258 12% 21%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 60% 55%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5% 18%;
-    --input: 240 5% 20%;
-    --ring: 263 70% 58%;
-    --glass-border: 0.22;
-
-    /* Codex-specific dark tokens */
-    --codex-bg-deep: 240 12% 4%;
-    --codex-surface: 240 8% 9%;
-    --codex-surface-raised: 240 7% 13%;
-    --codex-border-subtle: 240 5% 17%;
-    --codex-text-primary: 0 0% 93%;
-    --codex-text-secondary: 220 12% 60%;
-    --codex-text-muted: 220 10% 40%;
-    --codex-accent-violet: 263 70% 58%;
-    --codex-accent-blue: 217 91% 60%;
-    --codex-success: 142 71% 45%;
-    --codex-error: 0 62% 48%;
+    --border: 258 10% 28%;
+    --input: 258 10% 24%;
+    --ring: 258 52% 73%;
+    --glass-border: 0.28;
   }
 }
 
@@ -94,13 +68,11 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 
-                 'SF Mono', 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter',
+      'Segoe UI', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     user-select: none;
-    /* Smooth scrolling for the whole app */
-    scroll-behavior: smooth;
   }
   /* Allow text selection in chat / code blocks */
   .selectable,
@@ -109,51 +81,47 @@
   }
 }
 
-/* ===== Native macOS-style scrollbars ===== */
+/* Native macOS-style scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.18);
+  background: hsl(var(--muted-foreground) / 0.22);
   border-radius: 99px;
-  transition: background 150ms ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.32);
-}
-::-webkit-scrollbar-corner {
-  background: transparent;
+  background: hsl(var(--muted-foreground) / 0.38);
 }
 
-/* ===== macOS 26 Liquid Glass utilities ===== */
+/* macOS 26 Liquid Glass utilities */
 @layer components {
   .hk-sidebar {
-    @apply border-r border-border/60 bg-card/50 backdrop-blur-2xl;
+    @apply border-r border-border/70 bg-card/60 backdrop-blur-2xl;
   }
   .hk-titlebar {
-    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/50 bg-card/40 backdrop-blur-2xl;
+    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/50 backdrop-blur-2xl;
   }
   .hk-glass {
-    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/40 backdrop-blur-2xl shadow-sm;
+    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/50 backdrop-blur-2xl shadow-sm;
   }
   .hk-glass-strong {
-    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/65 backdrop-blur-3xl shadow-md;
+    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/75 backdrop-blur-3xl shadow-md;
   }
   .hk-card {
-    @apply rounded-2xl border border-border/50 bg-card/75 shadow-sm transition-all duration-200;
+    @apply rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-all duration-200;
   }
   .hk-card-hover {
-    @apply hover:border-primary/25 hover:bg-accent/40;
+    @apply hover:border-primary/30 hover:bg-accent/50;
   }
   .hk-input {
-    @apply rounded-xl border border-input/70 bg-background/50 transition-all duration-200 focus-visible:border-primary/35 focus-visible:ring-1 focus-visible:ring-primary/15 focus-visible:bg-background/70;
+    @apply rounded-xl border border-input/80 bg-background/60 transition-all duration-200 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/15 focus-visible:bg-background/80;
   }
   .hk-pill {
-    @apply rounded-full border border-border/60 bg-background/50 backdrop-blur-xl;
+    @apply rounded-full border border-border/70 bg-background/60 backdrop-blur-xl;
   }
   .hk-sidebar-item {
     @apply flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] transition-colors;
@@ -162,53 +130,11 @@
     @apply bg-primary/10 font-medium text-primary;
   }
   .hk-sidebar-item-inactive {
-    @apply text-foreground/75 hover:bg-accent/50 hover:text-foreground;
+    @apply text-foreground/80 hover:bg-accent/60 hover:text-foreground;
   }
 }
 
-/* ===== macOS Codex Component Styles ===== */
-@layer components {
-  /* Reasoning Block */
-  .codex-reasoning-block {
-    animation: codex-fade-slide-up 250ms ease-out;
-  }
-  
-  /* Tool Timeline */
-  .codex-tool-timeline {
-    animation: codex-fade-slide-up 200ms ease-out;
-  }
-  
-  /* Agent Panel */
-  .codex-agent-panel {
-    animation: codex-fade-slide-up 225ms ease-out;
-  }
-  
-  /* Message container */
-  .group\/codex-msg {
-    /* Hover effect for message actions */
-  }
-  
-  /* Suggestion chips */
-  .codex-suggestion-chip {
-    transition: all 180ms ease-out;
-  }
-  .codex-suggestion-chip:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.1);
-  }
-  
-  /* Welcome card */
-  .codex-welcome-card {
-    animation: codex-fade-scale 400ms ease-out;
-  }
-  
-  /* Empty state */
-  .codex-empty-state {
-    background: radial-gradient(ellipse at center, hsl(var(--primary) / 0.03) 0%, transparent 70%);
-  }
-}
-
-/* ===== Markdown rendering styles — clean, native reader look ===== */
+/* Markdown rendering styles — clean, native reader look */
 .markdown-body {
   @apply text-sm leading-7;
   overflow-wrap: break-word;
@@ -250,10 +176,10 @@
   @apply border-l-4 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
-  @apply bg-muted/80 px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
+  @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
 }
 .markdown-body pre {
-  @apply bg-zinc-950/95 text-zinc-100 rounded-xl p-4 my-4 overflow-x-auto text-xs border border-border/30;
+  @apply bg-zinc-950/90 text-zinc-100 rounded-xl p-4 my-4 overflow-x-auto text-xs border border-border/40;
 }
 .markdown-body pre code {
   @apply text-[0.9em];
@@ -269,7 +195,7 @@
   @apply bg-muted font-semibold;
 }
 
-/* ===== highlight.js theme — github-dark-dimmed (Codex style) ===== */
+/* highlight.js theme — github-dark */
 .hljs {
   color: #c9d1d9;
   background: transparent;
@@ -309,12 +235,8 @@
 .hljs-deletion {
   color: #ffa657;
 }
-.hljs-regexp,
-.hljs-link {
-  color: #89b4fa;
-}
 
-/* ===== Refined animations ===== */
+/* Refined animations */
 @keyframes slide-up-fade {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -324,87 +246,21 @@
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 .animate-pulse-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
-/* Codex-specific animations */
-@keyframes codex-fade-slide-up {
-  from { 
-    opacity: 0; 
-    transform: translateY(6px); 
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0); 
-  }
-}
-
-@keyframes codex-fade-scale {
-  from { 
-    opacity: 0; 
-    transform: scale(0.96) translateY(8px); 
-  }
-  to { 
-    opacity: 1; 
-    transform: scale(1) translateY(0); 
-  }
-}
-
-@keyframes codex-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-/* Streaming cursor shimmer effect */
-.codex-streaming-cursor::after {
-  content: '';
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    hsl(var(--primary)),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: codex-shimmer 1.5s infinite;
-  vertical-align: text-bottom;
-}
-
-/* ===== Electron / macOS draggable regions ===== */
+/* Electron / macOS draggable regions */
 .app-region-drag {
   -webkit-app-region: drag;
   app-region: drag;
 }
 .app-region-no-drag {
   -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
-/* ===== Focus visible styles for accessibility ===== */
-:focus-visible {
-  outline: 2px solid hsl(var(--primary) / 0.5);
-  outline-offset: 2px;
-}
 
-/* ===== Selection styles ===== */
-::selection {
-  background: hsl(var(--primary) / 0.2);
-  color: inherit;
-}
-
-/* ===== Print styles (for export) ===== */
-@media print {
-  .no-print {
-    display: none !important;
-  }
-  body {
-    background: white !important;
-    color: black !important;
-  }
-}

@@ -666,130 +666,15 @@ class GrepTool(ToolPlugin):
 
 
 class BashTool(ToolPlugin):
-    """
-    安全加固的 Shell 命令执行工具
-    
-    安全特性:
-    1. 命令白名单 - 仅允许配置中指定的命令
-    2. 危险模式黑名单 - 永久禁止危险命令模式
-    3. 审计日志 - 记录所有命令执行
-    4. 参数化执行 - 简单命令避免 shell=True
-    5. 命令清理 - 移除危险字符
-    
-    配置方式:
-    - 环境变量 HAKUSAI_ALLOW_COMMANDS: git,npm,python,pip,...
-    - 配置文件 security.allow_commands
-    """
     name = "Bash"
     description = (
         "执行 Shell 命令。支持 background 运行 (run_in_background)、timeout、description。"
         "用于构建、运行测试、git 等需要 Shell 的场景。"
         "文件操作优先使用 Read/Write/Edit/Glob/Grep, 不用 cat/grep/find。"
-        "\n⚠️ 安全限制:"
-        "- 命令受白名单控制，仅允许配置中指定的命令"
-        "- 危险命令模式被永久禁止"
-        "- 所有命令执行都会记录审计日志"
     )
     category = "command"
     requires_permission = True
     execute_timeout = BASH_MAX_TIMEOUT
-
-    # 默认的危险命令模式（正则表达式）
-    DANGEROUS_PATTERNS = [
-        r"rm\s+-rf\s+/",           # 删除根目录
-        r"rm\s+-rf\s+~",          # 删除 home
-        r"mkfs",                  # 格式化磁盘
-        r">\s*/dev/sd[a-z]",     # 覆盖磁盘
-        r"chmod\s+777",          # 危险权限
-        r"curl.*\\|\\s*(sh|bash|python|perl)",  # 远程脚本注入
-        r"wget.*\\|\\s*(sh|bash|python|perl)", # 远程脚本注入
-        r":\(\)\{:\|:&\};:",          # Fork bomb
-        r"dd\s+if=.*of=/dev/",   # DD 磁盘覆盖
-        r"\\>\s*/etc/",          # 覆盖系统文件
-        r"shutdown",              # 关机命令
-        r"reboot",                # 重启命令
-        r"passwd",                # 修改密码
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._background_tasks: Dict[str, asyncio.subprocess.Process] = {}
-        
-        # 从环境变量读取允许的命令列表
-        self._allow_commands: List[str] = []
-        env_allowed = os.environ.get("HAKUSAI_ALLOW_COMMANDS", "")
-        if env_allowed:
-            self._allow_commands = [c.strip() for c in env_allowed.split(",") if c.strip()]
-        
-        # 尝试从配置读取
-        if not self._allow_commands:
-            try:
-                from utils.config import BASE_CONFIG
-                config_allowed = BASE_CONFIG.get("security", {}).get("allow_commands", [])
-                if config_allowed:
-                    self._allow_commands = config_allowed
-            except Exception:
-                pass
-
-    def _log_audit(self, command: str, allowed: bool, reason: str = ""):
-        """记录审计日志"""
-        log_msg = f"command={command[:100]} allowed={allowed}"
-        if reason:
-            log_msg += f" reason={reason}"
-        logger.info(f"[AUDIT:Bash] {log_msg}")
-
-    def _validate_command(self, command: str) -> tuple:
-        """
-        验证命令是否允许执行
-        
-        Returns:
-            (allowed, reason)
-        """
-        import re
-        
-        if not command or not command.strip():
-            return False, "空命令"
-        
-        # 提取基本命令名
-        cmd_parts = command.strip().split()
-        base_cmd = cmd_parts[0].lower()
-        
-        # 移除可能的路径前缀 (如 /usr/bin/git -> git)
-        if "/" in base_cmd:
-            base_cmd = base_cmd.rsplit("/", 1)[-1]
-        
-        # 检查危险模式
-        for pattern in self.DANGEROUS_PATTERNS:
-            try:
-                if re.search(pattern, command, re.IGNORECASE):
-                    return False, f"命令匹配危险模式"
-            except re.error:
-                pass
-        
-        # 检查白名单
-        if not self._allow_commands:
-            return False, (
-                "命令执行已禁用（allow_commands 为空）。"
-                "请通过 HAKUSAI_ALLOW_COMMANDS 环境变量启用。"
-            )
-        
-        if base_cmd not in [c.lower().lstrip("./") for c in self._allow_commands]:
-            return False, (
-                f"命令 '{base_cmd}' 不在允许列表中。"
-                f"允许的命令: {', '.join(self._allow_commands[:10])}"
-                + ("..." if len(self._allow_commands) > 10 else "")
-            )
-        
-        return True, "OK"
-
-    def _sanitize_command(self, command: str) -> str:
-        """清理命令字符串（基础清理）"""
-        # 移除换行和特殊字符（防止命令注入）
-        sanitized = command.replace("\n", " ").replace("\r", " ")
-        # 移除连续空格
-        while "  " in sanitized:
-            sanitized = sanitized.replace("  ", " ")
-        return sanitized.strip()
 
     def get_metadata(self) -> ToolMetadata:
         return ToolMetadata(
@@ -799,7 +684,7 @@ class BashTool(ToolPlugin):
             parameters_schema={
                 "command": {
                     "type": "string",
-                    "description": "要执行的 Shell 命令（受白名单控制）"
+                    "description": "要执行的 Shell 命令"
                 },
                 "description": {
                     "type": "string",
@@ -830,60 +715,28 @@ class BashTool(ToolPlugin):
 
         if not command:
             return "错误: 必须提供 command"
-        
-        # ===== 安全验证 =====
-        allowed, reason = self._validate_command(command)
-        if not allowed:
-            self._log_audit(command, allowed=False, reason=reason)
-            return f"[SECURITY BLOCKED] {reason}"
-        
-        # 清理命令
-        safe_command = self._sanitize_command(command)
-        
-        # 记录审计日志
-        self._log_audit(safe_command, allowed=True)
 
         if run_in_background:
-            return await self._run_background(safe_command, description, cwd)
+            return await self._run_background(command, description, cwd)
 
         try:
-            return await asyncio.to_thread(self._run_sync, safe_command, description, timeout, cwd)
+            return await asyncio.to_thread(self._run_sync, command, description, timeout, cwd)
         except Exception as e:
             logger.error(f"Bash error: {e}")
             return f"错误: 命令执行失败: {e}"
 
     def _run_sync(self, command: str, description: str, timeout: int, cwd: str) -> str:
         try:
-            # 安全改进：尽可能避免 shell=True
-            # 对于简单命令（无管道、重定向、通配符），使用列表形式
-            should_use_shell = any(char in command for char in ["|", "&", ";", ">", "<", "$", "*", "?", "`", "\\"])
-            
-            if should_use_shell:
-                # 复杂命令必须用 shell=True，但已经过白名单验证
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    cwd=cwd,
-                    encoding="utf-8",
-                    errors="replace"
-                )
-            else:
-                # 简单命令：参数化执行（更安全）
-                cmd_parts = command.split()
-                result = subprocess.run(
-                    cmd_parts,
-                    shell=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    cwd=cwd,
-                    encoding="utf-8",
-                    errors="replace"
-                )
-            
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+                encoding="utf-8",
+                errors="replace"
+            )
             output = []
             if description:
                 output.append(f"$ {description}")
@@ -909,7 +762,6 @@ class BashTool(ToolPlugin):
             )
             bg_id = f"bg_{int(time.time())}_{proc.pid}"
             self._background_tasks[bg_id] = proc
-            self._log_audit(f"[BG] {command}", allowed=True, reason=f"pid={proc.pid}")
             return (
                 f"✓ 后台任务已启动 (id: {bg_id}, pid: {proc.pid})\n"
                 f"  命令: {command}\n"
@@ -917,6 +769,10 @@ class BashTool(ToolPlugin):
             )
         except Exception as e:
             return f"错误: 启动后台任务失败: {e}"
+
+    def __init__(self):
+        super().__init__()
+        self._background_tasks: Dict[str, asyncio.subprocess.Process] = {}
 
 
 class BashOutputTool(ToolPlugin):
