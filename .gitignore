@@ -1,3 +1,9 @@
+# ====================================================================
+# HakusAI .gitignore
+# ====================================================================
+# See DEAD_CODE_CLEANUP.md for cleanup guidance
+# See REFACTOR_PLAN.md for refactoring plan
+# ====================================================================
 
 # Local sidecar test venv (do not commit)
 .venv-sidecar-test/
@@ -10,18 +16,24 @@ frontend/client/sidecar/dist-debug/
 frontend/client/sidecar/hakusai_server_entry.py
 frontend/client/sidecar/hakusai_server.spec
 frontend/client/sidecar/hakusai_server_debug.spec
+
+# --------------------------------------------------------------------
 # Python
+# --------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Build artifacts (setuptools/pip/distutils)
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
+
 # Anchor lib/ to repo root — Python's installed-packages dir lives at ./lib/
 # Without the leading slash, this rule would also exclude nested lib/ dirs
 # like frontend/client/src/lib/ (which is a legitimate TypeScript module).
@@ -41,44 +53,124 @@ ENV/
 env/
 .venv/
 
+# --------------------------------------------------------------------
+# Nested project copy (CRITICAL: ~608MB waste!)
+# This was accidentally committed and should NOT exist.
+# If you see this directory, DELETE IT immediately.
+# See: DEAD_CODE_CLEANUP.md section 4
+# --------------------------------------------------------------------
+HakusAgent/HakusAgent/
+
+# --------------------------------------------------------------------
 # IDE
+# --------------------------------------------------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.sublime-workspace
+*.sublime-project
 
+# --------------------------------------------------------------------
 # Project specific
+# --------------------------------------------------------------------
 *.log
 logs/
 .env
 .env.local
+.env.production
 .config.py
 
+# Pre-commit cache
+.pre-commit-cache/
+
+# --------------------------------------------------------------------
 # OS
+# --------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Node (if frontend)
+# --------------------------------------------------------------------
+# Node / Frontend
+# --------------------------------------------------------------------
 node_modules/
-dist/
 
+# Frontend build output (excluding project root dist which conflicts with Python)
+frontend/*/dist/
+stage-web/dist/
+webui/dist/
+
+# --------------------------------------------------------------------
 # Temporary files
+# --------------------------------------------------------------------
 *.tmp
 *.temp
 .cache/
+*.bak
+*.swp
+*.swo
 
-# Model files (large)
+# Test coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+.nox/
+
+# MyPy type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff cache
+.ruff_cache/
+
+# --------------------------------------------------------------------
+# Model files (large binary files)
+# --------------------------------------------------------------------
 *.pt
 *.pth
 *.onnx
 *.bin
+*.safetensors
 !**/live2d-models/**  # Keep Live2D models
 
+# --------------------------------------------------------------------
 # Audio files (generated)
+# --------------------------------------------------------------------
 *.wav
 *.mp3
+*.ogg
+*.flac
 !**/assets/**  # Keep asset files
 
+# --------------------------------------------------------------------
+# TTS Engines (third-party, should be git submodule or separate repo)
+# --------------------------------------------------------------------
 /voxcpm
+
+# --------------------------------------------------------------------
+# Playwright
+# --------------------------------------------------------------------
+playwright-report/
+test-results/
+blob-report/
+
+# --------------------------------------------------------------------
+# Documentation build
+# --------------------------------------------------------------------
+docs/_build/
+site/
+
+# --------------------------------------------------------------------
+# Archive files that shouldn't be in repo
+# --------------------------------------------------------------------
+archive_contents.txt
+*.tar.gz
+*.zip
+*.rar
+*.7z

@@ -22,6 +22,19 @@ import logging
 import json
 from pathlib import Path
 
+# 安全中间件导入
+try:
+    from .middleware.auth import (
+        AuthMiddleware,
+        create_auth_middleware_from_config,
+        authenticate_websocket,
+        get_ws_token_from_params,
+    )
+    SECURITY_MIDDLEWARE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Security middleware not available: {e}")
+    SECURITY_MIDDLEWARE_AVAILABLE = False
+
 from hakusai_core.utils.events import event_bus, EventType
 from hakusai_core.config import config_manager
 from hakusai_core.models import model_registry, BaseModelAdapter, Message, MessageRole
@@ -794,14 +807,45 @@ class HakusAIServer:
             lifespan=lifespan
         )
         
-        # CORS中间件
+        # ==================== 安全相关配置 ====================
+        # 获取有效的安全配置（优先使用 security 配置，回退到 server 配置）
+        effective_host = self.config.get_effective_host()
+        effective_port = self.config.get_effective_port()
+        effective_cors_origins = self.config.get_effective_cors_origins()
+        
+        # CORS 中间件 - 安全加固版
+        # 当 allow_origins 为 ["*"] 时，强制禁用 credentials（CORS 规范要求）
+        cors_allow_credentials = True
+        if "*" in effective_cors_origins:
+            cors_allow_credentials = False
+            logger.warning(
+                "[Security] CORS allow_origins contains '*'. "
+                "Forcing allow_credentials=False (CORS spec requirement)"
+            )
+        else:
+            # 使用 security 配置的值（如果可用）
+            if hasattr(self.config, 'security'):
+                cors_allow_credentials = self.config.security.cors_allow_credentials
+        
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=self.config.server.cors_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_origins=effective_cors_origins,
+            allow_credentials=cors_allow_credentials,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # 限制方法
+            allow_headers=["Content-Type", "Authorization", "X-API-Key", 
+                         "X-Requested-With", "Accept", "Origin"],  # 限制头
         )
+        
+        # 鉴权中间件 - 仅当安全模块可用时添加
+        if SECURITY_MIDDLEWARE_AVAILABLE:
+            auth_middleware_factory = create_auth_middleware_from_config(self.config)
+            app.add_middleware(auth_middleware_factory)
+            logger.info("[Security] Authentication middleware installed")
+        
+        # 记录安全配置状态
+        logger.info(f"[Security] Host: {effective_host}, Port: {effective_port}")
+        logger.info(f"[Security] CORS origins: {effective_cors_origins}")
+        logger.info(f"[Security] Auth enabled: {self.config.is_auth_enabled()}")
         
         # 注册路由
         self._register_routes(app)
@@ -2836,10 +2880,14 @@ class HakusAIServer:
         if self.app is None:
             self.create_app()
         
+        # 使用有效的安全配置
+        effective_host = self.config.get_effective_host()
+        effective_port = self.config.get_effective_port()
+        
         config = uvicorn.Config(
             self.app,
-            host=self.config.server.host,
-            port=self.config.server.port,
+            host=effective_host,
+            port=effective_port,
             log_level="info"
         )
         server = uvicorn.Server(config)
@@ -2850,22 +2898,29 @@ class HakusAIServer:
         if self.app is None:
             self.create_app()
         
+        # 使用有效的安全配置
+        effective_host = self.config.get_effective_host()
+        effective_port = self.config.get_effective_port()
+        
         # 尝试使用配置的端口，如果被占用则尝试其他端口
-        port = self.config.server.port
+        port = effective_port
         import socket
         for _ in range(10):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind((self.config.server.host, port))
+                    s.bind((effective_host, port))
                     break
             except OSError:
                 logger.warning(f"Port {port} is in use, trying {port + 1}")
                 port += 1
         
-        logger.info(f"Starting server on port {port}")
+        logger.info(f"Starting server on {effective_host}:{port}")
+        logger.info(f"[Security] Authentication: {'ENABLED' if self.config.is_auth_enabled() else 'DISABLED'}")
+        if not self.config.is_auth_enabled():
+            logger.warning("[Security] WARNING: API Key auth is disabled! Set HAKUSAI_API_KEY env or security.api_key to enable.")
         uvicorn.run(
             self.app,
-            host=self.config.server.host,
+            host=effective_host,
             port=port,
             log_level="info"
         )

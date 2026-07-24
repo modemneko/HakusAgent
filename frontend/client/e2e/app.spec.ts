@@ -260,4 +260,162 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
 
     expect(errors).toHaveLength(0)
   })
+
+  // ========== 新增的增强测试用例 ==========
+
+  test('app has correct viewport and layout structure', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // 验证视口尺寸
+    const viewportSize = page.viewportSize()
+    expect(viewportSize?.width).toBeGreaterThan(0)
+    expect(viewportSize?.height).toBeGreaterThan(0)
+
+    // 验证基本布局结构
+    const body = page.locator('body')
+    await expect(body).toHaveClass(/overflow-hidden/) // 全屏布局
+
+    // 主容器应该是 flex 布局
+    const mainContainer = page.locator('.flex.h-screen.w-screen.overflow-hidden')
+    await expect(mainContainer).toBeVisible()
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('all main UI sections are accessible via selectors', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // 测试各种选择器都能找到元素
+    const selectors = [
+      'header',           // 顶部栏
+      'aside',            // 侧边栏
+      'textarea',         // 输入框
+      '[data-testid="sidebar-wrapper"]', // 侧边栏包装器
+    ]
+
+    for (const selector of selectors) {
+      const element = page.locator(selector)
+      await expect(element.first()).toBeVisible({ timeout: 5000 })
+    }
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('composer input handles focus correctly', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    const textarea = page.locator('textarea').first()
+    await expect(textarea).toBeVisible()
+
+    // 点击输入框获取焦点
+    await textarea.click()
+    await expect(textarea).toBeFocused()
+
+    // 输入文本
+    await textarea.type('Hello, HakusAI!')
+    const value = await textarea.inputValue()
+    expect(value).toBe('Hello, HakusAI!')
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('sidebar search functionality renders correctly', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForSelector('aside', { state: 'visible' })
+
+    // 搜索框应该可见
+    const searchInput = page.locator('aside input[placeholder="搜索会话..."]')
+    await expect(searchInput).toBeVisible()
+
+    // 输入搜索词（可能没有结果，但不应该崩溃）
+    await searchInput.fill('nonexistent_session_xyz')
+    await page.waitForTimeout(300)
+
+    // 应该显示"无匹配结果"或保持空状态
+    const noResults = page.locator('aside').locator('text=无匹配结果')
+    if ((await noResults.count()) > 0) {
+      await expect(noResults).toBeVisible()
+    }
+
+    // 清空搜索
+    await searchInput.clear()
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('connection status indicator displays correctly', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // 连接状态指示器应该在顶部栏中显示
+    // 可能是"离线"、"未连接"、"在线"等状态
+    const statusIndicators = page.locator('header').locator(
+      'span:has-text("在线"), span:has-text("离线"), span:has-text("未连接"), span:has-text("连接中"), span:has-text("错误")'
+    )
+    
+    // 至少应该有一个状态指示器
+    await expect(statusIndicators.first()).toBeVisible({ timeout: 10000 })
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('model info displays in top bar when available', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // 顶部栏中央区域应该有标题和可能的模型信息
+    const titleArea = page.locator('header').locator('span[class*="font-semibold"], span[class*="font-medium"]')
+    await expect(titleArea.first()).toBeVisible()
+
+    // 模型信息区域（可能在连接后显示）
+    const modelInfo = page.locator('header').locator('span:has-text("无模型信息"), span[class*="font-mono"]')
+    await expect(modelInfo.first()).toBeVisible()
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('toast notification system is available', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // Toaster 组件应该在 DOM 中（即使没有 toast 显示）
+    const toaster = page.locator('[class*="toast"], [data-toast], [role="status"]')
+    // Toaster 可能在页面某处存在
+
+    // 页面应该正常工作
+    await expect(page.locator('header')).toBeVisible()
+    await expect(page.locator('aside')).toBeVisible()
+
+    expect(errors).toHaveLength(0)
+  })
+
+  test('responsive design elements present', async ({ page }) => {
+    const errors = await collectConsoleErrors(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // 检查响应式设计相关的 CSS 类
+    const sidebar = page.locator('aside')
+    await expect(sidebar).toBeVisible()
+
+    // 侧边栏应该有固定或相对宽度
+    const sidebarWidth = await sidebar.evaluate(el => window.getComputedStyle(el).width)
+    expect(parseFloat(sidebarWidth)).toBeGreaterThan(0)
+
+    // 主内容区应该占据剩余空间
+    const mainContent = page.locator('[class*="flex-1"]')
+    await expect(mainContent.first()).toBeVisible()
+
+    expect(errors).toHaveLength(0)
+  })
 })

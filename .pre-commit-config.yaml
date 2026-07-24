@@ -1,0 +1,177 @@
+# HakusAI Pre-commit Configuration
+# =================================
+# 
+# 安装:
+#   pip install pre-commit
+#   pre-commit install
+#
+# 手动运行:
+#   pre-commit run --all-files
+#
+# 更新 hooks 到最新版本:
+#   pre-commit autoupdate
+#
+# 跳过某个 hook (临时):
+#   pre-commit run --hook-stage manual --skip <hook-id>
+#
+# =================================
+
+repos:
+  # =================================================================
+  # 1. Ruff — Python Linter & Formatter (替代 flake8 + black + isort)
+  # =================================================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      # Lint: 检查代码错误和风格问题
+      - id: ruff
+        name: "🔍 Ruff Lint"
+        args:
+          - --fix                    # 自动修复可修复的问题
+          - --exit-non-zero-on-fix   # 如果有修改则返回非零退出码
+          - --output-format=concise
+        types_or: [python, pyi]
+        exclude: |
+          (?x)^(
+            tts_engines/|           # 第三方 TTS 引擎，不检查
+            venv/|                  # 虚拟环境
+            .venv/|
+            node_modules/|
+            build/|
+            dist/|
+            .*egg-info/
+          )
+
+      # Format: 代码格式化 (替代 black)
+      - id: ruff-format
+        name: "🎨 Ruff Format"
+        types_or: [python, pyi]
+        exclude: |
+          (?x)^(
+            tts_engines/|
+            venv/|
+            .venv/|
+            node_modules/|
+            build/|
+            dist/|
+            .*egg-info/
+          )
+
+  # =================================================================
+  # 2. Mypy — 静态类型检查
+  # =================================================================
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.1
+    hooks:
+      - id: mypy
+        name: "📝 Mypy Type Check"
+        args:
+          - --ignore-missing-imports    # 忽略缺少存根的第三方库
+          - --no-strict-optional         # 允许 Optional 类型
+          - --show-error-codes          # 显示错误代码
+          - --pretty                    # 彩色输出
+          # 仅检查核心模块，跳过测试和第三方
+        files: ^(src|hakus)/.*\.py$
+        exclude: |
+          (?x)^(
+            tests/|
+            tts_engines/|
+            .*_test\.py$
+          )
+        additional_dependencies:
+          - types-requests
+          - types-PyYAML
+          - pydantic
+
+  # =================================================================
+  # 3. General Quality Checks
+  # =================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      # 检测文件结尾是否有空行
+      - id: end-of-file-fixer
+        name: "📄 Fix End of File"
+
+      # 确保文件以换行符结尾
+      - id: trailing-whitespace
+        name: "✂️ Trim Trailing Whitespace"
+        args: [--markdown-linebreak-ext=md]
+
+      # 检测大文件 (>500KB)
+      - id: check-added-large-files
+        name: "📏 Check Large Files"
+        args: ['--maxkb=500']
+
+      # 检查 JSON 格式
+      - id: check-json
+        name: "✅ Check JSON"
+
+      # 检查 YAML 格式
+      - id: check-yaml
+        name: "✅ Check YAML"
+        args: [--unsafe]
+
+      # 检查 merge conflicts
+      - id: check-merge-conflict
+        name: "⚠️ Check Merge Conflicts"
+
+      # 防止提交到 main/master
+      - id: no-commit-to-branch
+        name: "🚫 Protect Main Branch"
+        args: [--branch, main, --branch, master]
+
+      # 检测 debug statements (breakpoint, pdb等)
+      - id: debug-statements
+        name: "🐛 Detect Debug Statements"
+
+  # =================================================================
+  # 4. Security Checks
+  # =================================================================
+  - repo: https://github.com/PyCQA/bandit
+    rev: '1.7.8'
+    hooks:
+      - id: bandit
+        name: "🔒 Bandit Security Scan"
+        args: [
+          "-ll",           # 只报告 LOW 及以上
+          "-x", "tests/",  # 排除测试目录
+        ]
+        files: ^(src|hakus)/.*\.py$
+
+  # =================================================================
+  # 5. Python Docstring Checker
+  # =================================================================
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: '6.3.0'
+    hooks:
+      - id: pydocstyle
+        name: "📖 Pydocstyle"
+        # 放宽一些规则以适应项目风格
+        args: [
+          "--convention=google",
+          "--add-ignore=D100,D104,D107,D203,D212,D415,D401,D407",
+        ]
+        files: ^(src|hakus)/.*\.py$
+        exclude: |
+          (?x)^(
+            tests/|
+            .*_test\.py$|
+            __init__\.py$
+          )
+
+# =================================================================
+# 全局配置
+# =================================================================
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+  autofix_prs: true
+  autoupdate_branch: develop
+  autoupdate_schedule: weekly
+  skip: [mypy]  # CI 中 mypy 可能较慢，可选择性跳过
+
+# 默认语言版本
+default_language_version:
+  python: python3.11

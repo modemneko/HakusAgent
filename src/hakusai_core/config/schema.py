@@ -1,10 +1,17 @@
 """
 HakusAI 2.0 配置模式定义
 使用Pydantic进行配置验证
+
+安全说明:
+- 默认绑定 127.0.0.1 (仅本地访问)，可通过配置覆盖为 0.0.0.0
+- 默认 CORS 仅允许本地开发服务器
+- API Key 鉴权默认禁用（空字符串），生产环境必须设置
+- 命令执行默认启用白名单模式（空列表=禁止所有命令）
 """
 
-from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field
+import secrets
+from typing import List, Optional, Dict, Any, Literal, Set
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 
@@ -196,11 +203,168 @@ class PlatformConfig(BaseModel):
 
 # ==================== 系统配置 ====================
 
-class ServerConfig(BaseModel):
-    """服务器配置"""
-    host: str = Field(default="0.0.0.0", description="监听地址")
+# ==================== 安全配置 ====================
+
+class SecurityConfig(BaseModel):
+    """
+    安全配置 - 控制服务器的安全行为
+    
+    ⚠️ 重要安全提示:
+    - host 默认为 127.0.0.1，仅允许本地访问
+    - 如需远程访问，请确保设置了 api_key 并配置防火墙
+    - cors_origins 使用 ["*"] 时会自动禁用 allow_credentials
+    - 生产环境务必设置强密码作为 api_key
+    """
+    # 绑定地址 - 默认仅本地访问
+    host: str = Field(
+        default="127.0.0.1",
+        description=
+        "监听地址。默认 127.0.0.1 (仅本地)。"
+        "设为 0.0.0.0 允许所有网卡访问，但需配合 api_key 使用"
+    )
     port: int = Field(default=8080, ge=1, le=65535, description="监听端口")
-    cors_origins: List[str] = Field(default=["*"], description="CORS允许来源")
+    
+    # CORS 配置
+    cors_origins: List[str] = Field(
+        default=["http://localhost:1421", "http://127.0.0.1:1421"],
+        description=
+        "CORS 允许的来源列表。默认仅允许本地前端。"
+        "使用 [\"*\"] 将自动禁用 credentials (安全限制)"
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description="是否允许 CORS 携带凭证。当 origins 为 [*] 时强制 False"
+    )
+    
+    # API 鉴权配置
+    api_key: str = Field(
+        default="",
+        description=
+        "API 密钥。空字符串表示禁用鉴权（仅限开发环境）。"
+        "生产环境必须设置。可通过 HAKUSAI_API_KEY 环境变量覆盖"
+    )
+    api_key_header: str = Field(
+        default="X-API-Key",
+        description=
+        "API Key 的 HTTP 头名称。"
+        "使用自定义头避免浏览器拦截 Authorization 头"
+    )
+    
+    # WebSocket 鉴权
+    ws_auth_query_param: str = Field(
+        default="token",
+        description="WebSocket 鉴权的 query parameter 名称"
+    )
+    ws_auth_enabled: bool = Field(
+        default=True,
+        description="是否要求 WebSocket 连接携带鉴权 token"
+    )
+    
+    # 命令执行安全
+    allow_commands: List[str] = Field(
+        default=[],
+        description=
+        "允许执行的命令白名单（基本命令名）。"
+        "空列表表示禁止所有 shell 命令执行。"
+        "示例: ['git', 'npm', 'python', 'pip', 'cat', 'ls', 'find']"
+    )
+    block_commands: List[str] = Field(
+        default=[r"rm -rf /", r"mkfs", r"format", r"> /dev/sda", r"curl.*\|.*sh", r"wget.*\|.*sh"],
+        description="永远禁止的危险命令模式（正则）"
+    )
+    require_confirmation_for_shell: bool = Field(
+        default=True,
+        description="是否需要用户确认才能执行 shell 命令"
+    )
+    
+    # 审计日志
+    audit_log_enabled: bool = Field(
+        default=True,
+        description="是否启用操作审计日志"
+    )
+    audit_log_path: str = Field(
+        default="logs/audit.log",
+        description="审计日志文件路径"
+    )
+    
+    # 速率限制
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="是否启用速率限制"
+    )
+    rate_limit_requests_per_minute: int = Field(
+        default=60,
+        ge=1,
+        description="每分钟最大请求数"
+    )
+    
+    @field_validator('api_key', mode='before')
+    @classmethod
+    def resolve_api_key(cls, v: str) -> str:
+        """优先从环境变量读取 API Key"""
+        if not v or v.strip() == '':
+            env_key = os.environ.get('HAKUSAI_API_KEY', '')
+            if env_key:
+                return env_key
+        return v
+    
+    @field_validator('cors_allow_credentials', mode='after')
+    @classmethod
+    def validate_cors_credentials(cls, v: bool, info) -> bool:
+        """当 allow_origins 为 [*] 时，强制禁用 credentials"""
+        # 这个验证会在实例化后由 server.py 再次检查
+        return v
+    
+    def generate_api_key(self) -> str:
+        """生成随机 API Key"""
+        self.api_key = secrets.token_urlsafe(32)
+        return self.api_key
+    
+    def is_command_allowed(self, command: str) -> tuple[bool, str]:
+        """
+        检查命令是否被允许执行
+        
+        Returns:
+            (allowed, reason) - 是否允许及原因
+        """
+        import re
+        
+        # 提取基本命令名
+        cmd_parts = command.strip().split()
+        if not cmd_parts:
+            return False, "空命令"
+        
+        base_cmd = cmd_parts[0].lower()
+        
+        # 检查黑名单
+        for pattern in self.block_commands:
+            try:
+                if re.search(pattern, command, re.IGNORECASE):
+                    return False, f"命令匹配危险模式: {pattern}"
+            except re.error:
+                pass
+        
+        # 检查白名单
+        if not self.allow_commands:
+            return False, "命令执行已禁用（allow_commands 为空）"
+        
+        if base_cmd not in [c.lower() for c in self.allow_commands]:
+            return False, f"命令 '{base_cmd}' 不在允许列表中"
+        
+        return True, "OK"
+
+
+# 为了在 validator 中使用 os
+import os
+
+
+class ServerConfig(BaseModel):
+    """服务器配置 (保留向后兼容)"""
+    
+    # 向后兼容字段 - 实际使用时请迁移到 SecurityConfig
+    host: Optional[str] = Field(default=None, description="监听地址 (已废弃，请使用 security.host)")
+    port: Optional[int] = Field(default=None, ge=1, le=65535, description="监听端口 (已废弃)")
+    cors_origins: Optional[List[str]] = Field(default=None, description="CORS允许来源 (已废弃)")
     websocket_enabled: bool = Field(default=True, description="是否启用WebSocket")
 
 
@@ -226,16 +390,23 @@ class CharacterConfig(BaseModel):
     tags: List[str] = Field(default_factory=list, description="标签")
 
 
+
 class HakusAIConfig(BaseModel):
     """
     HakusAI 2.0 主配置类
     
-    这是配置文件的根模式，包含所有子配置
+    这是配置文件的根模式，包含所有子配置。
+    
+    安全相关配置已迁移到 security 字段，旧的 server 字段保留向后兼容。
+    建议新配置使用 security 字段进行安全设置。
     """
     version: str = Field(default="0.1.0", description="配置版本")
     
-    # 服务器配置
-    server: ServerConfig = Field(default_factory=ServerConfig, description="服务器配置")
+    # 安全配置 (新增 - 推荐使用)
+    security: SecurityConfig = Field(default_factory=SecurityConfig, description="安全配置")
+    
+    # 服务器配置 (向后兼容 - 安全相关设置请迁移到 security)
+    server: ServerConfig = Field(default_factory=ServerConfig, description="服务器配置 (兼容模式)")
     
     # 日志配置
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="日志配置")
@@ -260,6 +431,26 @@ class HakusAIConfig(BaseModel):
     
     # 额外配置（保留字段）
     extra: Dict[str, Any] = Field(default_factory=dict, description="额外配置")
+    
+    def get_effective_host(self) -> str:
+        """获取有效的监听地址 (security > server)"""
+        return self.security.host or self.server.host or "127.0.0.1"
+    
+    def get_effective_port(self) -> int:
+        """获取有效的监听端口 (security > server)"""
+        return self.security.port or self.server.port or 8080
+    
+    def get_effective_cors_origins(self) -> List[str]:
+        """获取有效的 CORS origins (security > server)"""
+        return self.security.cors_origins or self.server.cors_origins or ["http://localhost:1421"]
+    
+    def get_effective_api_key(self) -> str:
+        """获取 API Key"""
+        return self.security.api_key or ""
+    
+    def is_auth_enabled(self) -> bool:
+        """检查是否启用了鉴权"""
+        return bool(self.get_effective_api_key())
 
 
 # 默认配置实例
