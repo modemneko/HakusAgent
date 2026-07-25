@@ -63,8 +63,14 @@ export const MessageBubble = memo(function MessageBubble({
       {/* Message body */}
       <div className={cn('flex min-w-0 max-w-[85%] flex-col gap-1', isUser && 'items-end')}>
         {/* Reasoning + tool calls — unified log-style stack (hidden in inline mode) */}
-        {!hideToolCalls && (message.tool_calls.length > 0 || (isAssistant && showReasoning && !!message.reasoning)) && (
-          <ToolCallStack toolCalls={message.tool_calls} reasoning={isAssistant && showReasoning ? message.reasoning : undefined} />
+        {!hideToolCalls &&
+          (message.tool_calls.length > 0 ||
+            (isAssistant && showReasoning && (!!message.reasoning || message.streaming))) && (
+          <ToolCallStack
+            toolCalls={message.tool_calls}
+            reasoning={isAssistant && showReasoning ? message.reasoning : undefined}
+            isStreaming={message.streaming}
+          />
         )}
 
         {/* Content bubble */}

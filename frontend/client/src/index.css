@@ -2,58 +2,116 @@
 @tailwind components;
 @tailwind utilities;
 
+/**
+ * HakusAI — Codex 桌面版视觉复刻
+ *
+ * 设计原则（基于 Codex 主题系统 + macOS 26 Liquid Glass）：
+ *   1. 冷灰纸质配色：避免纯白/纯黑，使用带色相的灰度（亮色 #f7f8f7 / 暗色 #0d0f10）
+ *   2. 扁平分隔优先：1px hairline border 替代阴影，仅在悬浮/弹出层用阴影
+ *   3. 紧凑信息密度：13px 正文 / 12px 辅助 / 11px 元数据
+ *   4. 玻璃态精修：backdrop-blur(40px) saturate(180%)，边框透明度 0.16/0.28
+ *   5. Apple 深黑：暗色模式保持 Apple 风格深黑，但提高边框可见度
+ */
+
 @layer base {
   :root {
-    /* macOS 26 — pale lavender system palette — light */
-    --background: 258 18% 97.5%;
-    --foreground: 258 12% 11%;
-    --card: 258 15% 99%;
-    --card-foreground: 258 12% 11%;
-    --popover: 258 15% 99%;
-    --popover-foreground: 258 12% 11%;
-    --primary: 258 52% 73%;
+    /* ===== 亮色：冷灰纸质（Codex e-ink paper） ===== */
+    --background: 200 8% 96.5%;       /* Concrete Page Gray #eceeee */
+    --foreground: 200 6% 11%;          /* Reading Ink #202627 */
+    --card: 150 6% 98%;                /* E-ink Canvas #f7f8f7 */
+    --card-foreground: 200 6% 11%;
+    --popover: 150 6% 98%;
+    --popover-foreground: 200 6% 11%;
+    --primary: 200 22% 42%;            /* Desaturated Teal Action #466a76 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 258 14% 93%;
-    --secondary-foreground: 258 12% 11%;
-    --muted: 258 12% 92%;
-    --muted-foreground: 258 8% 42%;
-    --accent: 258 18% 90%;
-    --accent-foreground: 258 12% 11%;
-    --destructive: 0 70% 60%;
+    --secondary: 200 8% 92%;
+    --secondary-foreground: 200 6% 11%;
+    --muted: 200 8% 92%;
+    --muted-foreground: 210 6% 40%;    /* Muted Slate #687174 */
+    --accent: 200 12% 90%;
+    --accent-foreground: 200 6% 11%;
+    --destructive: 4 60% 50%;
     --destructive-foreground: 0 0% 98%;
-    --border: 258 12% 88%;
-    --input: 258 12% 86%;
-    --ring: 258 52% 73%;
-    --radius: 0.875rem;
+    --border: 200 8% 86%;              /* Cool Hairline #d6dcdd */
+    --input: 200 10% 82%;              /* Control Graphite Stroke #bec8ca */
+    --ring: 200 22% 42%;
+    --radius: 0.5rem;                  /* Codex 8px base radius */
 
-    /* Layout tokens */
-    --titlebar-height: 2.5rem;
-    --sidebar-width: 16.5rem;
+    /* Codex 语义色 */
+    --success: 152 30% 38%;            /* #4f7464 */
+    --warning: 41 30% 40%;             /* #7b6a42 */
+    --info: 205 70% 45%;
+
+    /* Diff 语义色（GitHub 风格低饱和） */
+    --diff-added: 137 38% 45%;         /* #3fb950 / #1a7f37 */
+    --diff-removed: 4 64% 52%;         /* #f85149 / #cf222e */
+    --diff-added-bg: 137 38% 95%;
+    --diff-removed-bg: 4 64% 96%;
+    --skill: 270 40% 55%;              /* Skill 紫 #a371f7 */
+
+    /* Layout tokens（Codex 精确尺寸） */
+    --titlebar-height: 2.75rem;        /* 44px Codex 工具栏 */
+    --sidebar-width: 16rem;            /* 256px 略宽于 Codex 240px 以容纳中文 */
+    --right-panel-width: 26.25rem;     /* 420px Codex review panel */
+    --statusbar-height: 1.625rem;      /* 26px Codex statusbar */
     --glass-border: 0.16;
+
+    /* Font system（Codex 字体层级） */
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+               "Helvetica Neue", "Inter", sans-serif;
+    --font-code: "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code",
+                 Menlo, Monaco, Consolas, monospace;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 13px;
+    --text-md: 14px;
+    --text-lg: 16px;
+
+    /* Shadow system（Codex 极简阴影） */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.4);
   }
 
   .dark {
-    /* macOS 26 — luminous dark with visible glass borders */
-    --background: 258 12% 10%;
+    /* ===== 暗色：Apple 深黑 + 可见玻璃边框 ===== */
+    --background: 220 14% 7%;          /* Apple 深黑 #0d0f10 */
     --foreground: 0 0% 96%;
-    --card: 258 10% 15%;
+    --card: 220 12% 11%;               /* #14171a */
     --card-foreground: 0 0% 96%;
-    --popover: 258 10% 14%;
+    --popover: 220 12% 10%;
     --popover-foreground: 0 0% 96%;
-    --primary: 258 52% 73%;
+    --primary: 200 28% 60%;            /* 反相 Teal #7fa8b5 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 258 10% 18%;
+    --secondary: 220 12% 16%;
     --secondary-foreground: 0 0% 96%;
-    --muted: 258 10% 18%;
-    --muted-foreground: 258 8% 58%;
-    --accent: 258 12% 21%;
+    --muted: 220 12% 16%;
+    --muted-foreground: 220 8% 60%;    /* 提高可见度 #8a9199 */
+    --accent: 220 14% 20%;
     --accent-foreground: 0 0% 96%;
-    --destructive: 0 60% 55%;
+    --destructive: 4 60% 58%;
     --destructive-foreground: 0 0% 98%;
-    --border: 258 10% 28%;
-    --input: 258 10% 24%;
-    --ring: 258 52% 73%;
+    --border: 220 12% 22%;             /* 提高边框可见度 */
+    --input: 220 12% 24%;
+    --ring: 200 28% 60%;
     --glass-border: 0.28;
+
+    /* Codex 语义色（暗色反相） */
+    --success: 152 25% 58%;
+    --warning: 41 30% 55%;
+    --info: 205 70% 60%;
+
+    /* Diff 语义色（暗色） */
+    --diff-added: 137 38% 58%;
+    --diff-removed: 4 64% 60%;
+    --diff-added-bg: 137 38% 14%;
+    --diff-removed-bg: 4 64% 16%;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 }
 
@@ -68,23 +126,38 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter',
-      'Segoe UI', 'Helvetica Neue', sans-serif;
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     user-select: none;
+    /* macOS 26 窗口背景渐变（极淡） */
+    background-image: radial-gradient(
+      ellipse at top,
+      hsl(var(--background) / 0.6),
+      hsl(var(--background))
+    );
   }
   /* Allow text selection in chat / code blocks */
   .selectable,
   .selectable * {
     user-select: text;
   }
+  /* Codex 风格字体平滑 */
+  button, input, textarea, select {
+    font-family: var(--font-ui);
+  }
+  code, pre, kbd, .font-mono {
+    font-family: var(--font-code);
+    font-feature-settings: "liga" 0;
+  }
 }
 
-/* Native macOS-style scrollbars */
+/* Native macOS-style scrollbars（Codex overlay 风格） */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -92,45 +165,123 @@
 ::-webkit-scrollbar-thumb {
   background: hsl(var(--muted-foreground) / 0.22);
   border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.38);
+  background: hsl(var(--muted-foreground) / 0.4);
+  background-clip: content-box;
 }
 
-/* macOS 26 Liquid Glass utilities */
+/* ===== macOS 26 Liquid Glass + Codex 扁平分隔 ===== */
 @layer components {
+  /* 侧边栏：Codex 扁平分隔 + 玻璃态 */
   .hk-sidebar {
-    @apply border-r border-border/70 bg-card/60 backdrop-blur-2xl;
+    @apply border-r border-border/70 bg-card/60;
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
   }
+
+  /* 顶部状态栏：Codex 工具栏 + Apple 玻璃 */
   .hk-titlebar {
-    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/50 backdrop-blur-2xl;
+    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/50;
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
   }
+
+  /* 玻璃卡片：Codex 极简 + Apple 光泽 */
   .hk-glass {
-    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/50 backdrop-blur-2xl shadow-sm;
+    @apply rounded-xl border border-white/[var(--glass-border)] bg-card/50 shadow-sm;
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
   }
   .hk-glass-strong {
-    @apply rounded-2xl border border-white/[var(--glass-border)] bg-card/75 backdrop-blur-3xl shadow-md;
+    @apply rounded-xl border border-white/[var(--glass-border)] bg-card/75 shadow-md;
+    backdrop-filter: blur(50px) saturate(200%);
+    -webkit-backdrop-filter: blur(50px) saturate(200%);
   }
+
+  /* Codex 卡片：扁平 + hairline border */
   .hk-card {
-    @apply rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-all duration-200;
+    @apply rounded-lg border border-border/60 bg-card/80 shadow-sm transition-all duration-200;
   }
   .hk-card-hover {
-    @apply hover:border-primary/30 hover:bg-accent/50;
+    @apply hover:border-primary/30 hover:bg-accent/40;
   }
+
+  /* Codex 输入框：hairline border + 聚焦环 */
   .hk-input {
-    @apply rounded-xl border border-input/80 bg-background/60 transition-all duration-200 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/15 focus-visible:bg-background/80;
+    @apply rounded-md border border-input/80 bg-background/60 transition-all duration-200;
+    @apply focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/15 focus-visible:bg-background/80;
   }
+
+  /* 胶囊按钮 */
   .hk-pill {
-    @apply rounded-full border border-border/70 bg-background/60 backdrop-blur-xl;
+    @apply rounded-full border border-border/70 bg-background/60;
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
   }
+
+  /* 侧边栏列表项：Codex 紧凑密度 */
   .hk-sidebar-item {
-    @apply flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] transition-colors;
+    @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors;
   }
   .hk-sidebar-item-active {
     @apply bg-primary/10 font-medium text-primary;
   }
   .hk-sidebar-item-inactive {
     @apply text-foreground/80 hover:bg-accent/60 hover:text-foreground;
+  }
+
+  /* 右栏：Codex review panel + 玻璃 */
+  .hk-right-panel {
+    @apply border-l border-border/70 bg-card/60;
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+  }
+
+  /* 底部状态栏：Codex 26px + 玻璃 */
+  .hk-statusbar {
+    @apply flex h-[var(--statusbar-height)] shrink-0 items-center justify-between border-t border-border/50 bg-card/40 px-3 text-[11px] text-muted-foreground;
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Codex 分段控件：Local/Worktree/Cloud */
+  .hk-segment {
+    @apply inline-flex items-center gap-0.5 rounded-md border border-border/50 bg-background/40 p-0.5;
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+  .hk-segment-btn {
+    @apply inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium text-muted-foreground transition-all duration-150;
+    @apply hover:text-foreground;
+  }
+  .hk-segment-btn-active {
+    @apply bg-card/90 text-foreground shadow-sm;
+  }
+
+  /* Codex Diff 行（用于 DiffReview） */
+  .hk-diff-line {
+    @apply flex items-start px-3 py-0.5 font-mono text-[12px] leading-5;
+  }
+  .hk-diff-line-add {
+    background: hsl(var(--diff-added-bg));
+    border-left: 2px solid hsl(var(--diff-added));
+  }
+  .hk-diff-line-del {
+    background: hsl(var(--diff-removed-bg));
+    border-left: 2px solid hsl(var(--diff-removed));
+  }
+  .hk-diff-line-context {
+    border-left: 2px solid transparent;
+  }
+  .hk-diff-line-meta {
+    @apply text-muted-foreground/60 italic;
+  }
+  .hk-diff-line-no {
+    @apply w-10 shrink-0 select-none pr-3 text-right text-muted-foreground/50;
   }
 }
 
@@ -253,6 +404,12 @@
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* Codex 风格聚焦环（无障碍） */
+@keyframes focus-ring {
+  from { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  to { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.25); }
+}
+
 /* Electron / macOS draggable regions */
 .app-region-drag {
   -webkit-app-region: drag;
@@ -262,5 +419,3 @@
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
-
-

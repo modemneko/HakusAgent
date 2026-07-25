@@ -415,6 +415,16 @@ class SubAgent:
         for iteration in range(self._max_depth):
             messages = self._context.build_messages()
             response, tool_calls = await self._parent._call_model(messages, timeout=self._llm_timeout)
+
+            # Detect LLM-level errors that were returned as content strings.
+            # Without this, the sub-agent would "complete successfully" with
+            # content like "[Error: 模型调用失败: RateLimitError]", causing
+            # Orchestrator to waste tests/fixes on an error message.
+            if isinstance(response, str) and response.lstrip().startswith("[Error:"):
+                raise RuntimeError(
+                    f"Sub-agent LLM call returned an error: {response}"
+                )
+
             if not tool_calls:
                 self._result = response
                 self._completed = True
@@ -906,6 +916,10 @@ class AgentCore:
 
         Returns (content, tool_calls_list).  Never raises — errors are
         returned as the content string.
+
+        Added retry with exponential backoff for transient errors
+        (rate limits, timeouts, server errors) to prevent a single 429
+        from killing an entire Orchestrator task.
         """
         # Proactive thread isolation in TUI mode — avoids the
         # ``asyncio.run() cannot be called from a running event loop``
@@ -918,95 +932,153 @@ class AgentCore:
         if timeout is None:
             timeout = self._llm_timeout
 
-        try:
-            # 获取底层 OpenAI client (兼容新 BaseLLMClient 和旧 _BaseModel)
-            _oa_client = getattr(self._model, "client", None)
-            if _oa_client is None and hasattr(self._model, "get_openai_client"):
-                _oa_client = self._model.get_openai_client()
-            _model_name = self._model.model_name
+        max_retries = 3
+        last_error: Optional[Exception] = None
+        _call_started = time.time()
+        logger.info(
+            f"[llm.call] model={self._model.model_name} msgs={len(messages)} "
+            f"tools={len(tools or [])} retries={max_retries}"
+        )
+        for attempt in range(1, max_retries + 1):
+            try:
+                content, tool_calls = await self._call_model_once_via_client(messages, tools, timeout)
+                elapsed = time.time() - _call_started
+                logger.info(
+                    f"[llm.response] model={self._model.model_name} "
+                    f"content_len={len(content)} tool_calls={len(tool_calls)} "
+                    f"elapsed_ms={int(elapsed * 1000)}"
+                )
+                return content, tool_calls
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                last_error = e
+                elapsed = time.time() - _call_started
+                if attempt >= max_retries or not self._retry_manager.is_retryable(e):
+                    logger.error(
+                        f"[llm.failed] model={self._model.model_name} "
+                        f"error={type(e).__name__} attempts={attempt} "
+                        f"elapsed_ms={int(elapsed * 1000)}"
+                    )
+                    break
+                delay = self._retry_manager.calculate_delay(attempt)
+                logger.warning(
+                    f"[llm.retry] model={self._model.model_name} "
+                    f"attempt={attempt}/{max_retries} error={type(e).__name__}: {e} "
+                    f"next_delay_ms={int(delay * 1000)} elapsed_ms={int(elapsed * 1000)}"
+                )
+                _dbg = _get_dbg()
+                if _dbg:
+                    _dbg.log_raw(
+                        f"\n  [RETRY] LLM call attempt {attempt}/{max_retries}, "
+                        f"waiting {delay:.1f}s ({type(e).__name__})\n"
+                    )
+                await asyncio.sleep(delay)
 
-            response = await asyncio.wait_for(
-                _oa_client.chat.completions.create(
-                    model=_model_name,
-                    messages=messages,
-                    tools=tools or None,
-                ),
-                timeout=timeout,
-            )
+        # All retries exhausted or non-retryable error — convert to content string
+        return self._format_call_model_error(last_error, messages, timeout)
 
-            content = ""
-            tool_calls_list: List[Dict[str, Any]] = []
-            if response.choices:
-                choice = response.choices[0]
-                message = choice.message
-                content = message.content or ""
-                if message.tool_calls:
-                    for tc in message.tool_calls:
-                        try:
-                            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                        except json.JSONDecodeError:
-                            args = {}
-                        tool_calls_list.append({
-                            "id": tc.id,
-                            "name": tc.function.name,
-                            "arguments": args,
-                        })
+    async def _call_model_once_via_client(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict]] = None,
+        timeout: Optional[float] = None,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """Single non-retrying OpenAI client call (internal helper)."""
+        # 获取底层 OpenAI client (兼容新 BaseLLMClient 和旧 _BaseModel)
+        _oa_client = getattr(self._model, "client", None)
+        if _oa_client is None and hasattr(self._model, "get_openai_client"):
+            _oa_client = self._model.get_openai_client()
+        _model_name = self._model.model_name
 
-            # --- DSML XML fallback ---
-            # DeepSeek may embed tool calls as DSML XML inside `content`
-            # instead of using the structured `tool_calls` field.  Parse
-            # them here so the tool loop doesn't silently stop.
-            if not tool_calls_list and content:
-                dsml_calls, leftover = _parse_dsml_calls(content)
-                if dsml_calls:
-                    tool_calls_list = dsml_calls
-                    content = leftover
+        response = await asyncio.wait_for(
+            _oa_client.chat.completions.create(
+                model=_model_name,
+                messages=messages,
+                tools=tools or None,
+            ),
+            timeout=timeout,
+        )
 
-            return content, tool_calls_list
-        except asyncio.TimeoutError:
+        content = ""
+        tool_calls_list: List[Dict[str, Any]] = []
+        if response.choices:
+            choice = response.choices[0]
+            message = choice.message
+            content = message.content or ""
+            if message.tool_calls:
+                for tc in message.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    tool_calls_list.append({
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+        # --- DSML XML fallback ---
+        # DeepSeek may embed tool calls as DSML XML inside `content`
+        # instead of using the structured `tool_calls` field.  Parse
+        # them here so the tool loop doesn't silently stop.
+        if not tool_calls_list and content:
+            dsml_calls, leftover = _parse_dsml_calls(content)
+            if dsml_calls:
+                tool_calls_list = dsml_calls
+                content = leftover
+
+        return content, tool_calls_list
+
+    def _format_call_model_error(
+        self,
+        error: Optional[Exception],
+        messages: List[Dict[str, Any]],
+        timeout: Optional[float] = None,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """Convert an LLM call exception into a user-facing content string."""
+        if error is None:
+            return "[Error: 模型调用失败: unknown error]", []
+
+        err_name = type(error).__name__
+        err_msg = str(error)
+
+        if isinstance(error, asyncio.TimeoutError):
             logger.error(f"LLM client call timed out after {timeout:.1f}s")
             return f"[Error: 模型调用超时 ({timeout:.0f}秒)]", []
-        except asyncio.CancelledError:
-            raise
-        except RuntimeError as re_err:
-            err_msg = str(re_err)
+
+        if isinstance(error, RuntimeError):
             if "asyncio.run" in err_msg or "event loop" in err_msg:
-                # Event-loop conflict — run the API call in a separate
-                # thread with its own event loop.
+                # This should have been handled by retry; return a clear message.
                 import traceback as _tb
                 logger.warning(
-                    f"Event-loop conflict in _call_model_via_client, "
-                    f"retrying in dedicated thread: {re_err}\n"
+                    f"Event-loop conflict in _call_model_via_client: {error}\n"
                     f"{_tb.format_exc()}"
                 )
-                return await self._call_model_in_thread(messages, tools, timeout)
-            logger.error(f"LLM client call failed (RuntimeError): {re_err}")
+            logger.error(f"LLM client call failed (RuntimeError): {error}")
             return "[Error: 模型调用失败: RuntimeError]", []
-        except Exception as e:
-            err_name = type(e).__name__
-            err_msg = str(e)
-            logger.error(f"LLM client call failed: {err_name}: {err_msg}")
 
-            # If this is a BadRequestError, try to provide actionable info
-            if "400" in err_msg or "Bad" in err_name or "Request" in err_name:
-                # Log the message structure for debugging
-                msg_summary = []
-                for m in messages[:5]:
-                    role = m.get("role", "?")
-                    has_tc = bool(m.get("tool_calls"))
-                    tc_id = m.get("tool_call_id", "")
-                    msg_summary.append(f"{role}(tc={has_tc},id={tc_id})")
-                logger.error(
-                    f"BadRequestError details — messages structure: "
-                    f"{msg_summary} ... (total {len(messages)} msgs)"
-                )
-                return (
-                    f"[Error: 模型调用失败: {err_name}] "
-                    f"可能原因: 消息格式异常或上下文过长。请尝试重新开始对话。",
-                    [],
-                )
+        logger.error(f"LLM client call failed: {err_name}: {err_msg}")
 
-            return f"[Error: 模型调用失败: {err_name}]", []
+        # If this is a BadRequestError, try to provide actionable info
+        if "400" in err_msg or "Bad" in err_name or "Request" in err_name:
+            msg_summary = []
+            for m in messages[:5]:
+                role = m.get("role", "?")
+                has_tc = bool(m.get("tool_calls"))
+                tc_id = m.get("tool_call_id", "")
+                msg_summary.append(f"{role}(tc={has_tc},id={tc_id})")
+            logger.error(
+                f"BadRequestError details — messages structure: "
+                f"{msg_summary} ... (total {len(messages)} msgs)"
+            )
+            return (
+                f"[Error: 模型调用失败: {err_name}] "
+                f"可能原因: 消息格式异常或上下文过长。请尝试重新开始对话。",
+                [],
+            )
+
+        return f"[Error: 模型调用失败: {err_name}]", []
 
     async def _call_model_with_client(
         self,
@@ -2863,12 +2935,14 @@ class AgentCore:
                     )
                     return
 
-                # 5b) Context overload guard: if context is critically full,
-                #     force the turn to end even if the model called tools.
-                #     This prevents runaway context growth when the model
-                #     ignores the [CRITICAL] hint.
-                #     Use 80% threshold because our estimate tends to
-                #     underestimate actual API token usage.
+                # 5b) Context overload guard: try compression first, only
+                #     force-end when compression can't keep up.
+                #     Old behavior: 70% → immediate termination (caused
+                #     "agent stops after running many tools" — the model
+                #     never got to execute its requested tool calls).
+                #     New behavior:
+                #       70-89%  → trigger compression, continue executing tools
+                #       >= 90%  → if still >= 90% after compression, force end
                 try:
                     _est = self._context._total_estimated_tokens()
                     _bgt = self._context.budget
@@ -2877,12 +2951,45 @@ class AgentCore:
                     _pct = 0
 
                 if _pct >= 70:
-                    # Force end: don't execute the requested tools,
-                    # give the user whatever we have so far.
+                    # Try compression first (non-fatal if it fails)
                     _dbg = _get_dbg()
                     if _dbg:
                         _dbg.log_raw(
                             f"\n  [OVERLOAD] Context at {_pct}%, "
+                            f"attempting compression before deciding...\n"
+                        )
+                    try:
+                        _comp_level = await self._context.compress(
+                            model=self._llm_client,
+                        )
+                        # Re-measure after compression
+                        _est2 = self._context._total_estimated_tokens()
+                        _pct2 = int(_est2 * 100 / max(1, _bgt))
+                        if _dbg:
+                            _dbg.log_raw(
+                                f"  [COMPRESS] {_pct}% → {_pct2}% "
+                                f"(level={_comp_level.name})\n"
+                            )
+                        logger.info(
+                            f"Context compressed: {_pct}% → {_pct2}% "
+                            f"(level={_comp_level.name})"
+                        )
+                        # If compression brought us below 90%, continue
+                        if _pct2 < 90:
+                            _pct = _pct2  # update for downstream checks
+                        else:
+                            # Compression insufficient — force end
+                            _pct = _pct2
+                    except Exception as _comp_err:
+                        logger.warning(f"Compression failed: {_comp_err}")
+                        # Keep original _pct, fall through to force-end
+
+                # Only force-end if still >= 90% after compression attempt
+                if _pct >= 90:
+                    _dbg = _get_dbg()
+                    if _dbg:
+                        _dbg.log_raw(
+                            f"\n  [OVERLOAD] Context at {_pct}% after compression, "
                             f"forcing turn end (skipping {len(api_tool_calls)} tool calls)\n"
                         )
                     summary = full_response or (

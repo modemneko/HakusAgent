@@ -70,6 +70,9 @@ export interface SidecarVersionInfo {
  * 这里也要同步 bump，否则客户端不会提示用户升级。
  *
  * 历史:
+ *   v8 (0.8.0): + Codex review panel: /api/git/status, /api/git/diff,
+ *               /api/git/stage + /ws/terminal
+ *   v7 (0.7.0): + /api/question/answer + ask_user 工具交互式提问
  *   v6 (0.6.0): + Phase 4 WS 心跳/重连 + Phase 5 /api/metrics 端点
  *               + WS resume_session / interrupt / pong 协议
  *   v5 (0.5.0): + MCP 客户端支持 (/api/config/mcp-servers* + /api/mcp/servers/*)
@@ -77,7 +80,7 @@ export interface SidecarVersionInfo {
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_SIDECAR_API_VERSION_INT = 6
+export const EXPECTED_SIDECAR_API_VERSION_INT = 8
 
 export interface AppConfig {
   version: string
@@ -490,6 +493,29 @@ export interface MetricsResponse {
   by_provider?: Record<string, { turns: number; errors: number; llm_calls: number }>
 }
 
+// ========== 日志系统 (/api/logs) ==========
+
+export interface LogFileInfo {
+  name: string
+  size: number
+  mtime: number
+}
+
+export interface LogEntry {
+  ts?: string | null
+  level: string
+  logger: string
+  msg?: any
+  event?: string | null
+  fields?: Record<string, any> | null
+  raw?: string
+}
+
+export interface LogsResponse {
+  files: LogFileInfo[]
+  logs: LogEntry[]
+}
+
 // ========== 客户端本地数据模型 ==========
 
 export type MessageRole = 'user' | 'assistant' | 'system'
@@ -780,4 +806,38 @@ export interface McpInvokeResult {
   message: string
   result: string
   is_error: boolean
+}
+
+// =====================================================================
+// Git / Workspace — Codex-style review panel
+// =====================================================================
+
+export interface GitFileChange {
+  path: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'unknown'
+  staged: boolean
+}
+
+export interface GitStatusResponse {
+  /** Current branch name (empty if detached/none). */
+  branch: string
+  /** Working directory the server inspects. */
+  workdir: string
+  /** Whether the workdir is inside a git repository. */
+  is_repo: boolean
+  /** Files with unstaged changes. */
+  unstaged: GitFileChange[]
+  /** Files with staged changes. */
+  staged: GitFileChange[]
+  /** Files not tracked by git. */
+  untracked: GitFileChange[]
+}
+
+export interface GitDiffResponse {
+  /** Unified diff text (may be empty when no changes). */
+  diff: string
+  /** True if the diff was truncated due to size. */
+  truncated: boolean
+  /** Working directory used. */
+  workdir: string
 }

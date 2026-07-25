@@ -42,12 +42,14 @@ import time
 import urllib.request
 from typing import Any, AsyncIterator, Dict, Optional
 
+from .logging_config import get_logger, structured
+
 # Lazy imports — hakus/ pulls in openai, anthropic, etc. which may
 # not all be installed in the sidecar's PyInstaller bundle. We defer
 # the import to first use so /health still works even if some
 # optional provider SDK is missing.
 
-logger = logging.getLogger(__name__)
+logger = get_logger("haku.agent.bridge")
 
 # Project root is two levels above src/hakusai_server/agent_bridge.py
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -61,6 +63,13 @@ CRITICAL WORKFLOW RULES:
 3. **Read before Edit** — Always read a file before editing. The edit tool's old_string must be unique; if not, use more context or replace_all.
 4. **Plan complex tasks** — For non-trivial work, break it into steps and track progress with TodoWrite.
 5. **Do not generate throwaway scripts** — Never write a temporary Python script to inspect or transform files when a built-in tool can do it directly.
+
+PERSISTENCE RULES (IMPORTANT — do not stop prematurely):
+6. **Keep working until the task is fully done** — Do NOT produce a "summary" response and stop while there are still steps remaining. If you have read files and identified the issue, you MUST proceed to fix it, not just describe it.
+7. **Always call tools to make changes** — A turn ends only when (a) the task is complete and verified, or (b) you genuinely need user input. Do NOT end the turn by writing a prose summary of "what I would do next" — actually do it.
+8. **Verify after changes** — After editing code, run the relevant tests / build / type-check to confirm your change works. Only report "done" after verification passes.
+9. **Recover from errors** — If a tool call fails, read the error, fix the root cause, and retry. Do NOT give up after a single failure. Only surface the failure to the user after 3 genuine attempts with different approaches.
+10. **Use TodoWrite for multi-step tasks** — Break down complex work into todo items and check them off as you go. This prevents the context from filling up with unrelated exploration.
 
 Current workspace root: {working_dir}
 """
@@ -360,11 +369,83 @@ async def run_turn_stream(
     output_tokens = 0
     iterations = 0
 
+    structured(
+        logger,
+        logging.INFO,
+        "stream_start",
+        session_id=session_id,
+        provider=provider or "default",
+        message_length=len(message),
+    )
+
     # #region debug-point E:stream-start
     _debug_log("E", "agent_bridge.py:run_turn_stream", "stream start", {"session_id": session_id, "provider": provider})
     # #endregion
+
+    # ── Complexity-based routing ──────────────────────────────────────
+    # Simple tasks (read a file, explain a snippet) → AgentCore single loop
+    # Complex tasks (build a feature, multi-file refactor) → Orchestrator
+    # with PlannerAgent/DevAgent/TesterAgent collaboration.
+    #
+    # The scorer is deterministic (keyword-based), so the same message
+    # always routes the same way — no LLM call overhead for routing.
+    use_orchestrator = False
+    orch: Optional["Any"] = None
     try:
-        async for event in agent.run_turn(message, op_receiver=op_receiver):
+        from hakus.complexity_scorer import TaskComplexityScorer
+        _scorer = TaskComplexityScorer()
+        _score = _scorer.score(message)
+        use_orchestrator = _score.should_orchestrate
+        _debug_log("E", "agent_bridge.py:run_turn_stream", "complexity_score", {
+            "session_id": session_id,
+            "total": _score.total,
+            "should_orchestrate": _score.should_orchestrate,
+            "multi_step": _score.multi_step,
+            "file_creation": _score.file_creation,
+            "multi_file": _score.multi_file,
+        })
+        if use_orchestrator:
+            structured(
+                logger,
+                logging.INFO,
+                "route_orchestrator",
+                session_id=session_id,
+                score=_score.total,
+                multi_step=_score.multi_step,
+                file_creation=_score.file_creation,
+                multi_file=_score.multi_file,
+            )
+        else:
+            structured(
+                logger,
+                logging.INFO,
+                "route_agentcore",
+                session_id=session_id,
+                score=_score.total,
+                multi_step=_score.multi_step,
+                file_creation=_score.file_creation,
+                multi_file=_score.multi_file,
+            )
+    except Exception as _route_err:
+        logger.warning(f"Complexity routing failed, falling back to AgentCore: {_route_err}")
+        use_orchestrator = False
+
+    try:
+        if use_orchestrator:
+            # Orchestrator mode: multi-agent pipeline (Plan→Develop→Test→Fix)
+            from hakus.orchestrator import Orchestrator, OrchestratorConfig
+            orch = Orchestrator(
+                root_agent=agent,
+                workspace_dir=_REPO_ROOT,
+                config=OrchestratorConfig(),
+            )
+            # stream_execute_v2 yields AgentEvent directly (no need for adapter)
+            event_source = orch.stream_execute_v2(message)
+        else:
+            # AgentCore mode: standard single-agent loop
+            event_source = agent.run_turn(message, op_receiver=op_receiver)
+
+        async for event in event_source:
             try:
                 evt_dict = serialize_event(event)
             except Exception as e:
@@ -399,6 +480,16 @@ async def run_turn_stream(
                     "reasoning": True,
                 }
             elif etype == "tool_call_started":
+                structured(
+                    logger,
+                    logging.INFO,
+                    "tool_call_started",
+                    session_id=session_id,
+                    call_id=evt_dict.get("call_id", ""),
+                    tool_name=evt_dict.get("name", ""),
+                    arguments=evt_dict.get("arguments", {}),
+                    mode="orchestrator" if use_orchestrator else "agentcore",
+                )
                 yield {
                     "content": "",
                     "emotion": None,
@@ -412,6 +503,20 @@ async def run_turn_stream(
                     },
                 }
             elif etype == "tool_call_finished":
+                _tc_duration = evt_dict.get("duration", 0.0)
+                _tc_success = evt_dict.get("success", True)
+                structured(
+                    logger,
+                    logging.INFO if _tc_success else logging.WARNING,
+                    "tool_call_finished",
+                    session_id=session_id,
+                    call_id=evt_dict.get("call_id", ""),
+                    tool_name=evt_dict.get("name", ""),
+                    success=_tc_success,
+                    duration_ms=round(_tc_duration * 1000, 2),
+                    result_length=len(str(evt_dict.get("result", ""))),
+                    mode="orchestrator" if use_orchestrator else "agentcore",
+                )
                 yield {
                     "content": "",
                     "emotion": None,
@@ -424,8 +529,8 @@ async def run_turn_stream(
                         "arguments": evt_dict.get("arguments", {}),
                     },
                     "result": evt_dict.get("result", ""),
-                    "success": evt_dict.get("success", True),
-                    "duration": evt_dict.get("duration", 0.0),
+                    "success": _tc_success,
+                    "duration": _tc_duration,
                 }
             elif etype == "token_usage":
                 input_tokens += evt_dict.get("input_tokens", 0)
@@ -438,6 +543,17 @@ async def run_turn_stream(
                     agent._tool_executor.cleanup_temp_paths()
                 except Exception as e:
                     logger.warning(f"Temp cleanup failed after turn_completed: {e}")
+                structured(
+                    logger,
+                    logging.INFO,
+                    "turn_completed",
+                    session_id=session_id,
+                    iterations=iterations,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    accumulated_length=len(accumulated),
+                    mode="orchestrator" if use_orchestrator else "agentcore",
+                )
                 yield {
                     "content": "",  # already streamed via text_delta
                     "emotion": None,
@@ -455,6 +571,15 @@ async def run_turn_stream(
                     agent._tool_executor.cleanup_temp_paths()
                 except Exception as e:
                     logger.warning(f"Temp cleanup failed after turn_failed: {e}")
+                structured(
+                    logger,
+                    logging.ERROR,
+                    "turn_failed",
+                    session_id=session_id,
+                    error=evt_dict.get("error", "unknown error"),
+                    code=evt_dict.get("code", "unknown"),
+                    mode="orchestrator" if use_orchestrator else "agentcore",
+                )
                 yield {
                     "content": "",
                     "emotion": None,
@@ -470,6 +595,15 @@ async def run_turn_stream(
                     agent._tool_executor.cleanup_temp_paths()
                 except Exception as e:
                     logger.warning(f"Temp cleanup failed after cancelled: {e}")
+                structured(
+                    logger,
+                    logging.WARNING,
+                    "turn_cancelled",
+                    session_id=session_id,
+                    reason=evt_dict.get("reason", ""),
+                    accumulated_length=len(accumulated),
+                    mode="orchestrator" if use_orchestrator else "agentcore",
+                )
                 yield {
                     "content": accumulated,
                     "emotion": None,
@@ -494,10 +628,18 @@ async def run_turn_stream(
 
     except asyncio.CancelledError:
         # Client disconnected — let AgentCore clean up via its own cancel path.
-        logger.info(f"run_turn cancelled by client (session={session_id})")
+        structured(logger, logging.WARNING, "stream_cancelled_by_client", session_id=session_id)
         raise
     except Exception as e:
-        logger.exception(f"run_turn_stream error (session={session_id}): {e}")
+        structured(
+            logger,
+            logging.ERROR,
+            "stream_error",
+            session_id=session_id,
+            error=str(e),
+            error_type=type(e).__name__,
+            mode="orchestrator" if use_orchestrator else "agentcore",
+        )
         try:
             agent._tool_executor.cleanup_temp_paths()
         except Exception as cleanup_err:

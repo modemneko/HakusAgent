@@ -6,15 +6,20 @@ import { test, expect, type Page, type ConsoleMessage } from '@playwright/test'
  */
 function isExpectedApiError(msg: ConsoleMessage): boolean {
   const text = msg.text()
-  const expectedEndpoints = /\/(health|config|providers|sessions|version)\b/
+  const expectedEndpoints = /\/(health|config|providers|sessions|version|mcp)\b/
   // In the test environment the Python backend is not running, so any
   // network failure against backend endpoints is expected.
   if (text.includes('Failed to load resource') && text.includes('404')) return true
   if (text.includes('Failed to fetch') && expectedEndpoints.test(text)) return true
   if (text.includes('status of 404') && expectedEndpoints.test(text)) return true
+  // ERR_CONNECTION_REFUSED — backend not running in test env
+  if (text.includes('ERR_CONNECTION_REFUSED')) return true
   // Session store logs backend fetch failures without the URL in the message;
   // treat these as expected when the sidecar is unavailable.
   if (text.includes('[session]') && text.includes('Failed to fetch')) return true
+  // ModelPanel / provider meta fetch failures when sidecar is offline
+  if (text.includes('[ModelPanel]') && text.includes('Failed to fetch')) return true
+  if (text.includes('getProvidersMeta failed')) return true
   return false
 }
 
@@ -30,12 +35,14 @@ async function collectConsoleErrors(page: Page): Promise<string[]> {
     }
   })
   page.on('pageerror', (err) => {
+    // 后端未运行时的 fetch 失败属于预期行为
+    if (err.message === 'Failed to fetch') return
     errors.push(`[pageerror] ${err.message}`)
   })
   return errors
 }
 
-test.describe('HakusAI App — macOS/Codex UI', () => {
+test.describe('HakusAI App', () => {
   test('app loads with title bar, sidebar and composer visible', async ({ page }) => {
     const errors = await collectConsoleErrors(page)
     await page.goto('/')
@@ -45,12 +52,12 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
     await expect(page.locator('header')).toBeVisible()
 
     // Sidebar
-    await expect(page.locator('aside')).toBeVisible()
-    await expect(page.locator('aside')).toContainText('HakusAI')
-    await expect(page.locator('aside input[placeholder="搜索会话..."]')).toBeVisible()
+    await expect(page.locator('aside.hk-sidebar')).toBeVisible()
+    await expect(page.locator('aside.hk-sidebar')).toContainText('HakusAI')
+    await expect(page.locator('aside.hk-sidebar input[placeholder="搜索会话..."]')).toBeVisible()
 
     // Composer placeholder (connection may be offline in test env)
-    await expect(page.getByPlaceholder(/未连接到服务|Send a message/)).toBeVisible()
+    await expect(page.getByPlaceholder(/未连接到\s*服务|Send a message/)).toBeVisible()
 
     expect(errors).toHaveLength(0)
   })
@@ -58,14 +65,14 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
   test('sidebar new chat button creates a session', async ({ page }) => {
     const errors = await collectConsoleErrors(page)
     await page.goto('/')
-    await page.waitForSelector('aside', { state: 'visible' })
+    await page.waitForSelector('aside.hk-sidebar', { state: 'visible' })
 
-    const newChatButton = page.locator('aside button[title="New chat"]')
+    const newChatButton = page.locator('aside.hk-sidebar button[title="New chat"]')
     await expect(newChatButton).toBeVisible()
     await newChatButton.click()
 
     // A new session item should appear
-    await expect(page.locator('aside').locator('text=New Chat').first()).toBeVisible()
+    await expect(page.locator('aside.hk-sidebar').locator('text=New Chat').first()).toBeVisible()
 
     expect(errors).toHaveLength(0)
   })
@@ -73,14 +80,17 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
   test('session actions menu provides rename and delete', async ({ page }) => {
     const errors = await collectConsoleErrors(page)
     await page.goto('/')
-    await page.waitForSelector('aside', { state: 'visible' })
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('aside.hk-sidebar', { state: 'visible' })
 
     // Create a session first
-    await page.locator('aside button[title="New chat"]').click()
-    await expect(page.locator('aside').locator('text=New Chat').first()).toBeVisible()
+    await page.locator('aside.hk-sidebar button[title="New chat"]').click()
+    await expect(page.locator('aside.hk-sidebar').locator('text=New Chat').first()).toBeVisible()
+    // Wait for session list to stabilize (avoid detachment during re-render)
+    await page.waitForLoadState('networkidle')
 
     // Open the action menu of the newly created session (not a WeChat session)
-    const newSessionItem = page.locator('aside').locator('text=New Chat').first().locator('xpath=ancestor::*[contains(@class, "group")]')
+    const newSessionItem = page.locator('aside.hk-sidebar').locator('text=New Chat').first().locator('xpath=ancestor::*[contains(@class, "group")]')
     const menuButton = newSessionItem.locator('button[aria-label="更多操作"]')
     await expect(menuButton).toBeVisible()
     await menuButton.click()
@@ -122,11 +132,11 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
   test('sidebar toggle works and state persists after reload', async ({ page }) => {
     const errors = await collectConsoleErrors(page)
     await page.goto('/')
-    await page.waitForSelector('aside', { state: 'visible' })
+    await page.waitForSelector('aside.hk-sidebar', { state: 'visible' })
 
     // Sidebar wrapper should start open and have the expected width
     const sidebarWrapper = page.locator('[data-testid="sidebar-wrapper"]')
-    await expect(sidebarWrapper).toHaveCSS('width', /264px|16.5rem/)
+    await expect(sidebarWrapper).toHaveCSS('width', /256px|16rem/)
 
     // Toggle off
     await page.locator('header button[title="切换侧栏"]').click()
@@ -139,7 +149,7 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
 
     // Toggle back on
     await page.locator('header button[title="切换侧栏"]').click()
-    await expect(sidebarWrapper).toHaveCSS('width', /264px|16.5rem/)
+    await expect(sidebarWrapper).toHaveCSS('width', /256px|16rem/)
 
     expect(errors).toHaveLength(0)
   })
@@ -171,6 +181,40 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
   test('ask_user interactive question renders options and accepts answer', async ({ page }) => {
     const errors = await collectConsoleErrors(page)
     let answerReceived = false
+
+    // Mock health & version endpoints so the composer is enabled (connState=connected)
+    await page.route('**/health', async (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 'ok', version: '0.1.0', model_loaded: true, agent_ready: true }),
+      })
+    })
+    await page.route('**/api/version', async (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          sidecar_api_version: '0.8.0',
+          sidecar_api_version_int: 8,
+          server_version: '0.1.0',
+          endpoints: [],
+        }),
+      })
+    })
+    await page.route('**/api/config', async (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          version: '0.1.0',
+          character: { name: 'HakusAI', personality: '' },
+          model: { provider: 'opencode', model_name: 'deepseek-v4-flash-free' },
+          voice: { enabled: false, asr_provider: '', tts_provider: '' },
+          avatar: { enabled: false, type: '', name: '' },
+        }),
+      })
+    })
 
     // Mock the chat stream so the test does not depend on the LLM calling ask_user
     await page.route('**/api/chat/stream', async (route) => {
@@ -228,16 +272,18 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
     })
 
     await page.goto('/')
-    await page.waitForSelector('aside', { state: 'visible' })
+    await page.waitForSelector('aside.hk-sidebar', { state: 'visible' })
 
     // Create a new session
     await page.locator('aside button[title="New chat"]').click()
-    await expect(page.locator('aside').locator('text=New Chat').first()).toBeVisible()
+    await expect(page.locator('aside.hk-sidebar').locator('text=New Chat').first()).toBeVisible()
 
     // Send any message — the mocked stream will produce ask_user
     const composer = page.locator('textarea').first()
     await expect(composer).toBeVisible()
     await composer.fill('trigger ask_user')
+    // Wait for Send button to become enabled (connection check may still be in-flight)
+    await expect(page.locator('button[title="Send"]')).toBeEnabled({ timeout: 15000 })
     await page.locator('button[title="Send"]').click()
 
     // Wait for the interactive question card
@@ -249,6 +295,8 @@ test.describe('HakusAI App — macOS/Codex UI', () => {
     // Select the first option, then confirm
     const firstOptionText = await optionButtons.first().locator('span.flex-1').textContent()
     await optionButtons.first().click()
+    // Wait for state update (selected option) before clicking confirm
+    await page.waitForTimeout(300)
     await questionCard.locator('button:has-text("继续")').click()
 
     // Verify answered state shows the selected option and answer was posted

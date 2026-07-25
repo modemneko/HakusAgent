@@ -55,6 +55,9 @@ import type {
   McpServerToolsResponse,
   McpInvokeResult,
   UploadedFile,
+  GitStatusResponse,
+  GitDiffResponse,
+  LogsResponse,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -1217,6 +1220,88 @@ export class HakusAIClient {
     }, 15000)
     if (!res.ok) await this._throwForResponse(res, 'wechat/send', 'WeChat send failed')
     return res.json()
+  }
+
+  // ============ Git / Workspace (Codex-style review panel) ============
+
+  /**
+   * GET /api/git/status — branch + changed file list for the agent working dir.
+   * Returns is_repo=false when the workdir is not inside a git repository,
+   * so the UI can show a "not a git repo" hint instead of erroring.
+   */
+  async getGitStatus(): Promise<GitStatusResponse> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/git/status`, {}, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/git/status`, 'Get git status failed')
+    }
+    return res.json()
+  }
+
+  /**
+   * GET /api/git/diff — unified diff text for unstaged / staged / ref changes.
+   * Pass staged=true for --cached, or ref='HEAD~1' to diff against a ref.
+   */
+  async getGitDiff(opts?: { staged?: boolean; ref?: string; paths?: string[] }): Promise<GitDiffResponse> {
+    const params = new URLSearchParams()
+    if (opts?.staged) params.set('staged', 'true')
+    if (opts?.ref) params.set('ref', opts.ref)
+    if (opts?.paths && opts.paths.length) params.set('paths', opts.paths.join(','))
+    const qs = params.toString()
+    const url = `${this.baseUrl}/api/git/diff${qs ? `?${qs}` : ''}`
+    const res = await this.fetchWithHardTimeout(url, {}, 15000)
+    if (!res.ok) {
+      await this._throwForResponse(res, url, 'Get git diff failed')
+    }
+    return res.json()
+  }
+
+  /** POST /api/git/stage — stage or unstage a path (git add / git restore --staged). */
+  async stagePath(path: string, unstage: boolean = false): Promise<void> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/git/stage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, unstage }),
+    }, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/git/stage`, 'Stage path failed')
+    }
+  }
+
+  /** Return current REST base URL. */
+  getBaseUrl(): string {
+    return this.baseUrl
+  }
+
+  /** WebSocket URL for the built-in terminal (shares agent working dir). */
+  /**
+   * GET /api/logs — fetch persisted sidecar logs.
+   * - name: log filename (sidecar.log / agent.log / orchestrator.log / tools.log / llm.log / hakusai.log)
+   * - lines: number of recent lines (default 200, max 5000)
+   * - level: optional filter DEBUG/INFO/WARNING/ERROR
+   * - after_ts: only entries after this unix timestamp (for live polling)
+   */
+  async getLogs(opts?: {
+    name?: string
+    lines?: number
+    level?: string
+    after_ts?: number
+  }): Promise<LogsResponse> {
+    const params = new URLSearchParams()
+    if (opts?.name) params.set('name', opts.name)
+    if (opts?.lines) params.set('lines', String(opts.lines))
+    if (opts?.level) params.set('level', opts.level)
+    if (opts?.after_ts) params.set('after_ts', String(opts.after_ts))
+    const qs = params.toString()
+    const url = `${this.baseUrl}/api/logs${qs ? `?${qs}` : ''}`
+    const res = await this.fetchWithHardTimeout(url, {}, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, url, 'Get logs failed')
+    }
+    return res.json()
+  }
+
+  terminalWsUrl(): string {
+    return `${this.wsBaseUrl}/ws/terminal`
   }
 }
 

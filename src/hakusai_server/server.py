@@ -38,8 +38,9 @@ from .agent_bridge import (
     post_answer as agentcore_post_answer,
 )
 from . import session_store
+from .logging_config import setup_logging, get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("haku.sidecar.server")
 
 
 # ========== 服务器 API 版本 ==========
@@ -51,8 +52,10 @@ logger = logging.getLogger(__name__)
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.7.0"
-SIDECAR_API_VERSION_INT = 7  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.8.0"
+SIDECAR_API_VERSION_INT = 8  # 整数版本，便于客户端比较
+# v0.8.0: + Codex-style review panel: /api/git/status, /api/git/diff,
+#         /api/git/stage + /ws/terminal (built-in shell)
 # v0.7.0: + /api/question/answer 端点 + WS answer 消息
 #         + ask_user 工具交互式提问 (QuestionAsked / AnswerOp)
 # v0.6.0: + Phase 4 WS 心跳/重连 + Phase 5 /api/metrics 端点
@@ -673,6 +676,7 @@ class HakusAIServer:
             4. 关闭时：先等/取消后台 task，再优雅关闭组件
             """
             # 启动时
+            setup_logging()
             logger.info("Starting HakusAI Server...")
 
             # 加载用户配置 ~/.hakus/config.yaml。
@@ -989,7 +993,73 @@ class HakusAIServer:
             所有字段都是非负整数 (除 uptime_seconds 是 float)。
             """
             return self.get_metrics_snapshot()
-        
+
+        # ========== 日志API ==========
+
+        @app.get("/api/logs")
+        async def get_logs(
+            name: Optional[str] = None,
+            lines: int = 200,
+            level: Optional[str] = None,
+            after_ts: Optional[float] = None,
+        ):
+            """
+            获取 sidecar 结构化日志。
+
+            - name: 日志文件名，如 sidecar.log / agent.log / orchestrator.log / tools.log / llm.log
+            - lines: 返回最近多少行（默认 200，最大 5000）
+            - level: 过滤级别 DEBUG/INFO/WARNING/ERROR
+            - after_ts: 只返回该 unix 时间戳之后的日志（用于实时轮询）
+            """
+            from .logging_config import log_tailer
+
+            if lines < 1:
+                lines = 1
+            if lines > 5000:
+                lines = 5000
+
+            # 默认返回 sidecar.log
+            if not name:
+                files = log_tailer.list_files()
+                if not files:
+                    return {"files": [], "logs": []}
+                name = files[0]["name"]
+
+            try:
+                logs = log_tailer.tail(name, lines=lines, level=level, after_ts=after_ts)
+                files = log_tailer.list_files()
+            except Exception as e:
+                logger.error(f"Failed to read logs: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to read logs: {e}")
+
+            return {"files": [{"name": f["name"], "size": f["size"], "mtime": f["mtime"]} for f in files], "logs": logs}
+
+        @app.get("/api/logs/files")
+        async def list_log_files():
+            """列出所有可用的日志文件。"""
+            from .logging_config import log_tailer
+            return {"files": log_tailer.list_files()}
+
+        @app.delete("/api/logs")
+        async def clear_logs(name: Optional[str] = None):
+            """清空指定日志文件；name 为空时清空所有日志文件。"""
+            from .logging_config import LOG_DIR, LOG_FILES
+
+            cleared: List[str] = []
+            failed: List[str] = []
+            targets = [LOG_DIR / name] if name else list(LOG_DIR.glob("*.log"))
+            for path in targets:
+                try:
+                    if path.exists():
+                        path.write_text("", encoding="utf-8")
+                        cleared.append(path.name)
+                except Exception as e:
+                    failed.append(f"{path.name}: {e}")
+
+            if failed:
+                raise HTTPException(status_code=500, detail={"cleared": cleared, "failed": failed})
+            return {"cleared": cleared}
+
         # ========== 聊天API ==========
         
         @app.post("/api/chat")
@@ -2830,6 +2900,233 @@ class HakusAIServer:
             # 按上传时间倒序 (最新在前)
             files.sort(key=lambda x: x.get("uploaded_at", 0), reverse=True)
             return {"files": files}
+
+        # ============ Git / Workspace (Codex-style review panel) ============
+        # These endpoints back the right-hand Review/Terminal pane in the
+        # desktop client. They inspect the *agent* working directory
+        # (_REPO_ROOT, two levels above this file), so the diff the user
+        # sees matches what the agent actually operates on.
+
+        import asyncio as _asyncio
+        import asyncio.subprocess as _asub
+
+        # Project root — same definition as agent_bridge._REPO_ROOT.
+        _WORKDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        _GIT_STATUS_MAP = {
+            "M": "modified", "A": "added", "D": "deleted",
+            "R": "renamed", "C": "renamed", "??": "untracked",
+        }
+
+        async def _run_git(args: List[str], cwd: str = _WORKDIR, timeout: float = 30.0) -> tuple[str, str, int]:
+            """Run a git command asynchronously, returning (stdout, stderr, returncode)."""
+            try:
+                proc = await _asyncio.create_subprocess_exec(
+                    "git", "--no-pager", *args,
+                    stdout=_asub.PIPE,
+                    stderr=_asub.PIPE,
+                    cwd=cwd,
+                )
+            except FileNotFoundError:
+                return "", "git not found on PATH", 127
+            try:
+                stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except _asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return "", "git command timed out", 124
+            return (
+                stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"),
+                proc.returncode if proc.returncode is not None else 1,
+            )
+
+        def _parse_porcelain_unused():  # kept as reference; parsing is inlined below
+            return []
+
+        @app.get("/api/git/status")
+        async def git_status():
+            """Branch + changed file list for the agent working directory."""
+            # Branch
+            branch_out, _, _ = await _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+            branch = branch_out.strip()
+            # Detect repo
+            inside_out, _, inside_rc = await _run_git(["rev-parse", "--is-inside-work-tree"])
+            is_repo = inside_rc == 0 and inside_out.strip() == "true"
+
+            if not is_repo:
+                return {
+                    "branch": "",
+                    "workdir": _WORKDIR,
+                    "is_repo": False,
+                    "unstaged": [],
+                    "staged": [],
+                    "untracked": [],
+                }
+
+            # Porcelain v1: "XY path" — X=staged, Y=unstaged, ??=untracked
+            porcelain, _, _ = await _run_git(["status", "--porcelain=v1"])
+            unstaged: List[Dict[str, Any]] = []
+            staged: List[Dict[str, Any]] = []
+            untracked: List[Dict[str, Any]] = []
+            for raw in porcelain.splitlines():
+                if not raw or len(raw) < 4:
+                    continue
+                xy = raw[:2]
+                path = raw[3:]
+                x, y = xy[0], xy[1]
+                if x == "?" or y == "?":
+                    untracked.append({"path": path, "status": "untracked", "staged": False})
+                    continue
+                if x != " " and x != "?":
+                    staged.append({"path": path, "status": _GIT_STATUS_MAP.get(x, "unknown"), "staged": True})
+                if y != " " and y != "?":
+                    unstaged.append({"path": path, "status": _GIT_STATUS_MAP.get(y, "unknown"), "staged": False})
+
+            return {
+                "branch": branch,
+                "workdir": _WORKDIR,
+                "is_repo": True,
+                "unstaged": unstaged,
+                "staged": staged,
+                "untracked": untracked,
+            }
+
+        @app.get("/api/git/diff")
+        async def git_diff(staged: bool = False, ref: Optional[str] = None, paths: Optional[str] = None):
+            """Unified diff text. staged=True → --cached; ref=HEAD~1 → diff against ref."""
+            args = ["diff", "--no-color", "--no-ext-diff"]
+            if staged:
+                args.append("--cached")
+            if ref:
+                args.append(ref)
+            if paths:
+                args.append("--")
+                args.extend([p.strip() for p in paths.split(",") if p.strip()])
+
+            out, err, rc = await _run_git(args)
+            if rc != 0:
+                # Not a repo or git error — return empty diff with a hint
+                raise HTTPException(status_code=400, detail=err.strip() or "git diff failed")
+
+            truncated = False
+            max_chars = 60000
+            if len(out) > max_chars:
+                half = max_chars // 2
+                out = out[:half] + f"\n... [truncated, {len(out)} total chars] ...\n" + out[-half:]
+                truncated = True
+
+            return {"diff": out, "truncated": truncated, "workdir": _WORKDIR}
+
+        class StageRequest(BaseModel):
+            path: str
+            unstage: bool = False
+
+        @app.post("/api/git/stage")
+        async def git_stage(req: StageRequest):
+            """Stage (git add) or unstage (git restore --staged) a path."""
+            # Validate path to avoid shell injection — git takes argv, but
+            # reject anything trying to escape via path traversal.
+            target = req.path.strip()
+            if not target or target.startswith("--") or "\x00" in target:
+                raise HTTPException(status_code=400, detail="invalid path")
+            if req.unstage:
+                args = ["restore", "--staged", "--", target]
+            else:
+                args = ["add", "--", target]
+            out, err, rc = await _run_git(args)
+            if rc != 0:
+                raise HTTPException(status_code=400, detail=err.strip() or "git stage failed")
+            return {"ok": True, "path": target, "unstage": req.unstage}
+
+        @app.websocket("/ws/terminal")
+        async def terminal_ws(websocket: WebSocket):
+            """Built-in terminal — hosts a persistent shell in the agent workdir.
+
+            Protocol (JSON messages):
+              Client → Server: {"type":"stdin","data":"<text>"}
+              Server → Client: {"type":"stdout","data":"<text>"}
+                                   {"type":"stderr","data":"<text>"}
+                                   {"type":"exit","code":<int>}
+                                   {"type":"error","message":"<str>"}
+
+            Uses a pipe-based subprocess (no PTY), so interactive TUI apps
+            (vim/less) won't render correctly, but running commands like
+            `git status`, `npm test` works fine. The shell is cmd.exe on
+            Windows and bash elsewhere.
+            """
+            await websocket.accept()
+            is_windows = os.name == "nt"
+            shell = ["cmd.exe"] if is_windows else ["bash", "-i"]
+            try:
+                proc = await _asyncio.create_subprocess_exec(
+                    *shell,
+                    stdin=_asub.PIPE,
+                    stdout=_asub.PIPE,
+                    stderr=_asub.PIPE,
+                    cwd=_WORKDIR,
+                    env={**os.environ, "TERM": "dumb"},
+                )
+            except Exception as e:
+                await websocket.send_json({"type": "error", "message": f"failed to spawn shell: {e}"})
+                await websocket.close()
+                return
+
+            async def _pump_stdout():
+                try:
+                    while True:
+                        chunk = await proc.stdout.read(4096)
+                        if not chunk:
+                            break
+                        await websocket.send_json({"type": "stdout", "data": chunk.decode("utf-8", errors="replace")})
+                except Exception:
+                    pass
+                await websocket.send_json({"type": "exit", "code": proc.returncode})
+
+            async def _pump_stderr():
+                try:
+                    while True:
+                        chunk = await proc.stderr.read(4096)
+                        if not chunk:
+                            break
+                        await websocket.send_json({"type": "stderr", "data": chunk.decode("utf-8", errors="replace")})
+                except Exception:
+                    pass
+
+            stdout_task = _asyncio.create_task(_pump_stdout())
+            stderr_task = _asyncio.create_task(_pump_stderr())
+
+            try:
+                while True:
+                    msg = await websocket.receive_text()
+                    try:
+                        data = json.loads(msg)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("type") == "stdin" and proc.stdin:
+                        try:
+                            proc.stdin.write(data.get("data", "").encode("utf-8"))
+                            await proc.stdin.drain()
+                        except Exception as e:
+                            await websocket.send_json({"type": "error", "message": f"write failed: {e}"})
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+            finally:
+                try:
+                    if proc.returncode is None:
+                        proc.terminate()
+                        try:
+                            await _asyncio.wait_for(proc.wait(), timeout=2)
+                        except _asyncio.TimeoutError:
+                            proc.kill()
+                except Exception:
+                    pass
+                stdout_task.cancel()
+                stderr_task.cancel()
 
     async def start(self):
         """启动服务器"""

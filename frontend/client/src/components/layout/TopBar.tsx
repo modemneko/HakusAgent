@@ -3,14 +3,17 @@ import {
   Settings,
   Trash2,
   PanelLeft,
+  PanelRight,
   RefreshCw,
   Bot,
   Check,
   ChevronDown,
   Loader2,
+  Monitor,
+  GitBranch,
+  Cloud,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -23,17 +26,24 @@ import {
 import { useSessionStore } from '@/store/session'
 import { useConnectionStore } from '@/store/connection'
 import { useSettingsStore } from '@/store/settings'
-import { useAppStore } from '@/store/app'
+import { useAppStore, type RunMode } from '@/store/app'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast'
 
 interface TopBarProps {
   onToggleSidebar: () => void
+  onToggleRightPanel: () => void
   onOpenSettings: () => void
 }
 
-export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
+const RUN_MODES: { id: RunMode; label: string; icon: typeof Monitor }[] = [
+  { id: 'local', label: 'Local', icon: Monitor },
+  { id: 'worktree', label: 'Worktree', icon: GitBranch },
+  { id: 'cloud', label: 'Cloud', icon: Cloud },
+]
+
+export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: TopBarProps) {
   const toast = useToast()
   const activeId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
@@ -51,6 +61,9 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
   const model = useAppStore((s) => s.model)
   const characterName = useAppStore((s) => s.characterName)
+  const runMode = useAppStore((s) => s.runMode)
+  const setRunMode = useAppStore((s) => s.setRunMode)
+  const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
 
   const [switching, setSwitching] = useState(false)
 
@@ -96,14 +109,14 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
 
   return (
     <header className="hk-titlebar app-region-drag">
-      {/* Left: sidebar toggle */}
-      <div className="app-region-no-drag flex w-[220px] items-center gap-3 pl-4">
+      {/* Left: sidebar toggle + run mode selector (Codex 214px 让位交通灯) */}
+      <div className="app-region-no-drag flex w-[214px] items-center gap-2 pl-3">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-muted-foreground"
+              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onToggleSidebar}
               title="切换侧栏"
               aria-label="切换侧栏"
@@ -113,19 +126,41 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
           </TooltipTrigger>
           <TooltipContent>切换侧栏</TooltipContent>
         </Tooltip>
+
+        {/* Run mode selector (Codex Local / Worktree / Cloud) */}
+        <div className="hk-segment">
+          {RUN_MODES.map((m) => {
+            const Icon = m.icon
+            const active = runMode === m.id
+            return (
+              <Tooltip key={m.id}>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn('hk-segment-btn', active && 'hk-segment-btn-active')}
+                    onClick={() => setRunMode(m.id)}
+                  >
+                    <Icon className="h-3 w-3" />
+                    <span className="hidden md:inline">{m.label}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>运行模式：{m.label}</TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
       </div>
 
-      {/* Center: app / session title */}
-      <div className="app-region-no-drag flex flex-1 flex-col items-center justify-center">
-        <span className="text-[13px] font-semibold leading-tight">
+      {/* Center: app / session title (Codex 居中标题) */}
+      <div className="app-region-no-drag flex flex-1 flex-col items-center justify-center min-w-0">
+        <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight">
           {activeSession?.title || characterName}
         </span>
-        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1 text-[10px] text-muted-foreground/80">
           {model ? (
             <>
               <span className="font-medium">{model.provider}</span>
-              <span className="text-muted-foreground/60">·</span>
-              <span className="font-mono">{model.model_name}</span>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="font-mono tracking-tight">{model.model_name}</span>
             </>
           ) : (
             <span>无模型信息</span>
@@ -133,14 +168,34 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
         </span>
       </div>
 
-      {/* Right: actions */}
-      <div className="app-region-no-drag flex w-[220px] items-center justify-end gap-1 pr-4">
-        {/* Model switcher */}
+      {/* Right: actions (Codex 260px) */}
+      <div className="app-region-no-drag flex w-[260px] items-center justify-end gap-1 pr-3">
+        {/* Right panel toggle (Codex review/terminal) */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              className={cn(
+                'h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                rightPanelOpen && 'bg-accent/60 text-foreground',
+              )}
+              onClick={onToggleRightPanel}
+              title="审阅面板"
+              aria-label="审阅面板"
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>审阅 / 终端面板</TooltipContent>
+        </Tooltip>
+
+        {/* Model switcher (Codex pill button) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               className={cn(
-                'flex h-7 items-center gap-1.5 rounded-full border border-border/40 bg-background/50 px-2.5 text-xs font-medium backdrop-blur-xl transition-all hover:bg-accent/60 hover:border-border/60',
+                'flex h-7 items-center gap-1.5 rounded-md border border-border/50 bg-background/40 px-2.5 text-xs font-medium transition-all hover:bg-accent/60 hover:border-border/70',
                 isStreaming && 'cursor-not-allowed opacity-60',
               )}
               disabled={switching || providersLoading || isStreaming}
@@ -152,7 +207,7 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
               ) : (
                 <Bot className="h-3.5 w-3.5 text-primary" />
               )}
-              <span className="max-w-[120px] truncate">{currentLabel}</span>
+              <span className="max-w-[110px] truncate">{currentLabel}</span>
               <ChevronDown className="h-3 w-3 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
@@ -192,19 +247,8 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Connection status */}
-        <Badge
-          variant={
-            connState === 'connected'
-              ? 'success'
-              : connState === 'connecting'
-                ? 'warning'
-                : connState === 'error'
-                  ? 'destructive'
-                  : 'secondary'
-          }
-          className="h-5 gap-1 px-1.5 text-[10px]"
-        >
+        {/* Connection status (Codex dot + label) */}
+        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background/40 px-1.5 py-0.5 text-[10px] tabular-nums">
           <span
             className={cn('h-1.5 w-1.5 rounded-full', {
               'bg-emerald-500': connState === 'connected',
@@ -213,17 +257,19 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
               'bg-muted-foreground': connState === 'disconnected',
             })}
           />
-          {connState === 'connected'
-            ? '在线'
-            : connState === 'connecting'
-              ? '连接中'
-              : connState === 'error'
-                ? '离线'
-                : '未连接'}
-        </Badge>
+          <span className="text-muted-foreground">
+            {connState === 'connected'
+              ? '在线'
+              : connState === 'connecting'
+                ? '连接中'
+                : connState === 'error'
+                  ? '离线'
+                  : '未连接'}
+          </span>
+        </div>
 
         {connHealth && (
-          <span className="hidden text-[10px] text-muted-foreground lg:inline">
+          <span className="hidden text-[10px] text-muted-foreground/60 lg:inline tabular-nums">
             v{connHealth.version}
           </span>
         )}
@@ -233,7 +279,7 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-muted-foreground"
+              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={() => connCheck()}
               title="重新连接"
               aria-label="重新连接"
@@ -248,19 +294,19 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 text-muted-foreground"
-              onClick={() => {
-                if (confirm('清空当前会话所有消息？')) {
-                  clearMessages(activeId)
-                }
-              }}
-              title="清空对话"
-              aria-label="清空对话"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                onClick={() => {
+                  if (confirm('清空当前会话所有消息？')) {
+                    clearMessages(activeId)
+                  }
+                }}
+                title="清空对话"
+                aria-label="清空对话"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
             </TooltipTrigger>
             <TooltipContent>清空对话</TooltipContent>
           </Tooltip>
@@ -271,7 +317,7 @@ export function TopBar({ onToggleSidebar, onOpenSettings }: TopBarProps) {
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-muted-foreground"
+              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onOpenSettings}
               title="设置"
               aria-label="设置"

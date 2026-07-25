@@ -4,6 +4,8 @@ import { Toaster } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/layout/TopBar'
+import { BottomStatusBar } from '@/components/layout/BottomStatusBar'
+import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { SidecarErrorBanner } from '@/components/SidecarErrorBanner'
 import { SidecarOutdatedGlobalBanner } from '@/components/SidecarOutdatedGlobalBanner'
@@ -15,6 +17,7 @@ import { cn } from '@/lib/utils'
 
 function App() {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
+  const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
@@ -72,29 +75,48 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
-        {/* Sidebar */}
-        <div
-          data-testid="sidebar-wrapper"
-          className={cn(
-            'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
-            sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
-            'overflow-hidden',
-          )}
-        >
-          <Sidebar />
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
+        {/* Three-column workspace (sidebar + chat + review panel) */}
+        <div className="flex min-h-0 flex-1">
+          {/* Sidebar */}
+          <div
+            data-testid="sidebar-wrapper"
+            className={cn(
+              'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
+              sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
+              'overflow-hidden',
+            )}
+          >
+            <Sidebar />
+          </div>
+
+          {/* Main area (chat) */}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <TopBar
+              onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
+              onToggleRightPanel={() => useAppStore.getState().toggleRightPanel()}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+            <SidecarOutdatedGlobalBanner />
+            <SidecarErrorBanner onRetry={() => window.location.reload()} />
+            <ChatView />
+          </div>
+
+          {/* Right panel (Codex-style review/terminal/preview) */}
+          <div
+            data-testid="right-panel-wrapper"
+            className={cn(
+              'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
+              rightPanelOpen ? 'w-[var(--right-panel-width)]' : 'w-0',
+              'overflow-hidden',
+            )}
+          >
+            <RightPanel />
+          </div>
         </div>
 
-        {/* Main area */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <TopBar
-            onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
-          <SidecarOutdatedGlobalBanner />
-          <SidecarErrorBanner onRetry={() => window.location.reload()} />
-          <ChatView />
-        </div>
+        {/* Bottom status bar */}
+        <BottomStatusBar />
 
         {/* Settings dialog */}
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

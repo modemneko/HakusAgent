@@ -152,15 +152,15 @@ export function Sidebar() {
 
   return (
     <aside className="hk-sidebar flex h-full w-[var(--sidebar-width)] shrink-0 flex-col">
-      {/* Brand + new chat */}
+      {/* Brand + new chat (Codex 风格品牌区) */}
       <div className="flex items-center justify-between gap-2 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <span className="text-[15px] font-semibold tracking-tight">HakusAI</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-semibold tracking-tight">HakusAI</span>
         </div>
         <Button
           size="icon"
           variant="ghost"
-          className="h-7 w-7 text-muted-foreground"
+          className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
           onClick={handleNew}
           title="New chat"
         >
@@ -168,15 +168,15 @@ export function Sidebar() {
         </Button>
       </div>
 
-      {/* Search */}
+      {/* Search (Codex 风格搜索框) */}
       <div className="px-3 pb-2">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索会话..."
-            className="h-8 rounded-full border-border/40 bg-background/50 pl-8 text-xs placeholder:text-muted-foreground/60 backdrop-blur-xl focus-visible:rounded-full"
+            className="h-7 rounded-md border-border/40 bg-background/50 pl-8 text-[12px] placeholder:text-muted-foreground/60 focus-visible:rounded-md"
           />
         </div>
       </div>

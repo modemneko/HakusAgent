@@ -200,6 +200,7 @@ class ToolExecutor:
         """
         tool = self._registry.get(tool_call.name)
         if not tool:
+            logger.error(f"[tool.unknown] call_id={tool_call.call_id} name={tool_call.name}")
             return ToolResult(
                 call_id=tool_call.call_id,
                 name=tool_call.name,
@@ -207,6 +208,12 @@ class ToolExecutor:
                 error=f"Unknown tool: {tool_call.name}",
             )
 
+        _exec_started = time.time()
+        _arg_keys = list(tool_call.arguments.keys())
+        logger.info(
+            f"[tool.start] call_id={tool_call.call_id} name={tool_call.name} "
+            f"args_keys={_arg_keys}"
+        )
         # #region debug-point C:tool-execute-start
         _debug_log("C", "executor.py:execute", "tool execute start", {"tool": tool_call.name, "call_id": tool_call.call_id})
         # #endregion
@@ -221,18 +228,30 @@ class ToolExecutor:
                 )
             # 截断超长结果
             result_str = result.result or ""
+            _was_truncated = False
             if len(result_str) > self._max_result_length:
                 result.result = result_str[:self._max_result_length] + "\n...[truncated]"
+                _was_truncated = True
             self._register_temp_path(result, tool_call.arguments)
+            _elapsed_ms = int((time.time() - _exec_started) * 1000)
+            logger.info(
+                f"[tool.done] call_id={tool_call.call_id} name={tool_call.name} "
+                f"success={result.success} elapsed_ms={_elapsed_ms} "
+                f"result_len={len(result.result or '')} truncated={_was_truncated}"
+            )
             # #region debug-point C:tool-execute-done
             _debug_log("C", "executor.py:execute", "tool execute done", {"tool": tool_call.name, "call_id": tool_call.call_id, "success": result.success})
             # #endregion
             return result
         except Exception as e:
+            _elapsed_ms = int((time.time() - _exec_started) * 1000)
             # #region debug-point C:tool-execute-error
             _debug_log("C", "executor.py:execute", "tool execute error", {"tool": tool_call.name, "call_id": tool_call.call_id, "error": f"{type(e).__name__}: {e}"})
             # #endregion
-            logger.error(f"Tool '{tool_call.name}' execution failed: {e}")
+            logger.error(
+                f"[tool.error] call_id={tool_call.call_id} name={tool_call.name} "
+                f"error={type(e).__name__} elapsed_ms={_elapsed_ms}: {e}"
+            )
             return ToolResult(
                 call_id=tool_call.call_id,
                 name=tool_call.name,

@@ -11,21 +11,23 @@ _QUIETED = False
 
 
 def _resolve_log_file() -> Optional[str]:
-    """将日志写入 ~/.hakus/logs/hakusai.log (Claude Code 风格: 控制台不显示)
-    如果用户设置 HAKUS_LOG_FILE=stderr, 则日志写回 stderr (调试模式)。"""
+    """将日志写入 HakusAgent/logs/hakusai.log，方便和 sidecar 日志统一查看。
+
+    环境变量覆盖：
+      - HAKUS_LOG_FILE=<path>   写指定路径
+      - HAKUS_LOG_FILE=stderr   不写文件，只输出到 stderr
+      - HAKUS_LOG_FILE=off      禁用日志
+    """
     explicit = os.environ.get("HAKUS_LOG_FILE", "").strip().lower()
-    if explicit in ("stderr", "console", ""):
-        if explicit in ("stderr", "console"):
-            return None  # 不再重定向
-        return None  # 默认不写文件
+    if explicit == "stderr" or explicit == "console":
+        return None
     if explicit == "off":
         return None
-    # 显式路径
     if explicit:
         log_path = Path(explicit)
     else:
-        # 默认: ~/.hakus/logs/hakusai.log
-        log_path = Path.home() / ".hakus" / "logs" / "hakusai.log"
+        # 默认: 当前工作目录/logs/hakusai.log
+        log_path = Path.cwd() / "logs" / "hakusai.log"
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         return str(log_path)

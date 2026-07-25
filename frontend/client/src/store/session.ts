@@ -456,11 +456,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       pendingStartedToolCalls: pending,
       messages: {
         ...get().messages,
-        [sessionId]: list.map((m) =>
-          m.id === messageId
-            ? { ...m, tool_calls: [...m.tool_calls, toolCall], updated_at: Date.now() }
-            : m,
-        ),
+        [sessionId]: list.map((m) => {
+          if (m.id !== messageId) return m
+          // Replace any existing tool call with the same call_id to avoid
+          // duplicate React keys when the backend retries or emits the event
+          // more than once.
+          const existing = m.tool_calls.filter((tc) => tc.call_id !== callId)
+          return { ...m, tool_calls: [...existing, toolCall], updated_at: Date.now() }
+        }),
       },
     })
   },

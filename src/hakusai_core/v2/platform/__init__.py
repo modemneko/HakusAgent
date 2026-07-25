@@ -1,5 +1,5 @@
 """
-平台集成系统 - 支持 Bilibili、Discord、YouTube 等平台
+平台集成系统 - 支持 WeChat 等平台
 """
 
 from .base import (
@@ -13,23 +13,12 @@ from .base import (
     SendMessage,
 )
 
-from .bilibili import (
-    BilibiliConfig,
-    BilibiliPlatform,
-    Gift,
-    Danmaku,
-)
-
-from .discord import (
-    DiscordConfig,
-    DiscordPlatform,
-    VoiceState,
-)
-
 from .wechat import (
     WeChatConfig,
     WeChatPlatform,
 )
+
+# bilibili/discord removed — not yet implemented
 
 
 __all__ = [
@@ -42,18 +31,7 @@ __all__ = [
     "PlatformError",
     "PlatformMessage",
     "SendMessage",
-    
-    # Bilibili
-    "BilibiliConfig",
-    "BilibiliPlatform",
-    "Gift",
-    "Danmaku",
-    
-    # Discord
-    "DiscordConfig",
-    "DiscordPlatform",
-    "VoiceState",
-    
+
     # WeChat
     "WeChatConfig",
     "WeChatPlatform",

@@ -29,12 +29,21 @@ function buildTimeline(
   messages: ChatMessage[],
   mode: 'stacked' | 'inline',
 ): TimelineItem[] {
+  // Deduplicate by message id to guard against backend/state bugs that
+  // surface the same message twice. Keeps the first occurrence.
+  const seen = new Set<string>()
+  const uniqueMessages = messages.filter((m) => {
+    if (seen.has(m.id)) return false
+    seen.add(m.id)
+    return true
+  })
+
   if (mode === 'stacked') {
-    return messages.map((m) => ({ kind: 'message', message: m }))
+    return uniqueMessages.map((m) => ({ kind: 'message', message: m }))
   }
 
   const items: TimelineItem[] = []
-  messages.forEach((msg) => {
+  uniqueMessages.forEach((msg) => {
     items.push({ kind: 'message', message: msg })
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       // Sort tool calls by start time so inline bubbles appear in execution order
