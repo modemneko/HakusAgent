@@ -25,8 +25,11 @@ api_keys:
 
 # ==================== 模型配置 ====================
 models:
-  # 默认使用的模型类型: gemini, qwen, deepseek, glm, mimo, opencode
+  # 默认使用的模型类型: gemini, qwen, deepseek, glm, mimo, opencode, 或自定义 provider 名
   default_model: ${DEFAULT_MODEL:opencode}
+  
+  # 运行模式: swift (单Agent+规则Tester, 省84%token) 或 deep (多Agent集群, 质量最高)
+  run_mode: ${HAKUS_MODE:swift}
   
   # Gemini 模型设置
   gemini:
@@ -59,6 +62,27 @@ models:
   opencode:
     model_name: ${OPENCODE_MODEL_NAME:deepseek-v4-flash-free}
     base_url: ${OPENCODE_BASE_URL:https://opencode.ai/zen/v1}
+
+# ==================== 自定义模型 Provider ====================
+# 添加任意 OpenAI 兼容的 API 端点，在 models.default_model 中填入 key 即可使用
+# 支持环境变量覆盖和 ${ENV:default} 语法
+model_providers:
+  # 示例：自定义中转站
+  my_proxy:
+    name: "OpenAI"
+    model_name: "gpt-5.5"
+    base_url: "https://goaistore.ccwu.cc/v1"
+    api_key: ${MY_PROXY_KEY:***REMOVED***}
+    wire_api: "responses"      
+    requires_auth: true       # 是否需要 API key
+  
+  # 示例：硅基流动
+  # siliconflow:
+  #   name: "SiliconFlow"
+  #   model_name: "deepseek-ai/DeepSeek-R1"
+  #   base_url: "https://api.siliconflow.cn/v1"
+  #   api_key: ${SILICONFLOW_API_KEY:}
+  #   requires_auth: true
 
 # ==================== Embedding 配置 ====================
 embedding:

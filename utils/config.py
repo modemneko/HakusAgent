@@ -166,10 +166,28 @@ def get_provider_config(provider_name: str) -> Dict[str, str]:
     """获取指定模型商的配置 (api_key, base_url, model_name).
 
     用于动态添加/切换模型商时快速读取配置。
+    支持自定义 model_providers 段中的任意 provider。
     """
     keys = _resolved_config.get("api_keys", {})
     models = _resolved_config.get("models", {})
     provider_cfg = models.get(provider_name, {})
+    
+    # 先检查自定义 model_providers 段
+    custom_providers = _resolved_config.get("model_providers") or {}
+    if provider_name in custom_providers:
+        cp = custom_providers[provider_name]
+        api_key = cp.get("api_key", "")
+        # 如果 api_key 为空但 requires_auth，尝试从 api_keys 段读取
+        if not api_key and cp.get("requires_auth", True):
+            key_name = f"{provider_name}_api_key"
+            api_key = keys.get(key_name, "")
+        return {
+            "api_key": api_key,
+            "base_url": cp.get("base_url", ""),
+            "model_name": cp.get("model_name", ""),
+            "wire_api": cp.get("wire_api", "chat"),
+            "name": cp.get("name", provider_name),
+        }
 
     # API key 映射
     key_map = {
@@ -180,6 +198,7 @@ def get_provider_config(provider_name: str) -> Dict[str, str]:
         "gemini": "gemini_api_key",
         "glm": "glm_api_key",
         "mimo": "mimo_api_key",
+        "opencode": "opencode_api_key",
         "ollama": "",                      # Ollama 不需要 key
         "custom": "custom_api_key",
     }
@@ -191,6 +210,18 @@ def get_provider_config(provider_name: str) -> Dict[str, str]:
         "base_url": provider_cfg.get("base_url", ""),
         "model_name": provider_cfg.get("model_name", ""),
     }
+
+
+def get_all_provider_names() -> list:
+    """获取所有可用的 provider 名称列表（内置 + 自定义）."""
+    builtin = ["gemini", "qwen", "deepseek", "glm", "mimo", "opencode", "ollama"]
+    custom = list((_resolved_config.get("model_providers") or {}).keys())
+    return builtin + custom
+
+
+def get_run_mode() -> str:
+    """获取当前运行模式: swift 或 deep."""
+    return _resolved_config.get("models", {}).get("run_mode", "swift")
 
 
 # ============================================================

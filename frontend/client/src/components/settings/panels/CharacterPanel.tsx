@@ -41,6 +41,30 @@ export function CharacterPanel() {
   const [original, setOriginal] = useState<FormState>(EMPTY)
   const [outdatedError, setOutdatedError] = useState<SidecarOutdatedError | null>(null)
 
+  const loadCharacter = async () => {
+    setLoading(true)
+    setOutdatedError(null)
+    try {
+      const ch: CharacterInfo = await apiClient.getCharacter()
+      const next: FormState = {
+        name: ch.name || '',
+        nickname: ch.nickname || '',
+        personality: ch.personality || '',
+        scenario: ch.scenario || '',
+        first_message: ch.first_message || '',
+        system_prompt: '',
+      }
+      setForm(next)
+      setOriginal(next)
+    } catch (e: any) {
+      console.error('[CharacterPanel] getCharacter failed:', e)
+      if (e instanceof SidecarOutdatedError) setOutdatedError(e)
+      else toast.error(`加载角色信息失败：${e?.message || e}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -132,10 +156,8 @@ export function CharacterPanel() {
         message={outdatedError.message}
         sidecarVersion={outdatedError.sidecarVersion}
         onRetry={() => {
-          setOutdatedError(null)
-          setLoading(true)
-          // 重新触发 useEffect
-          setTimeout(() => window.location.reload(), 100)
+          // Retry this panel only; reloading the renderer drops active WS calls.
+          void loadCharacter()
         }}
       />
     )

@@ -16,26 +16,26 @@
 @layer base {
   :root {
     /* ===== 亮色：冷灰纸质（Codex e-ink paper） ===== */
-    --background: 200 8% 96.5%;       /* Concrete Page Gray #eceeee */
-    --foreground: 200 6% 11%;          /* Reading Ink #202627 */
-    --card: 150 6% 98%;                /* E-ink Canvas #f7f8f7 */
+    --background: 210 20% 96%;
+    --foreground: 220 18% 12%;
+    --card: 0 0% 100%;
     --card-foreground: 200 6% 11%;
     --popover: 150 6% 98%;
     --popover-foreground: 200 6% 11%;
-    --primary: 200 22% 42%;            /* Desaturated Teal Action #466a76 */
+    --primary: 211 100% 50%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 200 8% 92%;
+    --secondary: 210 16% 92%;
     --secondary-foreground: 200 6% 11%;
-    --muted: 200 8% 92%;
-    --muted-foreground: 210 6% 40%;    /* Muted Slate #687174 */
-    --accent: 200 12% 90%;
-    --accent-foreground: 200 6% 11%;
-    --destructive: 4 60% 50%;
+    --muted: 210 16% 92%;
+    --muted-foreground: 220 9% 42%;
+    --accent: 211 100% 96%;
+    --accent-foreground: 211 84% 35%;
+    --destructive: 3 85% 52%;
     --destructive-foreground: 0 0% 98%;
-    --border: 200 8% 86%;              /* Cool Hairline #d6dcdd */
-    --input: 200 10% 82%;              /* Control Graphite Stroke #bec8ca */
-    --ring: 200 22% 42%;
-    --radius: 0.5rem;                  /* Codex 8px base radius */
+    --border: 220 14% 84%;
+    --input: 220 14% 78%;
+    --ring: 211 100% 50%;
+    --radius: 0.625rem;
 
     /* Codex 语义色 */
     --success: 152 30% 38%;            /* #4f7464 */
@@ -50,15 +50,15 @@
     --skill: 270 40% 55%;              /* Skill 紫 #a371f7 */
 
     /* Layout tokens（Codex 精确尺寸） */
-    --titlebar-height: 2.75rem;        /* 44px Codex 工具栏 */
+    --titlebar-height: 3rem;           /* 48px desktop drag target */
     --sidebar-width: 16rem;            /* 256px 略宽于 Codex 240px 以容纳中文 */
     --right-panel-width: 26.25rem;     /* 420px Codex review panel */
     --statusbar-height: 1.625rem;      /* 26px Codex statusbar */
-    --glass-border: 0.16;
+    --glass-border: 0.24;
 
     /* Font system（Codex 字体层级） */
-    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-               "Helvetica Neue", "Inter", sans-serif;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+               "Helvetica Neue", "Segoe UI", sans-serif;
     --font-code: "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code",
                  Menlo, Monaco, Consolas, monospace;
     --text-xs: 11px;
@@ -68,34 +68,34 @@
     --text-lg: 16px;
 
     /* Shadow system（Codex 极简阴影） */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
-    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
-    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.12);
+    --shadow-glass: 0 1px 1px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.65);
   }
 
   .dark {
     /* ===== 暗色：Apple 深黑 + 可见玻璃边框 ===== */
-    --background: 220 14% 7%;          /* Apple 深黑 #0d0f10 */
-    --foreground: 0 0% 96%;
-    --card: 220 12% 11%;               /* #14171a */
+    --background: 240 5% 10%;
+    --foreground: 220 10% 96%;
+    --card: 240 4% 14%;
     --card-foreground: 0 0% 96%;
-    --popover: 220 12% 10%;
+    --popover: 240 4% 13%;
     --popover-foreground: 0 0% 96%;
     --primary: 200 28% 60%;            /* 反相 Teal #7fa8b5 */
     --primary-foreground: 0 0% 100%;
     --secondary: 220 12% 16%;
     --secondary-foreground: 0 0% 96%;
     --muted: 220 12% 16%;
-    --muted-foreground: 220 8% 60%;    /* 提高可见度 #8a9199 */
+    --muted-foreground: 220 8% 66%;    /* Sharper secondary text */
     --accent: 220 14% 20%;
     --accent-foreground: 0 0% 96%;
     --destructive: 4 60% 58%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 12% 22%;             /* 提高边框可见度 */
-    --input: 220 12% 24%;
+    --border: 220 10% 28%;             /* Visible dark hairline */
+    --input: 220 10% 34%;
     --ring: 200 28% 60%;
-    --glass-border: 0.28;
+    --glass-border: 0.34;
 
     /* Codex 语义色（暗色反相） */
     --success: 152 25% 58%;
@@ -108,10 +108,10 @@
     --diff-added-bg: 137 38% 14%;
     --diff-removed-bg: 4 64% 16%;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
-    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.28);
+    --shadow-md: 0 6px 14px rgba(0, 0, 0, 0.34), 0 1px 2px rgba(0, 0, 0, 0.22);
+    --shadow-lg: 0 14px 32px rgba(0, 0, 0, 0.42);
+    --shadow-glass: 0 1px 1px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -133,10 +133,10 @@
     text-rendering: optimizeLegibility;
     user-select: none;
     /* macOS 26 窗口背景渐变（极淡） */
-    background-image: radial-gradient(
-      ellipse at top,
-      hsl(var(--background) / 0.6),
-      hsl(var(--background))
+    background-image: linear-gradient(
+      to bottom,
+      hsl(var(--background) / 1),
+      hsl(var(--background) / 0.985)
     );
   }
   /* Allow text selection in chat / code blocks */
@@ -177,49 +177,50 @@
 @layer components {
   /* 侧边栏：Codex 扁平分隔 + 玻璃态 */
   .hk-sidebar {
-    @apply border-r border-border/70 bg-card/60;
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    @apply border-r border-border/60 bg-card/80;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 
   /* 顶部状态栏：Codex 工具栏 + Apple 玻璃 */
   .hk-titlebar {
-    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/50;
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/80;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
   }
 
   /* 玻璃卡片：Codex 极简 + Apple 光泽 */
   .hk-glass {
-    @apply rounded-xl border border-white/[var(--glass-border)] bg-card/50 shadow-sm;
-    backdrop-filter: blur(30px) saturate(180%);
-    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    @apply rounded-[10px] border border-border/70 bg-card/72 shadow-sm;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
   .hk-glass-strong {
-    @apply rounded-xl border border-white/[var(--glass-border)] bg-card/75 shadow-md;
-    backdrop-filter: blur(50px) saturate(200%);
-    -webkit-backdrop-filter: blur(50px) saturate(200%);
+    @apply rounded-lg border border-border/90 bg-card shadow-md;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   /* Codex 卡片：扁平 + hairline border */
   .hk-card {
-    @apply rounded-lg border border-border/60 bg-card/80 shadow-sm transition-all duration-200;
+    @apply rounded-lg border border-border/80 bg-card/95 shadow-none transition-colors duration-150;
   }
   .hk-card-hover {
-    @apply hover:border-primary/30 hover:bg-accent/40;
+    @apply hover:border-primary/35 hover:bg-accent/45;
   }
 
   /* Codex 输入框：hairline border + 聚焦环 */
   .hk-input {
-    @apply rounded-md border border-input/80 bg-background/60 transition-all duration-200;
-    @apply focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/15 focus-visible:bg-background/80;
+    @apply rounded-md border border-input bg-background/95 transition-colors duration-150;
+    @apply focus-visible:border-primary/60 focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:bg-background;
   }
 
   /* 胶囊按钮 */
   .hk-pill {
-    @apply rounded-full border border-border/70 bg-background/60;
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    @apply rounded-full border border-border/70 bg-background/95;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   /* 侧边栏列表项：Codex 紧凑密度 */
@@ -227,39 +228,39 @@
     @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors;
   }
   .hk-sidebar-item-active {
-    @apply bg-primary/10 font-medium text-primary;
+    @apply bg-accent/60 font-medium text-foreground;
   }
   .hk-sidebar-item-inactive {
-    @apply text-foreground/80 hover:bg-accent/60 hover:text-foreground;
+    @apply text-foreground/80 hover:bg-accent/55 hover:text-foreground;
   }
 
   /* 右栏：Codex review panel + 玻璃 */
   .hk-right-panel {
-    @apply border-l border-border/70 bg-card/60;
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    @apply border-l border-border/60 bg-card/80;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 
   /* 底部状态栏：Codex 26px + 玻璃 */
   .hk-statusbar {
-    @apply flex h-[var(--statusbar-height)] shrink-0 items-center justify-between border-t border-border/50 bg-card/40 px-3 text-[11px] text-muted-foreground;
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    @apply flex h-[var(--statusbar-height)] shrink-0 items-center justify-between border-t border-border/60 bg-card/95 px-3 text-[11px] text-muted-foreground;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     font-variant-numeric: tabular-nums;
   }
 
   /* Codex 分段控件：Local/Worktree/Cloud */
   .hk-segment {
-    @apply inline-flex items-center gap-0.5 rounded-md border border-border/50 bg-background/40 p-0.5;
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    @apply inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-background/90 p-0.5;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .hk-segment-btn {
-    @apply inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium text-muted-foreground transition-all duration-150;
-    @apply hover:text-foreground;
+    @apply inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors duration-150;
+    @apply hover:bg-accent/55 hover:text-foreground;
   }
   .hk-segment-btn-active {
-    @apply bg-card/90 text-foreground shadow-sm;
+    @apply bg-card text-foreground shadow-none;
   }
 
   /* Codex Diff 行（用于 DiffReview） */
@@ -287,7 +288,7 @@
 
 /* Markdown rendering styles — clean, native reader look */
 .markdown-body {
-  @apply text-sm leading-7;
+  @apply text-sm leading-6;
   overflow-wrap: break-word;
   word-break: break-word;
 }
@@ -418,4 +419,119 @@
 .app-region-no-drag {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+
+/* macOS control surfaces and live voice feedback */
+@layer components {
+  .hk-sidebar,
+  .hk-right-panel {
+    background: hsl(var(--card) / 0.72);
+    backdrop-filter: blur(24px) saturate(155%);
+    -webkit-backdrop-filter: blur(24px) saturate(155%);
+  }
+
+  .hk-titlebar {
+    background: hsl(var(--card) / 0.68);
+    backdrop-filter: blur(28px) saturate(170%);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.07);
+  }
+
+  .hk-glass,
+  .hk-glass-strong {
+    border-radius: 12px;
+    background: hsl(var(--card) / 0.72);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+  }
+
+  .hk-input {
+    border-radius: 9px;
+    background: hsl(var(--background) / 0.62);
+  }
+
+  .hk-segment {
+    border-radius: 9px;
+    background: hsl(var(--background) / 0.5);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+  }
+
+  .hk-segment-btn-active {
+    background: hsl(var(--card) / 0.9);
+    box-shadow: 0 1px 3px hsl(220 20% 5% / 0.16);
+  }
+
+  .hk-voice-waveform {
+    position: relative;
+    display: flex;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    overflow: hidden;
+    padding: 0 8px;
+    opacity: 0;
+    transition: opacity 180ms ease;
+    position: absolute;
+    z-index: 0;
+    right: 18px;
+    bottom: 42px;
+    left: 18px;
+    pointer-events: none;
+  }
+
+  .hk-voice-waveform-active { opacity: 1; }
+
+  .hk-voice-waveform svg { width: 100%; height: 16px; overflow: visible; }
+  .hk-voice-waveform-path {
+    fill: none;
+    stroke: url(#hk-wave-gradient);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-dasharray: 14 8;
+    stroke-dashoffset: 0;
+    opacity: .95;
+    transform-origin: center;
+    transform: scaleY(var(--wave-level, .18));
+    transition: transform 90ms ease-out;
+  }
+  .hk-voice-waveform-path-back {
+    stroke-width: 1;
+    opacity: .25;
+  }
+  .hk-voice-waveform-active .hk-voice-waveform-path {
+    animation: hk-wave-flow 1.1s linear infinite;
+  }
+  .hk-voice-waveform-active .hk-voice-waveform-path-back {
+    animation-duration: 1.8s;
+  }
+
+  .hk-voice-composer-active {
+    border-color: transparent;
+    background:
+      linear-gradient(hsl(var(--card) / .96), hsl(var(--card) / .96)) padding-box,
+      linear-gradient(115deg, hsl(270 100% 79%), hsl(215 100% 78%), hsl(270 100% 79%)) border-box;
+    box-shadow: 0 0 0 1px hsl(250 100% 78% / .28), 0 0 18px hsl(255 100% 70% / .24), 0 8px 28px hsl(240 80% 55% / .16);
+  }
+}
+
+@keyframes hk-wave-flow {
+  to { stroke-dashoffset: -44; }
+}
+
+/* Apple system palette overrides: neutral surfaces with the native system blue. */
+@layer base {
+  :root {
+    --primary: 211 100% 50%;
+    --ring: 211 100% 50%;
+    --accent: 211 100% 96%;
+    --accent-foreground: 211 84% 35%;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+  }
+  .dark {
+    --primary: 211 100% 60%;
+    --ring: 211 100% 60%;
+    --accent: 211 35% 22%;
+  }
 }

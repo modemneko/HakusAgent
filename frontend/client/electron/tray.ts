@@ -24,11 +24,15 @@
  */
 
 import { Tray, Menu, BrowserWindow, nativeImage, app } from 'electron'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
 // Type augmentation for `app.quitting` lives in electron-augment.d.ts
 // (ambient declaration, applied project-wide).
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 let tray: Tray | null = null
 

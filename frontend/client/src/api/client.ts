@@ -16,6 +16,7 @@
 
 import type {
   AgentEvent,
+  AgentMode,
   AppConfig,
   ChatRequest,
   ChatResponse,
@@ -706,6 +707,25 @@ export class HakusAIClient {
     return res.json()
   }
 
+  async transcribeVoice(
+    audio: Blob,
+    options?: { provider?: string; language?: string },
+  ): Promise<{ text: string }> {
+    const form = new FormData()
+    form.append('audio', audio, 'voice.wav')
+    if (options?.provider) form.append('provider', options.provider)
+    if (options?.language) form.append('language', options.language)
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/voice/asr`,
+      { method: 'POST', body: form },
+      120000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/voice/asr`, 'Voice transcription failed')
+    }
+    return res.json()
+  }
+
   // ============ 文件上传 ============
 
   /**
@@ -781,6 +801,7 @@ export class HakusAIClient {
     onChunk: StreamHandler,
     signal?: AbortSignal,
     provider?: string,
+    runMode?: AgentMode,
   ): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
       method: 'POST',
@@ -793,6 +814,7 @@ export class HakusAIClient {
         session_id: sessionId,
         stream: true,
         ...(provider ? { provider } : {}),
+        ...(runMode ? { run_mode: runMode } : {}),
       } satisfies ChatRequest),
       signal,
     })

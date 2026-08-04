@@ -128,11 +128,9 @@ class TTSEngine:
             await self._init_voxcpm(config)
         elif engine_type == "cosyvoice":
             await self._init_cosyvoice(config)
-        elif engine_type == "edge":
-            await self._init_edge(config)
         else:
-            logger.warning(f"Unknown TTS engine type: {engine_type}, falling back to edge")
-            await self._init_edge(config)
+            logger.warning(f"Unknown TTS engine type: {engine_type}, trying cosyvoice")
+            await self._init_cosyvoice(config)
 
     async def _init_voxcpm(self, config: dict):
         try:
@@ -169,27 +167,13 @@ class TTSEngine:
 
     async def _init_cosyvoice(self, config: dict):
         try:
-            from tts.cosyvoice_tts import CosyVoiceTTS
-            self._engine = CosyVoiceTTS()
-            if not self._engine.is_initialized():
-                logger.warning("CosyVoice TTS not initialized, trying edge fallback")
-                await self._init_edge(config)
-            else:
-                self._engine_type = "cosyvoice"
-                logger.info("CosyVoice TTS engine initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize CosyVoice: {e}, trying edge fallback")
-            await self._init_edge(config)
-
-    async def _init_edge(self, config: dict):
-        try:
-            from hakusai_core.voice.tts.edge import EdgeTTS
-            self._engine = EdgeTTS(config)
+            from hakusai_core.voice.tts import tts_registry
+            self._engine = tts_registry.create_engine("cosyvoice", config)
             await self._engine.initialize()
-            self._engine_type = "edge"
-            logger.info("Edge TTS engine initialized")
+            self._engine_type = "cosyvoice"
+            logger.info("CosyVoice TTS engine initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize Edge TTS: {e}")
+            logger.error(f"Failed to initialize CosyVoice: {e}")
             self._engine = None
 
     def is_available(self) -> bool:
@@ -204,8 +188,6 @@ class TTSEngine:
                 return await self._synthesize_voxcpm(text)
             elif self._engine_type == "cosyvoice":
                 return await self._synthesize_cosyvoice(text)
-            elif self._engine_type == "edge":
-                return await self._synthesize_edge(text)
         except Exception as e:
             logger.error(f"TTS synthesis failed: {e}")
             return None
@@ -255,16 +237,6 @@ class TTSEngine:
             return None
         except Exception as e:
             logger.error(f"CosyVoice synthesis failed: {e}")
-            return None
-
-    async def _synthesize_edge(self, text: str) -> Optional[bytes]:
-        try:
-            result = await self._engine.synthesize(text)
-            if result and hasattr(result, 'audio_data'):
-                return result.audio_data
-            return None
-        except Exception as e:
-            logger.error(f"Edge TTS synthesis failed: {e}")
             return None
 
 

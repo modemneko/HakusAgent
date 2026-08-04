@@ -31,7 +31,6 @@ class ModelProvider(str, Enum):
 
 class ASRProvider(str, Enum):
     """ASR提供商"""
-    SHERPA_ONNX = "sherpa_onnx"
     WHISPER = "whisper"
     FUNASR = "funasr"
     AZURE = "azure"
@@ -39,8 +38,6 @@ class ASRProvider(str, Enum):
 
 class TTSProvider(str, Enum):
     """TTS提供商"""
-    EDGE = "edge"
-    SHERPA_ONNX = "sherpa_onnx"
     COSYVOICE = "cosyvoice"
     GPT_SOVITS = "gpt_sovits"
     ELEVENLABS = "elevenlabs"
@@ -48,7 +45,7 @@ class TTSProvider(str, Enum):
 
 class VADProvider(str, Enum):
     """VAD提供商"""
-    SILERO = "silero"
+    FUNASR = "funasr"
 
 
 class AvatarType(str, Enum):
@@ -75,29 +72,22 @@ class ModelConfig(BaseModel):
 
 class ASRConfig(BaseModel):
     """语音识别配置"""
-    provider: ASRProvider = Field(default=ASRProvider.SHERPA_ONNX, description="ASR提供商")
+    provider: ASRProvider = Field(default=ASRProvider.FUNASR, description="ASR提供商")
     model_path: Optional[str] = Field(default=None, description="本地模型路径")
     language: str = Field(default="zh", description="识别语言")
     sample_rate: int = Field(default=16000, description="采样率")
-    
-    # Sherpa-ONNX特定配置
-    sherpa_onnx_model: Optional[str] = Field(default=None, description="Sherpa-ONNX模型路径")
-    tokens_path: Optional[str] = Field(default=None, description="tokens文件路径")
 
 
 class TTSConfig(BaseModel):
     """语音合成配置"""
-    provider: TTSProvider = Field(default=TTSProvider.EDGE, description="TTS提供商")
-    voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="语音名称")
+    provider: TTSProvider = Field(default=TTSProvider.COSYVOICE, description="TTS提供商")
+    voice: str = Field(default="", description="语音名称")
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="语速")
     volume: float = Field(default=1.0, ge=0.0, le=2.0, description="音量")
-    
-    # Edge TTS配置
-    edge_voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="Edge TTS语音")
-    
-    # CosyVoice/GPT-SoVITS配置
+
+    # CosyVoice配置
     reference_audio: Optional[str] = Field(default=None, description="参考音频路径")
-    
+
     # 缓存配置
     cache_enabled: bool = Field(default=True, description="是否启用缓存")
     cache_dir: str = Field(default="data/cache/tts", description="缓存目录")
@@ -105,7 +95,7 @@ class TTSConfig(BaseModel):
 
 class VADConfig(BaseModel):
     """语音活动检测配置"""
-    provider: VADProvider = Field(default=VADProvider.SILERO, description="VAD提供商")
+    provider: VADProvider = Field(default=VADProvider.FUNASR, description="VAD提供商")
     threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="检测阈值")
     min_speech_duration_ms: int = Field(default=250, description="最小语音持续时间(ms)")
     min_silence_duration_ms: int = Field(default=500, description="最小静音持续时间(ms)")
@@ -119,6 +109,9 @@ class VoiceConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig, description="TTS配置")
     vad: VADConfig = Field(default_factory=VADConfig, description="VAD配置")
     auto_play: bool = Field(default=True, description="是否自动播放TTS")
+    voice_mode: str = Field(default="balanced", description="语音场景模式")
+    enable_filler: bool = Field(default=True, description="是否启用填充语")
+    enable_compressed_reasoning: bool = Field(default=True, description="是否启用压缩推理")
 
 
 # ==================== 虚拟形象配置 ====================

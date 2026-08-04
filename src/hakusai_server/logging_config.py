@@ -49,11 +49,35 @@ def _ensure_log_dir() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+class _JsonFormatter(logging.Formatter):
+    """NDJSON 格式：每行一个 JSON，msg 字段正确转义。
+
+    - structured() 记录的 msg 是 JSON 字符串 (e.g. '{"event":"tool.start",...}')
+      → 解析后嵌入为对象
+    - 普通 logger.info("text") 记录的 msg 是纯文本
+      → 嵌入为字符串
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage()
+        # 如果 msg 本身就是 JSON（structured() 传入的），解析为对象
+        try:
+            msg_value = json.loads(msg)
+        except (json.JSONDecodeError, TypeError):
+            msg_value = msg
+        # 用 ISO 格式时间，带毫秒
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat()
+        return json.dumps({
+            "ts": ts,
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": msg_value,
+        }, ensure_ascii=False, default=str)
+
+
 def _json_formatter() -> logging.Formatter:
     """NDJSON 格式：每行一个 JSON，方便前端解析和 grep。"""
-    return logging.Formatter(
-        '{"ts":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":%(message)s}'
-    )
+    return _JsonFormatter()
 
 
 def _text_formatter() -> logging.Formatter:
@@ -91,13 +115,13 @@ def get_logger(name: str) -> logging.Logger:
         haku.llm.*       -> llm.log
     """
     category = "sidecar"
-    if name.startswith(("haku.agent", "hakus.agent")):
+    if name.startswith(("haku.agent", "hakus.agent", "hakus.agent.bridge")):
         category = "agent"
     elif name.startswith(("haku.orchestrator", "hakus.orchestrator")):
         category = "orchestrator"
-    elif name.startswith(("haku.tools", "hakus.tools")):
+    elif name.startswith(("haku.tools", "hakus.tools", "hakus.tools.")):
         category = "tools"
-    elif name.startswith(("haku.llm", "hakus.llm")):
+    elif name.startswith(("haku.llm", "hakus.llm", "hakus.models.")):
         category = "llm"
 
     logger_key = f"{category}:{name}"

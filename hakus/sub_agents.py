@@ -1,3 +1,4 @@
+import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -357,6 +358,8 @@ class BaseSubAgent:
         """Async generator that yields AgentEvent protocol events during execution.
 
         Subclasses can override to emit more specific progress messages.
+
+        timeout 秒后强制取消内部 AgentCore.run()，防止无限循环。
         """
         from .protocol.events import AgentEvent
 
@@ -375,21 +378,57 @@ class BaseSubAgent:
         start = time.time()
         try:
             yield TextDelta(text="Executing...")
-            result = await self._sub_agent.run()
+            # 真正使用 timeout — asyncio.wait_for 强制取消
+            result = await asyncio.wait_for(
+                self._sub_agent.run(),
+                timeout=timeout,
+            )
             elapsed = time.time() - start
+            # ACI: SubAgent 只返回 summary，不返回全部输出 (省 token)
+            _result_str = result or ""
+            _MAX_SUMMARY = 500  # 字符
+            if len(_result_str) > _MAX_SUMMARY:
+                # 提取关键行：RESULT: 行 + 前 3 行 + 最后 2 行
+                _lines = _result_str.split("\n")
+                _summary_lines = []
+                for _l in _lines:
+                    if _l.strip().startswith("RESULT:") or _l.strip().startswith("报告路径:") or _l.strip().startswith("问题数:"):
+                        _summary_lines.append(_l)
+                if not _summary_lines:
+                    _summary_lines = _lines[:3]
+                _summary_lines.append(f"... ({len(_lines)} lines total, {len(_result_str)} chars)")
+                _result_str = "\n".join(_summary_lines)
             yield ToolCallFinished(
                 name=self._agent_type,
                 success=True,
-                result=result or "",
+                result=_result_str,
                 duration=elapsed,
             )
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start
+            logger.error(f"SubAgent {self._agent_id} timed out after {timeout}s")
+            yield ToolCallFinished(
+                name=self._agent_type,
+                success=False,
+                result=f"[Error: Agent timed out after {timeout}s]",
+                duration=elapsed,
+            )
+        except asyncio.CancelledError:
+            elapsed = time.time() - start
+            yield ToolCallFinished(
+                name=self._agent_type,
+                success=False,
+                result="[Error: Agent cancelled]",
+                duration=elapsed,
+            )
+            raise
         except Exception as e:
             elapsed = time.time() - start
             logger.error(f"SubAgent {self._agent_id} failed: {e}")
             yield ToolCallFinished(
                 name=self._agent_type,
                 success=False,
-                result=str(e),
+                result=f"[Error: {e}]",
                 duration=elapsed,
             )
 
@@ -542,12 +581,29 @@ class TesterAgent(BaseSubAgent):
 
     def parse_result(self, output: str) -> Dict[str, Any]:
         result = {"status": "UNKNOWN", "issues": []}
+        # 多种 RESULT 格式容错
         for line in output.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("RESULT:"):
-                status = stripped.replace("RESULT:", "").strip().upper()
-                result["status"] = status
+            stripped = line.strip().upper()
+            # 格式 1: "RESULT: PASS" / "RESULT: FAIL"
+            if "RESULT:" in stripped:
+                after = stripped.split("RESULT:", 1)[1].strip()
+                if "PASS" in after:
+                    result["status"] = "PASS"
+                    break
+                elif "FAIL" in after:
+                    result["status"] = "FAIL"
+                    break
+            # 格式 2: 全大写独立行 "PASS" / "FAIL"
+            if stripped in ("PASS", "FAIL"):
+                result["status"] = stripped
                 break
+        # 如果仍未解析，检查是否包含关键词
+        if result["status"] == "UNKNOWN":
+            upper = output.upper()
+            if "PASS" in upper.split("\n")[0:3]:
+                result["status"] = "PASS"
+            elif "FAIL" in upper.split("\n")[0:3]:
+                result["status"] = "FAIL"
         lines = output.split("\n")
         in_issues = False
         for line in lines:
@@ -627,8 +683,16 @@ class DimensionTesterAgent(BaseSubAgent):
         }
         for line in output.split("\n"):
             stripped = line.strip()
-            if stripped.startswith("RESULT:"):
-                parsed["status"] = stripped.replace("RESULT:", "").strip().upper()
+            upper = stripped.upper()
+            # 多种 RESULT 格式容错
+            if "RESULT:" in upper:
+                after = upper.split("RESULT:", 1)[1].strip()
+                if "PASS" in after:
+                    parsed["status"] = "PASS"
+                elif "FAIL" in after:
+                    parsed["status"] = "FAIL"
+            elif upper in ("PASS", "FAIL"):
+                parsed["status"] = upper
             elif "报告路径" in stripped and ":" in stripped:
                 parsed["report_path"] = stripped.split(":", 1)[1].strip()
             elif "问题数" in stripped and ":" in stripped:
@@ -636,6 +700,13 @@ class DimensionTesterAgent(BaseSubAgent):
                     parsed["issue_count"] = int(stripped.split(":", 1)[1].strip())
                 except ValueError:
                     parsed["issue_count"] = 0
+        # 兜底：如果 UNKNOWN，检查前几行是否含 PASS/FAIL
+        if parsed["status"] == "UNKNOWN":
+            upper = output.upper()
+            if "PASS" in upper.split("\n")[0:3]:
+                parsed["status"] = "PASS"
+            elif "FAIL" in upper.split("\n")[0:3]:
+                parsed["status"] = "FAIL"
         if not parsed["issues"]:
             in_issues = False
             for line in output.split("\n"):

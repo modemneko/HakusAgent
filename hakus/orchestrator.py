@@ -1,6 +1,8 @@
 import asyncio
 import json
 import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,6 +95,7 @@ class OrchestratorEventAdapter:
                 name=event.agent_type or "sub_agent",
                 result=event.message or "",
                 success=event.success if event.success is not None else True,
+                duration=float(event.payload.get("execution_time", 0.0) or 0.0),
             )
 
         if etype == "task_progress":
@@ -159,7 +162,11 @@ class OrchestratorConfig:
     planner_timeout: int = 900
     heartbeat_interval: int = HEARTBEAT_INTERVAL
     auto_recover: bool = True
+    enable_final_test: bool = True
+    use_deterministic_verifier: bool = False
     test_concurrency: int = DEFAULT_TEST_CONCURRENCY
+    # DoomLoop 防护：连续 N 次失败（Dev 或 Tester）就放弃当前任务
+    max_consecutive_failures: int = 3
     test_dimensions: List[str] = field(
         default_factory=lambda: list(TestDimension.DEFAULT_TRIPLE)
     )
@@ -607,7 +614,10 @@ class Orchestrator:
 
     async def _test_and_fix_loop_legacy(self, task: Task, dev_agent: DevAgent) -> bool:
         fix_round = 0
-        while fix_round < self._config.max_fix_rounds and not self._cancelled:
+        consecutive_failures = 0  # DoomLoop 防护：连续失败计数
+        last_error_hash = ""      # DoomLoop 防护：检测重复相同错误
+
+        while fix_round <= self._config.max_fix_rounds and not self._cancelled:
             tester = TesterAgent(parent=self._root_agent)
             context = self._build_tester_context(task)
             test_agent_id = await tester.create(task.description, context)
@@ -618,6 +628,21 @@ class Orchestrator:
 
             if not test_output.success:
                 self._write_orchestrator_log(f"Tester failed for {task.id}: {test_output.error}", "ERROR")
+                # DoomLoop 检测：如果错误和上次一样，增加连续失败计数
+                err_hash = hash((test_output.error or "")[:200])
+                if err_hash == last_error_hash:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 1
+                    last_error_hash = err_hash
+                if consecutive_failures >= self._config.max_consecutive_failures:
+                    self._write_orchestrator_log(
+                        f"Task {task.id}: aborting — {consecutive_failures} consecutive identical failures",
+                        "ERROR",
+                    )
+                    break
+                if fix_round >= self._config.max_fix_rounds:
+                    break
                 fix_round += 1
                 continue
 
@@ -636,6 +661,11 @@ class Orchestrator:
             )
             self._task_board.record_test_result(task.id, "FAIL", issues)
 
+            # 重置连续失败计数（测试本身成功了，只是结果不 PASS）
+            consecutive_failures = 0
+
+            if fix_round >= self._config.max_fix_rounds:
+                break
             fix_round += 1
             self._phase = OrchestratorPhase.FIXING
             self._fix_round_counts[task.id] = fix_round
@@ -646,6 +676,16 @@ class Orchestrator:
 
             if not dev_output.success:
                 self._write_orchestrator_log(f"Fix round {fix_round} failed for {task.id}", "ERROR")
+                # DevAgent 失败也计入连续失败
+                consecutive_failures += 1
+                if consecutive_failures >= self._config.max_consecutive_failures:
+                    self._write_orchestrator_log(
+                        f"Task {task.id}: aborting — {consecutive_failures} consecutive dev failures",
+                        "ERROR",
+                    )
+                    break
+            else:
+                consecutive_failures = 0
 
             self._workspace.scan_and_sync(created_by="dev-fix")
 
@@ -669,8 +709,10 @@ class Orchestrator:
         all_issues: List[str] = []
         fix_round = 0
         per_task_results: Dict[str, DimensionResult] = {}
+        consecutive_failures = 0  # DoomLoop 防护
+        last_error_hash = ""
 
-        while fix_round < self._config.max_fix_rounds and not self._cancelled:
+        while fix_round <= self._config.max_fix_rounds and not self._cancelled:
             self._phase = OrchestratorPhase.TESTING
             context = self._build_tester_context(task)
             context["target"] = task.title
@@ -693,7 +735,7 @@ class Orchestrator:
 
             all_pass, passed, failed, errored = coordinator.summarize(results)
             summary_str = "/".join(
-                f"{TestDimension.LABELS.get(d, d)}={TestDimension.LABELS.get(d, d)[:1]}{'P' if results[d].passed else 'F' if results[d].failed else 'E'}"
+                f"{TestDimension.LABELS.get(d, d)}={TestDimension.LABELS.get(d, d)[:1]}{'P' if results[d].passed else 'F' if results[d].failed else '?' if results[d].status == 'UNKNOWN' else 'E'}"
                 for d in results
             )
             self._write_orchestrator_log(
@@ -713,6 +755,23 @@ class Orchestrator:
                 self._phase = OrchestratorPhase.DEVELOPING
                 return True
 
+            # DoomLoop 检测：如果 errored 占比高且错误相同，计入连续失败
+            if errored > 0 and passed == 0:
+                err_sig = hash(summary_str)
+                if err_sig == last_error_hash:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 1
+                    last_error_hash = err_sig
+                if consecutive_failures >= self._config.max_consecutive_failures:
+                    self._write_orchestrator_log(
+                        f"Task {task.id}: aborting — {consecutive_failures} consecutive identical test errors",
+                        "ERROR",
+                    )
+                    break
+            else:
+                consecutive_failures = 0
+
             all_issues = [
                 f"[{d}] {i}" for d, r in results.items() for i in r.issues
             ]
@@ -722,6 +781,8 @@ class Orchestrator:
                 f"failed={failed} errored={errored}"
             )
 
+            if fix_round >= self._config.max_fix_rounds:
+                break
             fix_round += 1
             self._fix_round_counts[task.id] = fix_round
             self._phase = OrchestratorPhase.FIXING
@@ -739,6 +800,15 @@ class Orchestrator:
                 self._write_orchestrator_log(
                     f"Fix round {fix_round} dev failed for {task.id}", "ERROR"
                 )
+                consecutive_failures += 1
+                if consecutive_failures >= self._config.max_consecutive_failures:
+                    self._write_orchestrator_log(
+                        f"Task {task.id}: aborting — {consecutive_failures} consecutive dev failures",
+                        "ERROR",
+                    )
+                    break
+            else:
+                consecutive_failures = 0
             self._workspace.scan_and_sync(created_by="dev-fix")
 
             lessons = []
@@ -965,6 +1035,8 @@ class Orchestrator:
             "test_dimensions": list(self._config.test_dimensions),
             "test_concurrency": self._config.test_concurrency,
             "use_multi_dim_test": self._config.use_multi_dim_test,
+            "enable_final_test": self._config.enable_final_test,
+            "use_deterministic_verifier": self._config.use_deterministic_verifier,
             "dim_test_results": {
                 tid: {d: r.to_dict() for d, r in res.items()}
                 for tid, res in self._dim_test_results.items()
@@ -1181,6 +1253,132 @@ class Orchestrator:
             if self._heartbeat:
                 await self._heartbeat.stop()
 
+    async def stream_execute_single_task(
+        self,
+        requirement: str,
+        title: str = "Deep single task",
+        input_files: Optional[List[str]] = None,
+    ) -> "AsyncIterator[Orchestrator.Event]":
+        """Run a lean Deep pipeline without planner fan-out.
+
+        This keeps the Deep quality loop (Dev -> Tester -> optional final
+        test) but creates exactly one task from the requirement. It is used
+        for isolated SWE benchmark jobs where a planner can accidentally
+        consume stale repository plans and inflate a tiny bugfix into a
+        whole-project task graph.
+        """
+        self._running = True
+        self._cancelled = False
+        self._start_time = time.time()
+        self._current_task_id = f"orch_{int(time.time())}"
+        self._requirement = requirement
+
+        self._long_task_ctx = LongTaskContext(str(self._workspace.root_dir))
+        self._long_task_ctx.set_requirement(requirement)
+        self._long_task_ctx.set_total_tasks(1)
+        self._long_task_ctx.set_phase("developing")
+        self._long_task_ctx.set_current_task(title)
+
+        self._heartbeat = WorkspaceHeartbeat(str(self._workspace.root_dir))
+        self._heartbeat.start()
+
+        try:
+            self._workspace.initialize()
+            self._task_board.clear()
+            self._workspace.write_plan(
+                "# Deep Single-Task Plan\n\n"
+                f"- [ ] {title}: complete the user's requirement and run the requested verifier.\n"
+            )
+            if self._workspace.read_lessons() is None:
+                self._workspace.write_lessons("# Lessons Learned\n\n")
+
+            self._write_orchestrator_log(
+                f"Single-task orchestrator started: {self._current_task_id}"
+            )
+            self._write_orchestrator_log(
+                f"Requirement: {requirement[:200]}"
+            )
+
+            task = self._task_board.add_task(
+                title=title,
+                description=requirement,
+                priority=TaskPriority.HIGH,
+                metadata={"single_task": True, "input_files": input_files or []},
+            )
+
+            self._phase = OrchestratorPhase.DEVELOPING
+            yield self.Event(
+                type="phase",
+                phase="developing",
+                message=f"Deep single task: {title}",
+            )
+
+            dev_ok = False
+            async for _item in self._stream_execute_single_task(task):
+                if isinstance(_item, OrchestratorProgressEvent):
+                    dev_ok = _item.phase == "completed"
+                else:
+                    yield _item
+
+            if not dev_ok and not self._cancelled:
+                self._phase = OrchestratorPhase.FAILED
+                yield self.Event(
+                    type="error",
+                    phase=self._phase.value,
+                    error="Deep single-task pipeline failed",
+                )
+                return
+
+            self._long_task_ctx.set_phase("final_testing")
+            self._long_task_ctx.compress_for_next_turn()
+
+            self._phase = OrchestratorPhase.FINAL_TESTING
+            yield self.Event(
+                type="phase",
+                phase="final_testing",
+                message="Final test",
+            )
+            final_ok = True
+            async for _item in self._stream_phase_final_test():
+                if isinstance(_item, OrchestratorProgressEvent):
+                    final_ok = _item.phase == "completed"
+                else:
+                    yield _item
+
+            self._long_task_ctx.set_phase("completed")
+            self._long_task_ctx.compress_for_next_turn()
+
+            self._phase = OrchestratorPhase.COMPLETED
+            yield self.Event(
+                type="phase",
+                phase="completed",
+                message="Deep single task completed",
+            )
+            yield self.Event(
+                type="done",
+                message=("Deep single task completed" if final_ok else
+                         "Deep single task completed with final-test warnings"),
+                success=final_ok,
+            )
+        except asyncio.CancelledError:
+            self._phase = OrchestratorPhase.FAILED
+            self._write_orchestrator_log("Single-task orchestrator cancelled", "WARNING")
+            yield self.Event(type="error", error="Cancelled", phase="failed")
+        except Exception as e:
+            self._phase = OrchestratorPhase.FAILED
+            self._write_orchestrator_log(
+                f"Single-task orchestrator error: {e}", "ERROR"
+            )
+            yield self.Event(type="error", error=str(e), phase="failed")
+        finally:
+            self._running = False
+            try:
+                self._workspace.scan_and_sync(created_by="orchestrator")
+            except Exception:
+                pass
+            if self._heartbeat:
+                await self._heartbeat.stop()
+
     @staticmethod
     async def _drain_phase_impl(agen) -> "tuple[bool, list]":
         """Fallback batched drain. Not used in `stream_execute` (we
@@ -1247,6 +1445,7 @@ class Orchestrator:
                     task_id=task_id or agent.agent_id or "",
                     success=event.success,
                     message=event.result or "",
+                    payload={"execution_time": float(event.duration or 0.0)},
                 )
 
     def _convert_agent_event(
@@ -1266,6 +1465,7 @@ class Orchestrator:
                 type="agent_done", agent_type=event.name,
                 task_id=task_id, success=event.success,
                 message=event.result or "",
+                payload={"execution_time": float(event.duration or 0.0)},
             )
         # Fallback
         return self.Event(type="log", message=str(event))
@@ -1464,6 +1664,33 @@ class Orchestrator:
             output_tokens=len(dev_output.content or ""),
         )
 
+        if self._config.use_deterministic_verifier:
+            test_ok = False
+            async for _item in self._stream_deterministic_verify_and_fix_loop(
+                task, dev_agent
+            ):
+                if isinstance(_item, OrchestratorProgressEvent):
+                    test_ok = _item.phase == "completed"
+                else:
+                    yield _item
+
+            if self._long_task_ctx:
+                self._long_task_ctx.add_task_summary(TaskSummary(
+                    task_id=task.id,
+                    title=task.title,
+                    status="completed" if test_ok else "failed",
+                    test_result="PASS" if test_ok else "FAIL",
+                    fix_rounds=self._fix_round_counts.get(task.id, 0),
+                ))
+                self._long_task_ctx.set_current_task(task.title)
+
+            yield OrchestratorProgressEvent(
+                phase="completed" if test_ok else "failed",
+                message=f"Task {task.id}: {'PASS' if test_ok else 'FAIL'}",
+                task_id=task.id,
+            )
+            return
+
         self._phase = OrchestratorPhase.TESTING
         self._task_board.update_status(task.id, TaskStatus.TESTING)
         yield self.Event(
@@ -1515,11 +1742,122 @@ class Orchestrator:
             yield ok
         yield OrchestratorProgressEvent(phase="failed", message=f"Task {task.id}: test loop ended without result")
 
+    def _run_deterministic_verifier(self) -> Tuple[bool, str, List[str]]:
+        root = self._workspace.root_dir
+        test_files = sorted(
+            str(path) for path in root.rglob("test_*.py")
+            if ".pytest_cache" not in path.parts
+        )
+        if not test_files:
+            return False, "No test_*.py files found for deterministic verifier", []
+
+        cmd = [sys.executable, "-m", "pytest", *test_files, "-q"]
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=str(root),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=self._config.tester_timeout,
+            )
+            return completed.returncode == 0, completed.stdout or "", test_files
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            return False, f"Verifier timed out after {self._config.tester_timeout}s\n{output}", test_files
+
+    async def _stream_deterministic_verify_and_fix_loop(
+        self, task: Task, dev_agent: DevAgent,
+    ):
+        fix_round = 0
+        while fix_round <= self._config.max_fix_rounds and not self._cancelled:
+            self._phase = OrchestratorPhase.TESTING
+            self._task_board.update_status(task.id, TaskStatus.TESTING)
+            yield self.Event(
+                type="phase",
+                phase="testing",
+                message=f"Deterministic verifier: {task.title}",
+            )
+
+            passed, output, test_files = await asyncio.to_thread(
+                self._run_deterministic_verifier
+            )
+            output_tail = output[-4000:]
+            yield self.Event(
+                type="task_progress",
+                message=(
+                    f"pytest {'PASS' if passed else 'FAIL'} "
+                    f"({len(test_files)} test files)"
+                ),
+                payload={"verifier_output": output_tail},
+            )
+
+            if passed:
+                self._task_board.record_test_result(task.id, "PASS", [])
+                self._write_orchestrator_log(f"Task {task.id}: deterministic verifier PASS")
+                self._phase = OrchestratorPhase.DEVELOPING
+                yield OrchestratorProgressEvent(
+                    phase="completed",
+                    message=f"Task {task.id}: deterministic verifier PASS",
+                )
+                return
+
+            self._task_board.record_test_result(
+                task.id, "FAIL", [output_tail or "pytest failed"]
+            )
+            self._write_orchestrator_log(
+                f"Task {task.id}: deterministic verifier FAIL (round {fix_round + 1})"
+            )
+            if fix_round >= self._config.max_fix_rounds:
+                break
+
+            fix_round += 1
+            self._fix_round_counts[task.id] = fix_round
+            self._phase = OrchestratorPhase.FIXING
+            yield self.Event(
+                type="phase",
+                phase="fixing",
+                message=f"Verifier fix round {fix_round}",
+            )
+
+            fix_description = (
+                f"The deterministic verifier failed for task {task.id}.\n"
+                "Fix the implementation and tests, then ensure pytest passes.\n\n"
+                f"Verifier command output:\n{output_tail}"
+            )
+            await dev_agent.resume(fix_description, self._build_dev_context(task))
+
+            dev_holder: list = []
+            async for evt in self._consume_stream_run(
+                dev_agent, self._config.dev_timeout, dev_holder,
+                task_id=task.id,
+            ):
+                yield evt
+
+            dev_output = dev_holder[0] if dev_holder else SubAgentOutput(
+                agent_type="dev", agent_id="", task_id="",
+                content="", success=False, error="No output from stream_run",
+            )
+            if not dev_output.success:
+                self._write_orchestrator_log(
+                    f"Verifier fix round {fix_round} dev failed for {task.id}",
+                    "ERROR",
+                )
+            self._workspace.scan_and_sync(created_by="dev-fix")
+
+        self._phase = OrchestratorPhase.DEVELOPING
+        yield OrchestratorProgressEvent(
+            phase="failed",
+            message=f"Task {task.id}: deterministic verifier failed",
+        )
+
     async def _stream_test_and_fix_loop_legacy(
         self, task: Task, dev_agent: DevAgent,
     ):
         fix_round = 0
-        while fix_round < self._config.max_fix_rounds and not self._cancelled:
+        while fix_round <= self._config.max_fix_rounds and not self._cancelled:
             tester = TesterAgent(parent=self._root_agent)
             test_prompt = self._build_sub_agent_prompt(
                 task.description, "tester",
@@ -1547,6 +1885,8 @@ class Orchestrator:
                     f"Tester failed for {task.id}: {test_output.error}",
                     "ERROR",
                 )
+                if fix_round >= self._config.max_fix_rounds:
+                    break
                 fix_round += 1
                 continue
 
@@ -1562,12 +1902,15 @@ class Orchestrator:
                     type="task_progress", message=f"✅ {task.title} 通过",
                 )
                 yield OrchestratorProgressEvent(phase="completed", message=f"Task {task.id}: PASS")
+                return
 
             issues = parsed.get("issues", [])
             self._write_orchestrator_log(
                 f"Task {task.id}: FAIL (round {fix_round + 1})"
             )
             self._task_board.record_test_result(task.id, "FAIL", issues)
+            if fix_round >= self._config.max_fix_rounds:
+                break
             fix_round += 1
             self._phase = OrchestratorPhase.FIXING
             yield self.Event(
@@ -1621,7 +1964,7 @@ class Orchestrator:
         fix_round = 0
         per_task_results: Dict[str, DimensionResult] = {}
 
-        while fix_round < self._config.max_fix_rounds and not self._cancelled:
+        while fix_round <= self._config.max_fix_rounds and not self._cancelled:
             self._phase = OrchestratorPhase.TESTING
             context = self._build_tester_context(task)
             context["target"] = task.title
@@ -1697,6 +2040,7 @@ class Orchestrator:
                     message=f"✅ {task.title} 全部维度通过 (R{fix_round})",
                 )
                 yield OrchestratorProgressEvent(phase="completed", message=f"Task {task.id}: ALL DIMENSIONS PASS (round {fix_round})")
+                return
 
             all_issues = [
                 f"[{d}] {i}" for d, r in results.items() for i in r.issues
@@ -1710,6 +2054,8 @@ class Orchestrator:
                 f"failed={failed} errored={errored}"
             )
 
+            if fix_round >= self._config.max_fix_rounds:
+                break
             fix_round += 1
             self._fix_round_counts[task.id] = fix_round
             self._phase = OrchestratorPhase.FIXING
@@ -1771,10 +2117,16 @@ class Orchestrator:
 
     async def _stream_phase_final_test(self) -> bool:
         self._write_orchestrator_log("Phase: Final Testing")
+        if not self._config.enable_final_test:
+            self._write_orchestrator_log("Final testing skipped by config")
+            yield OrchestratorProgressEvent(phase="completed", message="Final testing skipped")
+            return
+
         completed_tasks = self._task_board.get_completed()
         if not completed_tasks:
             self._write_orchestrator_log("No completed tasks to final-test")
             yield OrchestratorProgressEvent(phase="completed", message="No completed tasks to final-test")
+            return
 
         all_pass = True
         for task in completed_tasks:
@@ -1835,4 +2187,17 @@ class Orchestrator:
         """
         adapter = OrchestratorEventAdapter()
         async for internal_event in self.stream_execute(requirement, input_files):
+            yield adapter.adapt(internal_event)
+
+    async def stream_execute_single_task_v2(
+        self,
+        requirement: str,
+        title: str = "Deep single task",
+        input_files: Optional[List[str]] = None,
+    ) -> "AsyncIterator[AgentEvent]":
+        """AgentEvent wrapper for :meth:`stream_execute_single_task`."""
+        adapter = OrchestratorEventAdapter()
+        async for internal_event in self.stream_execute_single_task(
+            requirement, title=title, input_files=input_files
+        ):
             yield adapter.adapt(internal_event)

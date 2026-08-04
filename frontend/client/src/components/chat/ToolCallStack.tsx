@@ -13,7 +13,7 @@ export function ToolCallStack({ toolCalls, reasoning, isStreaming }: ToolCallSta
   if (!toolCalls.length && !hasReasoning && !isStreaming) return null
 
   return (
-    <div className="w-full overflow-hidden rounded-xl border border-border/60 bg-card/70 backdrop-blur-xl">
+    <div className="w-full overflow-hidden rounded-lg border border-border/80 bg-card/95">
       {(hasReasoning || isStreaming) && (
         <ReasoningLogItem reasoning={reasoning || ''} isStreaming={isStreaming} />
       )}

@@ -166,8 +166,9 @@ class FunASR(BaseASR):
             text=text,
             confidence=confidence,
             language=self.language,
+            emotion=emotion,
         )
-    
+
     def _map_language(self, lang: str) -> str:
         """
         映射语言代码到FunASR格式
@@ -214,19 +215,24 @@ class FunASR(BaseASR):
         asr_results = []
         for result in results:
             text = result.get("text", "")
-            
-            # 移除标签
+
+            # 解析情感标签
+            emotion = None
             if text.startswith("<"):
                 while text.startswith("<"):
                     end = text.find("|>")
                     if end == -1:
                         break
+                    tag = text[2:end]
+                    if tag in ["NEUTRAL", "HAPPY", "SAD", "ANGRY", "FEAR"]:
+                        emotion = tag
                     text = text[end+2:].strip()
-            
+
             asr_results.append(ASRResult(
                 text=text,
                 confidence=result.get("confidence", 0.9),
                 language=self.language,
+                emotion=emotion,
             ))
         
         return asr_results

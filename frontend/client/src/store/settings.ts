@@ -51,8 +51,24 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       autoScroll: all?.autoScroll ?? DEFAULT_SETTINGS.autoScroll,
       fontSize: all?.fontSize ?? DEFAULT_SETTINGS.fontSize,
       ttsEnabled: all?.ttsEnabled ?? DEFAULT_SETTINGS.ttsEnabled,
+      ttsProvider: all?.ttsProvider || DEFAULT_SETTINGS.ttsProvider,
       ttsVoice: all?.ttsVoice || DEFAULT_SETTINGS.ttsVoice,
       ttsSpeed: all?.ttsSpeed ?? DEFAULT_SETTINGS.ttsSpeed,
+      voiceMode: all?.voiceMode || DEFAULT_SETTINGS.voiceMode,
+      dashscopeApiKey: all?.dashscopeApiKey || DEFAULT_SETTINGS.dashscopeApiKey,
+      voiceCallEnabled: all?.voiceCallEnabled ?? DEFAULT_SETTINGS.voiceCallEnabled,
+      voiceCallBackend: all?.voiceCallBackend || DEFAULT_SETTINGS.voiceCallBackend,
+      celiaPath: all?.celiaPath || DEFAULT_SETTINGS.celiaPath,
+      celiaConfigPath: all?.celiaConfigPath || DEFAULT_SETTINGS.celiaConfigPath,
+      celiaPythonCommand: all?.celiaPythonCommand || DEFAULT_SETTINGS.celiaPythonCommand,
+      celiaOpenInTerminal: all?.celiaOpenInTerminal ?? DEFAULT_SETTINGS.celiaOpenInTerminal,
+      asrProvider: all?.asrProvider || DEFAULT_SETTINGS.asrProvider,
+      asrLanguage: all?.asrLanguage || DEFAULT_SETTINGS.asrLanguage,
+      vadThreshold: all?.vadThreshold ?? DEFAULT_SETTINGS.vadThreshold,
+      vadSilenceEndFrames: all?.vadSilenceEndFrames ?? DEFAULT_SETTINGS.vadSilenceEndFrames,
+      voiceBroadcastEnabled: all?.voiceBroadcastEnabled ?? DEFAULT_SETTINGS.voiceBroadcastEnabled,
+      voiceBroadcastMode: all?.voiceBroadcastMode || DEFAULT_SETTINGS.voiceBroadcastMode,
+      voiceBroadcastChime: all?.voiceBroadcastChime || DEFAULT_SETTINGS.voiceBroadcastChime,
       trayEnabled: all?.trayEnabled ?? DEFAULT_SETTINGS.trayEnabled,
       minimizeToTray: all?.minimizeToTray ?? DEFAULT_SETTINGS.minimizeToTray,
       toggleShortcut: all?.toggleShortcut || DEFAULT_SETTINGS.toggleShortcut,
@@ -95,8 +111,24 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('autoScroll', settings.autoScroll)
     await api.set('fontSize', settings.fontSize)
     await api.set('ttsEnabled', settings.ttsEnabled)
+    await api.set('ttsProvider', settings.ttsProvider)
     await api.set('ttsVoice', settings.ttsVoice)
     await api.set('ttsSpeed', settings.ttsSpeed)
+    await api.set('voiceMode', settings.voiceMode)
+    await api.set('dashscopeApiKey', settings.dashscopeApiKey)
+    await api.set('voiceCallEnabled', settings.voiceCallEnabled)
+    await api.set('voiceCallBackend', settings.voiceCallBackend)
+    await api.set('celiaPath', settings.celiaPath)
+    await api.set('celiaConfigPath', settings.celiaConfigPath)
+    await api.set('celiaPythonCommand', settings.celiaPythonCommand)
+    await api.set('celiaOpenInTerminal', settings.celiaOpenInTerminal)
+    await api.set('asrProvider', settings.asrProvider)
+    await api.set('asrLanguage', settings.asrLanguage)
+    await api.set('vadThreshold', settings.vadThreshold)
+    await api.set('vadSilenceEndFrames', settings.vadSilenceEndFrames)
+    await api.set('voiceBroadcastEnabled', settings.voiceBroadcastEnabled)
+    await api.set('voiceBroadcastMode', settings.voiceBroadcastMode)
+    await api.set('voiceBroadcastChime', settings.voiceBroadcastChime)
     await api.set('trayEnabled', settings.trayEnabled)
     await api.set('minimizeToTray', settings.minimizeToTray)
     await api.set('toggleShortcut', settings.toggleShortcut)

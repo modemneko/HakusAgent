@@ -6,12 +6,13 @@ HakusAI 2.0 FastAPI服务器
 import asyncio
 import os
 import shutil
+import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,7 @@ from hakusai_core.agent import BaseAgent, AgentContext
 from hakusai_core.memory import MemoryManager, MemoryStorage
 from hakusai_core.voice.tts import tts_registry
 from hakusai_core.v2.platform import platform_manager, SendMessage
+from hakus.modes import RUN_MODES, normalize_run_mode
 from .vtuber_websocket import vtuber_handler
 from .agent_bridge import (
     run_turn_stream as agentcore_run_turn_stream,
@@ -98,6 +100,19 @@ class ChatRequest(BaseModel):
     # the user switch providers from the TopBar dropdown mid-session.
     # If None, falls back to config.yaml's models.default_model.
     provider: Optional[str] = None
+    # Per-request run mode override: "swift", "deep", or "fleet".
+    run_mode: Optional[str] = None
+
+    @field_validator("run_mode")
+    @classmethod
+    def validate_run_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = normalize_run_mode(value, default="swift")
+        if normalized not in RUN_MODES or normalized != value.strip().lower():
+            allowed = ", ".join(RUN_MODES)
+            raise ValueError(f"run_mode must be one of: {allowed}")
+        return normalized
 
 
 class ChatResponse(BaseModel):
@@ -409,14 +424,15 @@ class HakusAIServer:
             
             # 初始化TTS引擎
             try:
-                if self.config.voice.enabled and str(self.config.voice.tts.provider) == "edge":
+                if self.config.voice.enabled:
+                    tts_provider_str = str(self.config.voice.tts.provider.value) if hasattr(self.config.voice.tts.provider, 'value') else str(self.config.voice.tts.provider)
                     tts_config = self.config.voice.tts.model_dump()
-                    self.tts_engine = tts_registry.create_engine("edge", tts_config)
+                    self.tts_engine = tts_registry.create_engine(tts_provider_str, tts_config)
                     await self.tts_engine.initialize()
                     self._component_status["tts_engine"] = "ok"
-                    logger.info("TTS engine initialized")
+                    logger.info(f"TTS engine initialized ({tts_provider_str})")
                 else:
-                    self._component_status["tts_engine"] = "skipped: not edge provider or disabled"
+                    self._component_status["tts_engine"] = "skipped: voice disabled"
             except Exception as e:
                 self._component_status["tts_engine"] = f"failed: {e}"
                 logger.warning(f"TTS init failed (degraded mode): {e}")
@@ -424,7 +440,7 @@ class HakusAIServer:
             # 初始化 VTuber handler
             try:
                 tts_config = {
-                    "type": str(self.config.voice.tts.provider) if self.config.voice.enabled else "edge",
+                    "type": str(self.config.voice.tts.provider) if self.config.voice.enabled else "cosyvoice",
                 }
                 try:
                     import yaml
@@ -1193,6 +1209,7 @@ class HakusAIServer:
                         async for chunk in agentcore_run_turn_stream(
                             request.message, request.session_id,
                             provider=request.provider,
+                            run_mode=getattr(request, "run_mode", None),
                         ):
                             # 从 chunk 中提取事件类型, 更新 metrics
                             etype = chunk.get("event_type", "")
@@ -2431,9 +2448,243 @@ class HakusAIServer:
         @app.get("/api/tts/voices")
         async def list_tts_voices():
             """列出可用的TTS语音"""
-            from hakusai_core.voice.tts.edge import EdgeTTS
+            from hakusai_core.voice.tts import tts_registry
+            providers = tts_registry.list_providers()
             return {
-                "voices": EdgeTTS.list_voices()
+                "providers": providers,
+            }
+
+        @app.post("/api/voice/asr")
+        async def voice_asr(
+            audio: UploadFile = File(...),
+            provider: Optional[str] = Form(None),
+            language: Optional[str] = Form(None),
+        ):
+            """Transcribe a short WAV utterance with HakusAI built-in ASR."""
+            suffix = Path(audio.filename or "voice.wav").suffix or ".wav"
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp_path = tmp.name
+                    tmp.write(await audio.read())
+
+                from .celia_voice import transcribe_audio
+
+                text = await asyncio.to_thread(
+                    transcribe_audio,
+                    tmp_path,
+                    provider=provider,
+                    language=language,
+                )
+                return {"text": text}
+            except Exception as e:
+                logger.error(f"ASR error: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+        # ========== 语音通话 API ==========
+
+        @app.websocket("/ws/voice")
+        async def websocket_voice(websocket: WebSocket):
+            """
+            语音通话 WebSocket 接口
+
+            全双工语音通话：前端持续发送 PCM 音频帧，
+            后端 VAD -> ASR -> LLM -> TTS -> 音频推送
+
+            Query params:
+                session_id: 会话 ID（默认 "default"）
+                api_key: DashScope API Key（可选，前端设置传入）
+            """
+            from .voice_call_handler import VoiceCallHandler, VoiceCallConfig
+
+            session_id = websocket.query_params.get("session_id", "default")
+            api_key = websocket.query_params.get("api_key", "")
+
+            # 从配置构建 VoiceCallConfig
+            config = config_manager.config
+            # provider 可能是 Enum 值，统一转 str
+            raw_asr = config.voice.asr.provider if config.voice.enabled else "funasr"
+            raw_tts = config.voice.tts.provider if config.voice.enabled else "cosyvoice"
+            asr_provider = str(raw_asr.value) if hasattr(raw_asr, 'value') else str(raw_asr)
+            tts_provider = str(raw_tts.value) if hasattr(raw_tts, 'value') else str(raw_tts)
+
+            # 从模型配置读取 LLM 连接信息（语音 Agent 独立调用，不走 agent_bridge）
+            model_cfg = config.model
+            llm_api_key = model_cfg.api_key or ""
+            llm_base_url = model_cfg.base_url or ""
+            llm_model_name = model_cfg.model_name or "deepseek-chat"
+
+            voice_call_config = VoiceCallConfig(
+                asr_provider=asr_provider,
+                asr_language="zh",
+                tts_provider=tts_provider,
+                tts_voice="",
+                tts_model="cosyvoice-v3-flash",
+                vad_threshold=0.5,
+                sample_rate=16000,
+                dashscope_api_key=api_key,
+                llm_api_key=llm_api_key,
+                llm_base_url=llm_base_url,
+                llm_model_name=llm_model_name,
+            )
+
+            handler = VoiceCallHandler(config=voice_call_config, agent_bridge=self)
+            await handler.handle_connection(websocket, session_id=session_id)
+
+        @app.post("/api/voice/clone")
+        async def voice_clone(
+            audio: UploadFile = File(...),
+            api_key: Optional[str] = Form(None),
+        ):
+            """
+            语音复刻上传端点
+
+            接收 WAV 格式音频文件，复制到 hakusai_data/voice/ref_audio.wav，
+            然后调用 CosyVoiceTTS.clone_voice() 开始克隆。
+            """
+            # 验证文件格式
+            if not audio.filename or not audio.filename.lower().endswith(".wav"):
+                raise HTTPException(status_code=400, detail="仅支持 WAV 格式音频文件")
+
+            voice_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "hakusai_data", "voice"))
+            ref_audio_path = os.path.join(voice_data_dir, "ref_audio.wav")
+
+            try:
+                # 确保目录存在
+                os.makedirs(voice_data_dir, exist_ok=True)
+
+                # 保存参考音频
+                content = await audio.read()
+                with open(ref_audio_path, "wb") as f:
+                    f.write(content)
+
+                # 重置状态文件
+                status_path = os.path.join(voice_data_dir, "voice_status.txt")
+                error_path = os.path.join(voice_data_dir, "voice_error.txt")
+                for p in [status_path, error_path]:
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+
+                logger.info(f"语音复刻: 参考音频已保存到 {ref_audio_path} ({len(content)} bytes)")
+
+                # 校验音频时长（CosyVoice 要求 >= 10 秒）
+                import wave
+                try:
+                    with wave.open(ref_audio_path, "rb") as wf:
+                        frames = wf.getnframes()
+                        sr = wf.getframerate()
+                        duration = frames / sr if sr > 0 else 0
+                    if duration < 8:
+                        return JSONResponse(
+                            status_code=400,
+                            content={"status": "error", "message": f"音频太短 ({duration:.1f}s)，CosyVoice 需要至少 10 秒。请上传 10~20 秒的 WAV 文件"},
+                        )
+                    logger.info(f"语音复刻: 音频时长 {duration:.1f}s")
+                except Exception as wave_err:
+                    logger.warning(f"语音复刻: 无法解析 WAV 时长，跳过校验: {wave_err}")
+
+                # 触发克隆
+                try:
+                    from hakusai_core.voice.tts.cosyvoice import CosyVoiceTTS
+                    tts_config = config_manager.config.voice.tts.model_dump() if config_manager.config.voice.enabled else {}
+                    tts_config.setdefault("model", "cosyvoice-v3-flash")
+                    # 前端设置的 API Key 优先，覆盖环境变量
+                    if api_key:
+                        tts_config["api_key"] = api_key
+                        logger.info(f"语音复刻: 使用前端传入 API Key ({len(api_key)} 字符)")
+                    else:
+                        logger.warning("语音复刻: 未收到前端 API Key，尝试使用配置/环境变量")
+                    cosy = CosyVoiceTTS(tts_config)
+                    logger.info(f"语音复刻: CosyVoiceTTS api_key 是否配置: {bool(cosy.api_key)}")
+                    # 异步执行克隆（不等待完成）
+                    asyncio.create_task(cosy.clone_voice(ref_audio=ref_audio_path))
+                except Exception as clone_err:
+                    logger.warning(f"语音复刻启动失败: {clone_err}")
+                    return JSONResponse(
+                        status_code=500,
+                        content={"status": "error", "message": f"声音复刻启动失败: {str(clone_err)}"},
+                    )
+
+                return {"status": "cloning", "message": "声音复刻已启动"}
+
+            except Exception as e:
+                logger.error(f"语音复刻上传错误: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/voice/clone/status")
+        async def voice_clone_status():
+            """
+            语音复刻状态查询
+
+            读取 hakusai_data/voice/ 下的状态文件，返回当前复刻状态。
+            """
+            voice_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "hakusai_data", "voice"))
+            voice_id_path = os.path.join(voice_dir, "voice_id.txt")
+            status_path = os.path.join(voice_dir, "voice_status.txt")
+            error_path = os.path.join(voice_dir, "voice_error.txt")
+
+            # 1. 已缓存 voice_id -> completed
+            if os.path.exists(voice_id_path):
+                try:
+                    with open(voice_id_path, "r", encoding="utf-8") as f:
+                        voice_id = f.read().strip()
+                    if voice_id:
+                        return {"status": "completed", "voice_id": voice_id}
+                except Exception as e:
+                    logger.error(f"读取 voice_id 失败: {e}")
+
+            # 2. 读取状态文件
+            status = "pending"
+            if os.path.exists(status_path):
+                try:
+                    with open(status_path, "r", encoding="utf-8") as f:
+                        status = f.read().strip() or "pending"
+                except Exception as e:
+                    logger.warning(f"读取语音复刻状态失败: {e}")
+
+            # 3. 失败时读取错误信息
+            error = ""
+            if status == "failed" and os.path.exists(error_path):
+                try:
+                    with open(error_path, "r", encoding="utf-8") as f:
+                        error = f.read().strip()
+                except Exception as e:
+                    logger.warning(f"读取语音复刻错误信息失败: {e}")
+
+            return {"status": status, "voice_id": None, "error": error}
+
+        @app.get("/api/voice/settings")
+        async def voice_settings():
+            """
+            语音设置查询
+
+            返回当前 TTS/ASR/VAD 配置。
+            """
+            config = config_manager.config
+            return {
+                "voice_enabled": config.voice.enabled,
+                "asr": {
+                    "provider": config.voice.asr.provider,
+                    "language": getattr(config.voice.asr, "language", "zh"),
+                },
+                "tts": {
+                    "provider": config.voice.tts.provider,
+                    "model": getattr(config.voice.tts, "model", "cosyvoice-v3-flash"),
+                },
+                "vad": {
+                    "provider": "funasr",
+                    "threshold": 0.5,
+                },
+                "sample_rate": 16000,
             }
         
         # ========== WebSocket路由 ==========
@@ -3043,60 +3294,61 @@ class HakusAIServer:
 
         @app.websocket("/ws/terminal")
         async def terminal_ws(websocket: WebSocket):
-            """Built-in terminal — hosts a persistent shell in the agent workdir.
+            """Full PTY terminal — hosts a persistent shell in the agent workdir.
 
-            Protocol (JSON messages):
+            Protocol:
               Client → Server: {"type":"stdin","data":"<text>"}
-              Server → Client: {"type":"stdout","data":"<text>"}
-                                   {"type":"stderr","data":"<text>"}
-                                   {"type":"exit","code":<int>}
-                                   {"type":"error","message":"<str>"}
+                               {"type":"resize","cols":80,"rows":24}
+              Server → Client: raw terminal bytes (text WebSocket frames)
+                               {"type":"error","message":"<str>"}
 
-            Uses a pipe-based subprocess (no PTY), so interactive TUI apps
-            (vim/less) won't render correctly, but running commands like
-            `git status`, `npm test` works fine. The shell is cmd.exe on
-            Windows and bash elsewhere.
+            Uses pywinpty on Windows (ConPTY) and POSIX PTY on Unix,
+            so interactive TUI apps (vim/less/top) render correctly.
             """
             await websocket.accept()
-            is_windows = os.name == "nt"
-            shell = ["cmd.exe"] if is_windows else ["bash", "-i"]
             try:
-                proc = await _asyncio.create_subprocess_exec(
-                    *shell,
-                    stdin=_asub.PIPE,
-                    stdout=_asub.PIPE,
-                    stderr=_asub.PIPE,
+                from winpty import PtyProcess
+                is_windows = os.name == "nt"
+                shell = "cmd.exe" if is_windows else "bash"
+                shell_args = [] if is_windows else ["-i", "-l"]
+                proc = PtyProcess.spawn(
+                    shell,
+                    shell_args,
                     cwd=_WORKDIR,
-                    env={**os.environ, "TERM": "dumb"},
+                    dimensions=(24, 80),
+                    env={**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"},
                 )
+                # Windows 终端设为 UTF-8 (chcp 65001)，修复中文乱码
+                if is_windows:
+                    try:
+                        proc.write("chcp 65001 >nul 2>&1\r")
+                        import time as _time
+                        _time.sleep(0.15)
+                    except Exception:
+                        pass
             except Exception as e:
                 await websocket.send_json({"type": "error", "message": f"failed to spawn shell: {e}"})
                 await websocket.close()
                 return
 
-            async def _pump_stdout():
-                try:
-                    while True:
-                        chunk = await proc.stdout.read(4096)
-                        if not chunk:
-                            break
-                        await websocket.send_json({"type": "stdout", "data": chunk.decode("utf-8", errors="replace")})
-                except Exception:
-                    pass
-                await websocket.send_json({"type": "exit", "code": proc.returncode})
+            loop = asyncio.get_event_loop()
+            alive = True
 
-            async def _pump_stderr():
+            async def _pump_output():
+                while alive and proc.isalive():
+                    try:
+                        # read() blocks until data available; run in executor to stay async-friendly
+                        data = await loop.run_in_executor(None, proc.read)
+                        if data:
+                            await websocket.send_text(data)
+                    except Exception:
+                        break
                 try:
-                    while True:
-                        chunk = await proc.stderr.read(4096)
-                        if not chunk:
-                            break
-                        await websocket.send_json({"type": "stderr", "data": chunk.decode("utf-8", errors="replace")})
+                    await websocket.close()
                 except Exception:
                     pass
 
-            stdout_task = _asyncio.create_task(_pump_stdout())
-            stderr_task = _asyncio.create_task(_pump_stderr())
+            pump_task = asyncio.create_task(_pump_output())
 
             try:
                 while True:
@@ -3105,28 +3357,31 @@ class HakusAIServer:
                         data = json.loads(msg)
                     except json.JSONDecodeError:
                         continue
-                    if data.get("type") == "stdin" and proc.stdin:
+                    msg_type = data.get("type")
+                    if msg_type == "stdin":
+                        await loop.run_in_executor(None, proc.write, data.get("data", ""))
+                    elif msg_type == "resize":
+                        cols = data.get("cols", 80)
+                        rows = data.get("rows", 24)
                         try:
-                            proc.stdin.write(data.get("data", "").encode("utf-8"))
-                            await proc.stdin.drain()
-                        except Exception as e:
-                            await websocket.send_json({"type": "error", "message": f"write failed: {e}"})
+                            await loop.run_in_executor(None, proc.setwinsize, rows, cols)
+                        except Exception:
+                            pass
             except WebSocketDisconnect:
                 pass
             except Exception:
                 pass
             finally:
+                alive = False
+                pump_task.cancel()
                 try:
-                    if proc.returncode is None:
-                        proc.terminate()
-                        try:
-                            await _asyncio.wait_for(proc.wait(), timeout=2)
-                        except _asyncio.TimeoutError:
-                            proc.kill()
+                    await pump_task
+                except asyncio.CancelledError:
+                    pass
+                try:
+                    proc.terminate()
                 except Exception:
                     pass
-                stdout_task.cancel()
-                stderr_task.cancel()
 
     async def start(self):
         """启动服务器"""

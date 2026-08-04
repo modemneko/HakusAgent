@@ -36,6 +36,10 @@ from .timeout import SSEChunkTimeout, RetryManager, TimeoutConfig
 from .recovery import RecoveryManager, SessionSnapshot, ToolState, recovery_manager
 
 logger = get_logger(__name__)
+# 专用 logger 用于 LLM 调用日志 (路由到 llm.log)
+llm_logger = get_logger("haku.llm.call")
+# 专用 logger 用于工具执行日志 (路由到 tools.log)
+tool_logger = get_logger("haku.tools.subagent")
 
 # #region debug-point helper
 _DEBUG_ENV_PATH = os.path.join(
@@ -466,13 +470,29 @@ class SubAgent:
                     continue
                 # Inject working_dir for tools that need it
                 args = self._inject_working_dir(tool_name, args)
+                _sub_tool_start = time.time()
+                tool_logger.info(
+                    f"[tool.start] agent=sub name={tool_name} "
+                    f"args_keys={list(args.keys())}"
+                )
                 try:
                     result = await tool.execute(**args)
+                    _sub_tool_elapsed = int((time.time() - _sub_tool_start) * 1000)
+                    tool_logger.info(
+                        f"[tool.done] agent=sub name={tool_name} "
+                        f"success=True elapsed_ms={_sub_tool_elapsed} "
+                        f"result_len={len(str(result or ''))}"
+                    )
                     self._context.add_tool_result(
                         tool_name, result,
                         tool_call_id=api_tc["id"],
                     )
                 except Exception as e:
+                    _sub_tool_elapsed = int((time.time() - _sub_tool_start) * 1000)
+                    tool_logger.error(
+                        f"[tool.error] agent=sub name={tool_name} "
+                        f"error={type(e).__name__} elapsed_ms={_sub_tool_elapsed}: {e}"
+                    )
                     self._context.add_tool_result(
                         tool_name, f"Error: {e}",
                         tool_call_id=api_tc["id"],
@@ -578,7 +598,7 @@ class AgentCore:
         
         # Enhanced loop control (soft-stop, doom loop detection, context monitoring)
         self._doom_loop_detector = DoomLoopDetector(window_size=3, threshold=3)
-        self._context_monitor = ContextMonitor(max_tokens=max_context_tokens, threshold=0.7)
+        self._context_monitor = ContextMonitor(max_tokens=max_context_tokens, threshold=0.5)
         self._soft_stop_threshold = max_iterations - 10  # 软停止在硬停止前10轮触发
         
         # Retry manager for LLM calls
@@ -935,7 +955,7 @@ class AgentCore:
         max_retries = 3
         last_error: Optional[Exception] = None
         _call_started = time.time()
-        logger.info(
+        llm_logger.info(
             f"[llm.call] model={self._model.model_name} msgs={len(messages)} "
             f"tools={len(tools or [])} retries={max_retries}"
         )
@@ -943,7 +963,7 @@ class AgentCore:
             try:
                 content, tool_calls = await self._call_model_once_via_client(messages, tools, timeout)
                 elapsed = time.time() - _call_started
-                logger.info(
+                llm_logger.info(
                     f"[llm.response] model={self._model.model_name} "
                     f"content_len={len(content)} tool_calls={len(tool_calls)} "
                     f"elapsed_ms={int(elapsed * 1000)}"
@@ -955,14 +975,14 @@ class AgentCore:
                 last_error = e
                 elapsed = time.time() - _call_started
                 if attempt >= max_retries or not self._retry_manager.is_retryable(e):
-                    logger.error(
+                    llm_logger.error(
                         f"[llm.failed] model={self._model.model_name} "
                         f"error={type(e).__name__} attempts={attempt} "
                         f"elapsed_ms={int(elapsed * 1000)}"
                     )
                     break
                 delay = self._retry_manager.calculate_delay(attempt)
-                logger.warning(
+                llm_logger.warning(
                     f"[llm.retry] model={self._model.model_name} "
                     f"attempt={attempt}/{max_retries} error={type(e).__name__}: {e} "
                     f"next_delay_ms={int(delay * 1000)} elapsed_ms={int(elapsed * 1000)}"

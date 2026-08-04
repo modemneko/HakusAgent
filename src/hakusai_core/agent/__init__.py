@@ -3,7 +3,7 @@ HakusAI 2.0 Agent模块
 
 提供AI对话能力：
 - BaseAgent: 基础对话Agent
-- VoiceAgent: 语音对话Agent（整合语音管道和记忆系统）
+- VoiceAgent: 语音通话专用Agent（轻量级，通过AgentBridge共享状态）
 """
 
 from .base_agent import (
@@ -14,7 +14,7 @@ from .base_agent import (
 )
 from .voice_agent import (
     VoiceAgent,
-    VoiceAgentConfig,
+    DEFAULT_VOICE_SYSTEM_PROMPT,
 )
 
 __all__ = [
@@ -25,5 +25,5 @@ __all__ = [
     "AgentState",
     # 语音Agent
     "VoiceAgent",
-    "VoiceAgentConfig",
+    "DEFAULT_VOICE_SYSTEM_PROMPT",
 ]

@@ -12,6 +12,7 @@ import {
   Search,
   Globe,
   Wrench,
+  ExternalLink,
 } from 'lucide-react'
 import type { ToolCall } from '@/api/types'
 import { cn, copyToClipboard } from '@/lib/utils'
@@ -44,6 +45,9 @@ const TOOL_LABELS: Record<string, string> = {
   web_fetch: '抓取网页',
   task: '创建子任务',
 }
+
+const RESULT_PREVIEW_CHARS = 500
+const RESULT_DISPLAY_CHARS = 1200
 
 function toolIcon(name: string) {
   switch (name) {
@@ -152,13 +156,15 @@ function formatLogTime(ts: number): string {
 
 export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogItemProps) {
   const [expanded, setExpanded] = useState(false)
+  const [showFullResult, setShowFullResult] = useState(false)
   const [copiedResult, setCopiedResult] = useState(false)
   const [copiedArgs, setCopiedArgs] = useState(false)
   const success = toolCall.success !== false
   const summary = describeToolCall(toolCall)
   const args = toolCall.arguments ?? {}
   const hasDetails = Object.keys(args).length > 0 || !!toolCall.result
-  const resultTooLong = (toolCall.result?.length ?? 0) > 600
+  const resultLength = toolCall.result?.length ?? 0
+  const resultTooLong = resultLength > RESULT_PREVIEW_CHARS
   const shouldCollapse = hasDetails && !expanded
 
   const handleCopyResult = async () => {
@@ -175,6 +181,14 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
       setCopiedArgs(true)
       setTimeout(() => setCopiedArgs(false), 1500)
     }
+  }
+
+  const handleOpenFullResult = () => {
+    if (!toolCall.result) return
+    const blob = new Blob([toolCall.result], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
   }
 
   const header = (
@@ -249,26 +263,54 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
       )}
       {toolCall.result && (
         <div className="relative">
-          <button
-            onClick={handleCopyResult}
-            className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
-            title="复制结果"
-          >
-            {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
-            {copiedResult ? '已复制' : '复制'}
-          </button>
+          <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
+            {resultTooLong && (
+              <button
+                onClick={handleOpenFullResult}
+                className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                title="查看完整日志"
+              >
+                <ExternalLink className="h-2.5 w-2.5" />
+                查看完整日志
+              </button>
+            )}
+            <button
+              onClick={handleCopyResult}
+              className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+              title="复制结果"
+            >
+              {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+              {copiedResult ? '已复制' : '复制'}
+            </button>
+          </div>
           <pre
             className={cn(
               'max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
               success ? 'bg-muted/40 text-foreground/90' : 'bg-destructive/10 text-destructive',
             )}
           >
-            {resultTooLong ? truncate(toolCall.result, 4000) : toolCall.result}
+            {showFullResult
+              ? toolCall.result
+              : truncate(toolCall.result, RESULT_DISPLAY_CHARS)}
           </pre>
         </div>
       )}
       {resultTooLong && (
-        <div className="text-[10px] text-muted-foreground">结果过长，已截断显示</div>
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>结果过长 ({resultLength} 字符)</span>
+          <button
+            onClick={() => setShowFullResult(!showFullResult)}
+            className="text-primary hover:underline"
+          >
+            {showFullResult ? '收起' : `展开全部`}
+          </button>
+          <button onClick={handleCopyResult} className="text-primary hover:underline">
+            复制完整结果
+          </button>
+          <button onClick={handleOpenFullResult} className="text-primary hover:underline">
+            新窗口打开
+          </button>
+        </div>
       )}
       <button
         onClick={() => setExpanded(false)}
@@ -284,10 +326,10 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
     return (
       <div
         className={cn(
-          'group flex w-full gap-2 rounded-2xl border px-3 py-2.5 text-xs transition-colors',
+          'group flex w-full gap-2 rounded-lg border px-3 py-2.5 text-xs transition-colors',
           success
-            ? 'border-border/50 bg-card/60 backdrop-blur-xl hover:border-border/70'
-            : 'border-destructive/40 bg-destructive/5 backdrop-blur-xl',
+            ? 'border-border/70 bg-card/95 hover:border-border'
+            : 'border-destructive/40 bg-destructive/5',
         )}
       >
         <span

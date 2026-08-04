@@ -25,7 +25,7 @@ class AgentLoopConfig:
     tool_timeout: float = 60.0
     
     # 上下文保护
-    context_overflow_threshold: float = 0.7  # 70% 时触发保护
+    context_overflow_threshold: float = 0.5  # 50% 时触发压缩 (ACI: 对齐 SWE-Agent 早期压缩)
     
     # Doom Loop 检测
     doom_loop_enabled: bool = True

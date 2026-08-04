@@ -7,6 +7,8 @@
 
 // ========== REST 请求/响应 ==========
 
+export type AgentMode = 'swift' | 'deep' | 'fleet'
+
 export interface ChatRequest {
   message: string
   session_id?: string
@@ -21,6 +23,14 @@ export interface ChatRequest {
    * AgentCore created with whatever provider was default at session start.
    */
   provider?: string
+  /**
+   * Agent mode per turn.
+   * swift: product default, single-agent fast path with lightweight checks.
+   * deep: quality path for SWE-style tasks, strict verification and fix rounds.
+   * fleet: experimental parallel exploration mode.
+   * If unset, the server falls back to config.yaml / HAKUS_MODE.
+   */
+  run_mode?: AgentMode
 }
 
 export interface ChatResponse {
@@ -688,8 +698,28 @@ export interface AppSettings {
   fontSize: number
   // TTS (本地控制开关，与 server TTS 配置独立)
   ttsEnabled: boolean
+  ttsProvider: 'cosyvoice' | 'gpt_sovits' | 'elevenlabs'
   ttsVoice: string
   ttsSpeed: number
+  // Voice scene mode — controls silence waiting, tone and speed presets
+  voiceMode: 'companion' | 'assistant' | 'balanced'
+  // API keys for voice providers (stored locally, sent to sidecar on demand)
+  dashscopeApiKey: string
+  // Voice call and broadcast settings
+  voiceCallEnabled: boolean
+  voiceCallBackend: 'celia' | 'builtin'
+  celiaPath: string
+  celiaConfigPath: string
+  celiaPythonCommand: string
+  celiaOpenInTerminal: boolean
+  // ASR / VAD configuration (builtin voice-call engine)
+  asrProvider: 'funasr' | 'whisper' | 'azure'
+  asrLanguage: string
+  vadThreshold: number
+  vadSilenceEndFrames: number
+  voiceBroadcastEnabled: boolean
+  voiceBroadcastMode: 'tts' | 'chime'
+  voiceBroadcastChime: 'dingdong' | 'soft'
   // Phase 3 — System tray + global shortcuts (Electron-only; ignored in browser dev mode)
   trayEnabled: boolean
   minimizeToTray: boolean
@@ -711,8 +741,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoScroll: true,
   fontSize: 14,
   ttsEnabled: false,
-  ttsVoice: 'zh-CN-XiaoxiaoNeural',
+  ttsProvider: 'cosyvoice',
+  ttsVoice: '',
   ttsSpeed: 1.0,
+  voiceMode: 'balanced',
+  dashscopeApiKey: '',
+  voiceCallEnabled: false,
+  voiceCallBackend: 'builtin',
+  celiaPath: 'D:\\项目\\Celia',
+  celiaConfigPath: 'config.yaml',
+  celiaPythonCommand: 'D:\\项目\\Celia\\.venv\\Scripts\\python.exe',
+  celiaOpenInTerminal: false,
+  asrProvider: 'funasr',
+  asrLanguage: 'zh',
+  vadThreshold: 0.03,
+  vadSilenceEndFrames: 8,
+  voiceBroadcastEnabled: false,
+  voiceBroadcastMode: 'chime',
+  voiceBroadcastChime: 'dingdong',
   // Phase 3 — tray + shortcuts
   trayEnabled: true,
   minimizeToTray: true,

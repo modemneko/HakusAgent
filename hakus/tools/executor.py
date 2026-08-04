@@ -27,7 +27,12 @@ from typing import Any, Dict, List, Optional, Set
 from .base import Tool, ToolCall, ToolResult
 from .registry import ToolRegistry
 
-logger = logging.getLogger(__name__)
+# 使用 haku.tools.logger 路由到 tools.log (而非 hakus.tools.executor)
+try:
+    from utils.logger import get_logger as _get_haku_logger
+    logger = _get_haku_logger("haku.tools.executor")
+except Exception:
+    logger = logging.getLogger(__name__)
 
 # #region debug-point helper
 _DEBUG_ENV_PATH = os.path.join(
@@ -88,6 +93,8 @@ def _debug_log(hypothesis_id: str, location: str, msg: str, data: Optional[Dict[
 
 # 工具结果最大字符数 (超过则截断)
 MAX_TOOL_RESULT_LENGTH = 3000
+# ACI 输出最大行数 (对齐 SWE-Agent: 简洁反馈原则)
+MAX_TOOL_RESULT_LINES = 100
 
 # 参数/元数据里可能包含文件路径的键名
 _PATH_KEYS = ("file_path", "directory", "path", "dir", "source", "destination")
@@ -226,12 +233,22 @@ class ToolExecutor:
                     success=True,
                     result=str(result),
                 )
-            # 截断超长结果
+            # 截断超长结果 (ACI: 简洁反馈原则 — 先按行数截断，再按字符截断)
             result_str = result.result or ""
             _was_truncated = False
-            if len(result_str) > self._max_result_length:
-                result.result = result_str[:self._max_result_length] + "\n...[truncated]"
+            # 行数限制 (SWE-Agent ACI: ≤100 行)
+            lines = result_str.split("\n")
+            if len(lines) > MAX_TOOL_RESULT_LINES:
+                _total_lines = len(lines)
+                lines = lines[:MAX_TOOL_RESULT_LINES]
+                result_str = "\n".join(lines)
+                result_str += f"\n...[{_total_lines - MAX_TOOL_RESULT_LINES} more lines truncated (ACI)]"
                 _was_truncated = True
+            # 字符限制 (兜底)
+            if len(result_str) > self._max_result_length:
+                result_str = result_str[:self._max_result_length] + "\n...[truncated]"
+                _was_truncated = True
+            result.result = result_str
             self._register_temp_path(result, tool_call.arguments)
             _elapsed_ms = int((time.time() - _exec_started) * 1000)
             logger.info(

@@ -337,8 +337,8 @@ def register_vad(provider: str):
     VAD引擎注册装饰器
     
     用法:
-        @register_vad("silero")
-        class SileroVAD(BaseVAD):
+        @register_vad("funasr")
+        class FunASRVAD(BaseVAD):
             ...
     """
     def decorator(cls: type):

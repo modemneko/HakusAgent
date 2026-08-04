@@ -32,15 +32,15 @@ class PipelineState(Enum):
 class VoicePipelineConfig:
     """语音管道配置"""
     # ASR配置
-    asr_provider: str = "sherpa_onnx"
+    asr_provider: str = "funasr"
     asr_config: Dict[str, Any] = None
     
     # TTS配置
-    tts_provider: str = "edge"
+    tts_provider: str = "cosyvoice"
     tts_config: Dict[str, Any] = None
     
     # VAD配置
-    vad_provider: str = "silero"
+    vad_provider: str = "funasr"
     vad_config: Dict[str, Any] = None
     
     # 行为配置

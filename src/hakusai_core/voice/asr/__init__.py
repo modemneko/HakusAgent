@@ -2,9 +2,8 @@
 HakusAI 2.0 ASR (自动语音识别) 模块
 
 支持的引擎：
-- Sherpa-ONNX: 本地高性能识别
-- Whisper: OpenAI Whisper (API/本地)
 - FunASR: 阿里巴巴SenseVoice
+- Whisper: OpenAI Whisper (API/本地)
 """
 
 from .base import (
@@ -16,8 +15,16 @@ from .base import (
     register_asr,
 )
 
+# 导入具体引擎（自动注册）
+try:
+    from .funasr import FunASR
+except ImportError:
+    pass
 
-
+try:
+    from .whisper import WhisperASR
+except ImportError:
+    pass
 
 __all__ = [
     "BaseASR",
@@ -26,7 +33,6 @@ __all__ = [
     "ASRRegistry",
     "asr_registry",
     "register_asr",
-    "SherpaONNXASR",
-    "WhisperASR",
     "FunASR",
+    "WhisperASR",
 ]

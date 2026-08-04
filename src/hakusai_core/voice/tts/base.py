@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 class TTSProvider(str, Enum):
     """TTS提供商"""
-    EDGE = "edge"
-    SHERPA_ONNX = "sherpa_onnx"
     COSYVOICE = "cosyvoice"
     GPT_SOVITS = "gpt_sovits"
     ELEVENLABS = "elevenlabs"
@@ -47,8 +45,8 @@ class BaseTTS(ABC):
             config: 配置字典
         """
         self.config = config
-        self.provider = config.get("provider", "edge")
-        self.voice = config.get("voice", "zh-CN-XiaoxiaoNeural")
+        self.provider = config.get("provider", "cosyvoice")
+        self.voice = config.get("voice", "")
         self.speed = config.get("speed", 1.0)
         self.volume = config.get("volume", 1.0)
         
@@ -328,8 +326,8 @@ def register_tts(provider: str):
     TTS引擎注册装饰器
     
     用法:
-        @register_tts("edge")
-        class EdgeTTS(BaseTTS):
+        @register_tts("cosyvoice")
+        class CosyVoiceTTS(BaseTTS):
             ...
     """
     def decorator(cls: type):

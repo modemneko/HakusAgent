@@ -5,6 +5,7 @@
 
 import { create } from 'zustand'
 import { apiClient } from '@/api/client'
+import type { AgentMode } from '@/api/types'
 
 interface ModelInfo {
   provider: string
@@ -12,6 +13,7 @@ interface ModelInfo {
 }
 
 export type RunMode = 'local' | 'worktree' | 'cloud'
+export type { AgentMode }
 export type RightPanelTab = 'review' | 'terminal' | 'preview' | 'logs'
 
 interface AppStore {
@@ -30,6 +32,10 @@ interface AppStore {
   // Run mode (Codex Local / Worktree / Cloud)
   runMode: RunMode
   setRunMode: (mode: RunMode) => void
+
+  // Agent mode (Swift / Deep / Fleet)
+  agentMode: AgentMode
+  setAgentMode: (mode: AgentMode) => void
 
   // Settings dialog
   settingsOpen: boolean
@@ -50,6 +56,7 @@ interface AppStore {
 const SIDEBAR_KEY = 'hakusai:sidebar-open'
 const RIGHT_PANEL_KEY = 'hakusai:right-panel-open'
 const RUN_MODE_KEY = 'hakusai:run-mode'
+const AGENT_MODE_KEY = 'hakusai:agent-mode'
 
 function readSidebarOpen(): boolean {
   if (typeof window === 'undefined') return true
@@ -109,6 +116,26 @@ function writeRunMode(mode: RunMode) {
   }
 }
 
+function readAgentMode(): AgentMode {
+  if (typeof window === 'undefined') return 'swift'
+  try {
+    const raw = localStorage.getItem(AGENT_MODE_KEY) as AgentMode | null
+    if (raw === 'swift' || raw === 'deep' || raw === 'fleet') return raw
+    return 'swift'
+  } catch {
+    return 'swift'
+  }
+}
+
+function writeAgentMode(mode: AgentMode) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(AGENT_MODE_KEY, mode)
+  } catch {
+    /* ignore */
+  }
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   sidebarOpen: readSidebarOpen(),
   toggleSidebar: () => {
@@ -138,6 +165,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setRunMode: (mode) => {
     writeRunMode(mode)
     set({ runMode: mode })
+  },
+
+  agentMode: readAgentMode(),
+  setAgentMode: (mode) => {
+    writeAgentMode(mode)
+    set({ agentMode: mode })
   },
 
   settingsOpen: false,

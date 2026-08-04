@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import glob as _glob
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -66,7 +67,26 @@ class Glob(Tool):
                 f"The directory may not exist or the pattern is wrong. "
                 f"Try `list_dir('{path}')` to see what's actually there."
             )
-        return "\n".join(sorted(matches))
+        # ACI: 排除高噪声目录，减少上下文污染
+        _EXCLUDE_DIRS = {
+            "node_modules", ".git", "__pycache__", ".venv", "venv",
+            ".next", ".nuxt", "dist", "build", ".tox", ".mypy_cache",
+            ".pytest_cache", ".hg", ".svn", "coverage", ".coverage",
+        }
+        filtered = []
+        for m in sorted(matches):
+            parts = Path(m).parts
+            if any(p in _EXCLUDE_DIRS for p in parts):
+                continue
+            filtered.append(m)
+        # 如果过滤后为空但原始有结果，提示用户
+        if not filtered and matches:
+            return (
+                f"All {len(matches)} matches were in excluded dirs "
+                f"(node_modules/.git/__pycache__/etc). "
+                f"Use a more specific pattern if you need those files."
+            )
+        return "\n".join(filtered)
 
 
 # ---------------------------------------------------------------------------

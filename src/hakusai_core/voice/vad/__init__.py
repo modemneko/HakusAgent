@@ -2,7 +2,7 @@
 HakusAI 2.0 VAD (语音活动检测) 模块
 
 支持的引擎：
-- Silero: 轻量级高性能VAD
+- FunASR: 阿里达摩院 FSMN VAD 流式检测
 """
 
 from .base import (
@@ -15,8 +15,11 @@ from .base import (
     register_vad,
 )
 
-
-
+# 导入具体引擎（自动注册）
+try:
+    from .funasr_vad import FunASRVAD, FunASRVADIterator
+except ImportError:
+    pass
 
 __all__ = [
     "BaseVAD",
@@ -26,6 +29,6 @@ __all__ = [
     "VADRegistry",
     "vad_registry",
     "register_vad",
-    "SileroVAD",
-    "SileroVADIterator",
+    "FunASRVAD",
+    "FunASRVADIterator",
 ]

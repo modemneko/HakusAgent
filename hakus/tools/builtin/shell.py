@@ -27,11 +27,21 @@ def _strip_ansi(text: str) -> str:
 
 class Bash(Tool):
     name = "bash"
-    description = "Execute a shell command and return its output."
+    description = (
+        "Execute a shell command and return its output. On Windows this runs via "
+        "cmd /c; use create_directory/list_dir/read_file/write_file/edit_file for "
+        "Windows absolute paths and reserve bash for verifiers such as pytest/npm/git."
+    )
     parameters_schema: Dict[str, Any] = {
         "type": "object",
         "properties": {
-            "command": {"type": "string", "description": "The shell command to execute."},
+            "command": {
+                "type": "string",
+                "description": (
+                    "The shell command to execute. Do not use this for mkdir/dir/copy "
+                    "against Windows absolute paths; use dedicated file tools instead."
+                ),
+            },
             "timeout": {"type": "integer", "description": "Timeout in seconds (default 120)."},
             "max_output": {"type": "integer", "description": "Truncate output beyond this many characters (default 10000)."},
             "cwd": {"type": "string", "description": "Working directory for the command. If not provided, uses the process cwd."},

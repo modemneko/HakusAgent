@@ -11,7 +11,7 @@ _QUIETED = False
 
 
 def _resolve_log_file() -> Optional[str]:
-    """将日志写入 HakusAgent/logs/hakusai.log，方便和 sidecar 日志统一查看。
+    """将日志写入 logs/hakusai.log，方便和 sidecar 日志统一查看。
 
     环境变量覆盖：
       - HAKUS_LOG_FILE=<path>   写指定路径
@@ -52,15 +52,46 @@ def _make_emit(original_emit):
     return emit_with_flush
 
 
+def _try_sidecar_logger(name: str) -> Optional[logging.Logger]:
+    """尝试使用 sidecar 的结构化日志系统。
+
+    如果 sidecar 的 logging_config 模块可以导入，就委托给它，
+    让日志按分类写入 sidecar.log/agent.log/orchestrator.log/
+    tools.log/llm.log。
+
+    即使 setup_logging 还没被调用，get_logger 也会正确创建文件 handler。
+    """
+    try:
+        import sys as _sys
+        # sidecar 的 src/ 目录在 sys.path 中时才能导入
+        for p in ("src", "hakusai_server"):
+            rp = Path.cwd() / p
+            if rp.exists() and str(rp) not in _sys.path:
+                _sys.path.insert(0, str(rp))
+        from hakusai_server.logging_config import get_logger as _sidecar_get_logger
+        return _sidecar_get_logger(name)
+    except Exception:
+        pass
+    return None
+
+
 def get_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
     """获取配置好的日志记录器.
 
+    优先使用 sidecar 的结构化日志系统（按分类写入不同文件）。
+    如果 sidecar 未初始化，回退到本地 hakusai.log 文件。
+
     Claude Code 风格:
-      - INFO 及以上 → 写入日志文件 (~/.hakus/logs/hakusai.log)
+      - INFO 及以上 → 写入日志文件
       - 控制台不输出常规日志
       - 仅 ERROR/CRITICAL 输出到 stderr (除非明确禁用)
     """
     global _LOG_FILE_HANDLE
+
+    # 优先委托给 sidecar 的分类日志系统
+    sidecar_logger = _try_sidecar_logger(name)
+    if sidecar_logger is not None:
+        return sidecar_logger
 
     logger = logging.getLogger(name)
     logger.setLevel(BASE_CONFIG["LOG_LEVEL"])

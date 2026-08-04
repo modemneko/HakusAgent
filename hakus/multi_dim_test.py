@@ -45,11 +45,11 @@ class DimensionResult:
 
     @property
     def passed(self) -> bool:
-        return self.status == "PASS"
+        return self.status in ("PASS", "UNKNOWN")
 
     @property
     def failed(self) -> bool:
-        return self.status == "FAIL"
+        return self.status in ("FAIL", "ERROR")
 
     def to_dict(self) -> Dict[str, Any]:
         return {

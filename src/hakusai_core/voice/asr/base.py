@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 class ASRProvider(str, Enum):
     """ASR提供商"""
-    SHERPA_ONNX = "sherpa_onnx"
     WHISPER = "whisper"
     FUNASR = "funasr"
     AZURE = "azure"
@@ -27,6 +26,7 @@ class ASRResult:
     confidence: float = 0.0
     language: Optional[str] = None
     duration: Optional[float] = None  # 音频时长（秒）
+    emotion: Optional[str] = None
     
 
 class BaseASR(ABC):
@@ -44,7 +44,7 @@ class BaseASR(ABC):
             config: 配置字典
         """
         self.config = config
-        self.provider = config.get("provider", "sherpa_onnx")
+        self.provider = config.get("provider", "funasr")
         self.language = config.get("language", "zh")
         self.sample_rate = config.get("sample_rate", 16000)
         self._initialized = False
@@ -238,8 +238,8 @@ def register_asr(provider: str):
     ASR引擎注册装饰器
     
     用法:
-        @register_asr("sherpa_onnx")
-        class SherpaONNXASR(BaseASR):
+        @register_asr("funasr")
+        class FunASR(BaseASR):
             ...
     """
     def decorator(cls: type):

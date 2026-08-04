@@ -50,6 +50,10 @@ dependencies = [
     # `pip install -e .` which skips both. Move to main deps to fix CI.
     "openai>=1.0.0",
 
+    # Full PTY terminal (built-in terminal panel)
+    "pywinpty>=3.0.0; platform_system=='Windows'",
+    "ptyprocess>=0.7.0; platform_system!='Windows'",
+
     # 终端UI
     "rich>=13.0.0",
     "textual>=0.85.0",
@@ -78,10 +82,8 @@ litellm = [
 
 # 语音支持
 voice = [
-    "sherpa-onnx>=1.10.0",
-    "edge-tts>=6.1.0",
+    "funasr>=1.1.0",
     "pyaudio>=0.2.14",
-    "silero-vad>=4.0.0",
 ]
 
 # 记忆系统

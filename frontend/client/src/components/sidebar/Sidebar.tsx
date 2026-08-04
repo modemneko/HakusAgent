@@ -176,7 +176,7 @@ export function Sidebar() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索会话..."
-            className="h-7 rounded-md border-border/40 bg-background/50 pl-8 text-[12px] placeholder:text-muted-foreground/60 focus-visible:rounded-md"
+            className="h-7 rounded-md border-border/70 bg-background/90 pl-8 text-[12px] placeholder:text-muted-foreground/60 focus-visible:rounded-md"
           />
         </div>
       </div>
@@ -192,7 +192,7 @@ export function Sidebar() {
           ) : (
             groups.map((group) => (
               <div key={group.label} className="space-y-0.5">
-                <div className="sticky top-0 z-10 px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground/60 bg-inherit backdrop-blur-sm">
+                <div className="sticky top-0 z-10 bg-card/95 px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground/65">
                   {group.label}
                 </div>
                 {group.sessions.map((session) => {
@@ -207,7 +207,7 @@ export function Sidebar() {
                     <div
                       key={session.id}
                       className={cn(
-                        'group flex w-full min-w-0 cursor-pointer flex-col gap-0.5 rounded-xl px-2.5 py-2 transition-colors',
+                        'group flex w-full min-w-0 cursor-pointer flex-col gap-0.5 rounded-md px-2.5 py-2 transition-colors',
                         isActive
                           ? 'bg-primary/10 text-primary'
                           : 'hover:bg-accent/60 text-foreground',

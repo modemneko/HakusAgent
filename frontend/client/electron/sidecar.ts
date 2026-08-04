@@ -24,7 +24,8 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   existsSync,
   mkdirSync,
@@ -37,6 +38,9 @@ import {
   type Stats,
 } from 'node:fs'
 import { app } from 'electron'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 let sidecarProcess: ChildProcess | null = null
 let detectedPort: number | null = null
@@ -92,20 +96,47 @@ function getDevSourceSidecar(): { command: string; args: string[]; cwd: string; 
   const serverPy = join(srcDir, 'hakusai_server', 'server.py')
   if (!existsSync(serverPy)) return null
 
-  // Try to locate python/python3 on PATH. Use `python -m` so that
-  // server.py's `if __name__ == "__main__"` block runs and prints HAKUSAI_PORT.
-  // The RuntimeWarning from hakusai_server/__init__.py re-exporting .server is
-  // harmless in dev mode.
+  // Try to locate python/python3 on PATH. Print HAKUSAI_PORT before importing
+  // the heavy backend module so Electron can continue startup immediately.
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  const bootstrap = `
+import os
+import socket
+
+host = os.environ.get("HAKUSAI_HOST", "127.0.0.1")
+start_port = int(os.environ.get("HAKUSAI_PORT", "48081"))
+for candidate in range(start_port, start_port + 10):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, candidate))
+            port = candidate
+            break
+        except OSError:
+            continue
+else:
+    raise RuntimeError(f"No free port found in range {start_port}-{start_port + 9}")
+
+os.environ["HAKUSAI_PORT"] = str(port)
+print(f"HAKUSAI_PORT={port}", flush=True)
+
+from hakusai_server.server import server
+
+server.config.server.host = host
+server.config.server.port = port
+server.run()
+`.trim()
+
   return {
     command: pythonCmd,
-    args: ['-m', 'hakusai_server.server'],
-    cwd: srcDir,
+    args: ['-c', bootstrap],
+    cwd: repoRoot,
     // hakus/ and utils/ live at the repo root, not under src/. Add
     // both to PYTHONPATH so `from hakus.agent import AgentCore` and
     // `from utils.config import BASE_CONFIG` resolve correctly.
     env: {
       PYTHONPATH: [repoRoot, srcDir].join(process.platform === 'win32' ? ';' : ':'),
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUNBUFFERED: '1',
     },
   }
 }
@@ -332,10 +363,10 @@ export function startSidecar(): Promise<{
       finish(null, lastError)
     })
 
-    // Timeout — if no HAKUSAI_PORT after 15s, assume sidecar is hung
+    // Timeout: if no HAKUSAI_PORT after 30s, assume sidecar bootstrap is hung.
     setTimeout(() => {
       if (!portFound && !resolved) {
-        lastError = 'Sidecar did not print HAKUSAI_PORT within 15s — likely crashed during Python init'
+        lastError = 'Sidecar did not print HAKUSAI_PORT within 30s - bootstrap likely hung'
         writeLog(lastError)
         // Try to kill the process so it doesn't linger
         try {
@@ -345,7 +376,7 @@ export function startSidecar(): Promise<{
         }
         finish(null, lastError)
       }
-    }, 15000)
+    }, 30000)
   })
 }
 

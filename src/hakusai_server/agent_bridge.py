@@ -37,10 +37,13 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.request
 from typing import Any, AsyncIterator, Dict, Optional
+
+from hakus.modes import DEFAULT_RUN_MODE, DEEP_MODE, FLEET_MODE, SWIFT_MODE, normalize_run_mode
 
 from .logging_config import get_logger, structured
 
@@ -63,13 +66,14 @@ CRITICAL WORKFLOW RULES:
 3. **Read before Edit** — Always read a file before editing. The edit tool's old_string must be unique; if not, use more context or replace_all.
 4. **Plan complex tasks** — For non-trivial work, break it into steps and track progress with TodoWrite.
 5. **Do not generate throwaway scripts** — Never write a temporary Python script to inspect or transform files when a built-in tool can do it directly.
+6. **Windows path rule** — On Windows, absolute paths such as `E:\\dir\\file.py` must be handled with create_directory, write_file, read_file, list_dir, or edit_file. Do not use bash/cmd for mkdir/dir/copy on Windows absolute paths; only use bash for running verifiers such as `python -m pytest ...`.
 
 PERSISTENCE RULES (IMPORTANT — do not stop prematurely):
-6. **Keep working until the task is fully done** — Do NOT produce a "summary" response and stop while there are still steps remaining. If you have read files and identified the issue, you MUST proceed to fix it, not just describe it.
-7. **Always call tools to make changes** — A turn ends only when (a) the task is complete and verified, or (b) you genuinely need user input. Do NOT end the turn by writing a prose summary of "what I would do next" — actually do it.
-8. **Verify after changes** — After editing code, run the relevant tests / build / type-check to confirm your change works. Only report "done" after verification passes.
-9. **Recover from errors** — If a tool call fails, read the error, fix the root cause, and retry. Do NOT give up after a single failure. Only surface the failure to the user after 3 genuine attempts with different approaches.
-10. **Use TodoWrite for multi-step tasks** — Break down complex work into todo items and check them off as you go. This prevents the context from filling up with unrelated exploration.
+7. **Keep working until the task is fully done** — Do NOT produce a "summary" response and stop while there are still steps remaining. If you have read files and identified the issue, you MUST proceed to fix it, not just describe it.
+8. **Always call tools to make changes** — A turn ends only when (a) the task is complete and verified, or (b) you genuinely need user input. Do NOT end the turn by writing a prose summary of "what I would do next" — actually do it.
+9. **Verify after changes** — After editing code, run the relevant tests / build / type-check to confirm your change works. Only report "done" after verification passes.
+10. **Recover from errors** — If a tool call fails, read the error, fix the root cause, and retry. Do NOT give up after a single failure. Only surface the failure to the user after 3 genuine attempts with different approaches.
+11. **Use TodoWrite for multi-step tasks** — Break down complex work into todo items and check them off as you go. This prevents the context from filling up with unrelated exploration.
 
 Current workspace root: {working_dir}
 """
@@ -211,6 +215,22 @@ def _resolve_provider(explicit: Optional[str] = None) -> str:
         return "opencode"
 
 
+def _extract_benchmark_output_dir(message: str) -> Optional[str]:
+    """Return the isolated benchmark workspace embedded in benchmark prompts."""
+    if "Benchmark isolation rules:" not in message:
+        return None
+    match = re.search(
+        r"(?mi)^-\s*Only create or modify files under this output directory:\s*(.+?)\s*$",
+        message,
+    )
+    if not match:
+        return None
+    output_dir = match.group(1).strip().strip("`").strip()
+    if not output_dir or not os.path.isabs(output_dir):
+        return None
+    return os.path.normpath(output_dir)
+
+
 def _make_confirm_callback():
     """Auto-approve every dangerous tool call.
 
@@ -332,6 +352,117 @@ def drop_agent(session_id: str, provider: Optional[str] = None) -> None:
             _agent_cache.pop((session_id, resolved), None)
 
 
+async def _fleet_event_stream(
+    agent: Any,
+    message: str,
+    workspace_dir: str,
+) -> AsyncIterator[Any]:
+    """Fleet 模式事件流适配器.
+
+    把 FleetOrchestrator.run() 适配成 AsyncIterator[AgentEvent]，
+    这样 SSE 流处理逻辑可以统一处理 Swift/Deep/Fleet 三种模式。
+
+    yield 的事件:
+      - TextDelta: 进度更新 + 最终汇总
+      - TurnCompleted: Fleet 完成信号
+    """
+    import asyncio as _asyncio
+
+    from hakus.fleet import FleetOrchestrator
+    from hakus.fleet.scheduler import TaskStatus
+    from hakus.protocol.events import Cancelled, TextDelta, TurnCompleted, TurnFailed
+
+    fleet = FleetOrchestrator(
+        root_agent=agent,
+        workspace_dir=workspace_dir,
+        concurrency=int(os.environ.get("HAKUS_FLEET_CONCURRENCY", "10")),
+    )
+
+    # 进度队列：ParallelScheduler 回调 → 事件流
+    progress_queue: _asyncio.Queue = _asyncio.Queue()
+
+    def _on_progress(task: Any) -> None:
+        icons = {
+            TaskStatus.RUNNING: "▶",
+            TaskStatus.COMPLETED: "✓",
+            TaskStatus.FAILED: "✗",
+            TaskStatus.TIMEOUT: "⏱",
+        }
+        icon = icons.get(task.status, "?")
+        if task.status == TaskStatus.RUNNING:
+            text = f"{icon} {task.id} ({task.role}) 启动...\n"
+        elif task.status == TaskStatus.COMPLETED:
+            text = f"{icon} {task.id} ({task.role}) 完成 ({task.elapsed:.1f}s)\n"
+        elif task.status == TaskStatus.FAILED:
+            text = f"{icon} {task.id} ({task.role}) 失败: {task.error}\n"
+        elif task.status == TaskStatus.TIMEOUT:
+            text = f"{icon} {task.id} ({task.role}) 超时\n"
+        else:
+            return
+        try:
+            progress_queue.put_nowait(text)
+        except Exception:
+            pass
+
+    fleet._scheduler.on_progress(_on_progress)
+
+    # 发送启动消息
+    yield TextDelta(text="🚢 Fleet 模式启动，正在分析任务...\n\n")
+
+    # 后台运行 Fleet
+    fleet_task = _asyncio.create_task(fleet.run(message))
+
+    # 从队列读取进度，直到 Fleet 完成
+    while not fleet_task.done():
+        if getattr(agent, "_cancelled", False):
+            fleet.cancel()
+            fleet_task.cancel()
+            yield Cancelled(reason="user_interrupted", partial_content="Fleet cancelled by user")
+            return
+        try:
+            progress = await _asyncio.wait_for(progress_queue.get(), timeout=0.5)
+            yield TextDelta(text=progress)
+        except _asyncio.TimeoutError:
+            pass
+        except Exception:
+            pass
+
+    # 获取最终结果
+    try:
+        result = await fleet_task
+    except _asyncio.CancelledError:
+        fleet.cancel()
+        yield Cancelled(reason="user_interrupted", partial_content="Fleet cancelled by user")
+        return
+    except Exception as e:
+        yield TextDelta(text=f"\n❌ Fleet 执行出错: {e}\n")
+        yield TurnFailed(code="fleet_error", error=str(e))
+        return
+
+    # 发送汇总
+    summary_header = (
+        f"\n📊 Fleet 完成: {result.completed}/{result.expert_count} 专家成功, "
+        f"耗时 {result.elapsed:.1f}s\n\n"
+    )
+    yield TextDelta(text=summary_header)
+    yield TextDelta(text=result.summary)
+
+    if result.success:
+        yield TurnCompleted(
+            content=result.summary,
+            total_time=result.elapsed,
+            output_tokens=result.tokens_estimate,
+        )
+    else:
+        yield TurnFailed(
+            code="fleet_incomplete",
+            error=(
+                f"Fleet incomplete: {result.completed}/{result.expert_count} "
+                f"experts completed, {result.failed} failed, {result.timeout} timed out"
+            ),
+        )
+
+
 # Legacy chunk shape:
 #   {"content": str, "emotion": null, "actions": [], "done": False, "event_type": str}
 #
@@ -342,6 +473,7 @@ async def run_turn_stream(
     message: str,
     session_id: str = "default",
     provider: Optional[str] = None,
+    run_mode: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Run one AgentCore turn, yielding legacy-shape chunks.
 
@@ -382,65 +514,126 @@ async def run_turn_stream(
     _debug_log("E", "agent_bridge.py:run_turn_stream", "stream start", {"session_id": session_id, "provider": provider})
     # #endregion
 
-    # ── Complexity-based routing ──────────────────────────────────────
-    # Simple tasks (read a file, explain a snippet) → AgentCore single loop
-    # Complex tasks (build a feature, multi-file refactor) → Orchestrator
-    # with PlannerAgent/DevAgent/TesterAgent collaboration.
+    # ── Tri-mode routing (Swift / Deep / Fleet) ────────────────────────
+    # Swift 模式 (default): 单 AgentCore 循环 + 规则 Tester (零 LLM)
+    #   - 省 ~84% token：合并 Planner+Dev，Tester 改规则检测
+    #   - 适合日常编码、快速修复、token 敏感场景
+    # Deep 模式: Orchestrator + 多 Agent 集群 (Planner→Dev→3×DimTester)
+    #   - 质量最高但 token 消耗大 (4-5x)
+    #   - 适合关键任务、需要多维审查的复杂项目
+    # Fleet 模式: 自组织蜂群 (Commander→N×Expert 全局并行)
+    #   - 学习 Kimi Agent Swarm: 动态专家 + 全局并行 + 经验库
+    #   - 30+ 专家并行，Semaphore 限速，适合大规模复杂任务
     #
-    # The scorer is deterministic (keyword-based), so the same message
-    # always routes the same way — no LLM call overhead for routing.
+    # 通过环境变量 HAKUS_MODE 或前端 run_mode 参数切换
+    _run_mode = normalize_run_mode(
+        run_mode or os.environ.get("HAKUS_MODE"),
+        default=DEFAULT_RUN_MODE,
+    )
+
     use_orchestrator = False
+    use_rule_tester = False
+    use_fleet = False
+    use_deep_single_task = False
+    deep_workspace_dir: Optional[str] = None
     orch: Optional["Any"] = None
-    try:
-        from hakus.complexity_scorer import TaskComplexityScorer
-        _scorer = TaskComplexityScorer()
-        _score = _scorer.score(message)
-        use_orchestrator = _score.should_orchestrate
-        _debug_log("E", "agent_bridge.py:run_turn_stream", "complexity_score", {
-            "session_id": session_id,
-            "total": _score.total,
-            "should_orchestrate": _score.should_orchestrate,
-            "multi_step": _score.multi_step,
-            "file_creation": _score.file_creation,
-            "multi_file": _score.multi_file,
-        })
-        if use_orchestrator:
+
+    if _run_mode == FLEET_MODE:
+        # Fleet 模式：Commander 动态拆解 + N 专家全局并行
+        use_fleet = True
+        structured(
+            logger,
+            logging.INFO,
+            "route_fleet_mode",
+            session_id=session_id,
+            mode="fleet",
+        )
+    elif _run_mode == DEEP_MODE:
+        benchmark_workspace = _extract_benchmark_output_dir(message)
+        # Deep 模式：复杂度路由 → Orchestrator 或 AgentCore
+        try:
+            from hakus.complexity_scorer import TaskComplexityScorer
+            _scorer = TaskComplexityScorer()
+            _score = _scorer.score(message)
+            use_orchestrator = _score.should_orchestrate
             structured(
                 logger,
                 logging.INFO,
-                "route_orchestrator",
+                "route_deep_mode",
                 session_id=session_id,
+                mode="deep",
+                use_orchestrator=use_orchestrator,
                 score=_score.total,
-                multi_step=_score.multi_step,
-                file_creation=_score.file_creation,
-                multi_file=_score.multi_file,
             )
-        else:
+        except Exception as _route_err:
+            logger.warning(f"Complexity routing failed, falling back to AgentCore: {_route_err}")
+            use_orchestrator = False
+        if benchmark_workspace is not None or os.environ.get("HAKUS_DEEP_SKIP_PLANNER", "0") == "1":
+            agent_context = getattr(agent, "_context", None)
+            deep_workspace_dir = (
+                benchmark_workspace
+                or getattr(agent_context, "working_dir", None)
+                or _REPO_ROOT
+            )
+            use_deep_single_task = True
+            use_orchestrator = True
             structured(
                 logger,
                 logging.INFO,
-                "route_agentcore",
+                "route_deep_single_task",
                 session_id=session_id,
-                score=_score.total,
-                multi_step=_score.multi_step,
-                file_creation=_score.file_creation,
-                multi_file=_score.multi_file,
+                mode="deep",
+                workspace_dir=deep_workspace_dir,
             )
-    except Exception as _route_err:
-        logger.warning(f"Complexity routing failed, falling back to AgentCore: {_route_err}")
+    else:
+        # Swift 模式：单 Agent + 规则 Tester
+        _run_mode = SWIFT_MODE
         use_orchestrator = False
+        use_rule_tester = os.environ.get("HAKUS_SWIFT_RULE_TESTER", "0") == "1"
+        structured(
+            logger,
+            logging.INFO,
+            "route_swift_mode",
+            session_id=session_id,
+            mode="swift",
+            rule_tester=use_rule_tester,
+        )
 
     try:
-        if use_orchestrator:
+        if use_fleet:
+            # Fleet mode: Commander 动态拆解 + N 专家全局并行
+            agent_context = getattr(agent, "_context", None)
+            workspace_dir = getattr(agent_context, "working_dir", None) or _REPO_ROOT
+            event_source = _fleet_event_stream(agent, message, workspace_dir)
+        elif use_orchestrator:
             # Orchestrator mode: multi-agent pipeline (Plan→Develop→Test→Fix)
             from hakus.orchestrator import Orchestrator, OrchestratorConfig
+            workspace_dir = deep_workspace_dir or _REPO_ROOT
             orch = Orchestrator(
                 root_agent=agent,
-                workspace_dir=_REPO_ROOT,
-                config=OrchestratorConfig(),
+                workspace_dir=workspace_dir,
+                config=OrchestratorConfig(
+                    batch_size=int(os.environ.get("HAKUS_DEEP_BATCH_SIZE", "1")),
+                    max_fix_rounds=int(os.environ.get("HAKUS_DEEP_MAX_FIX_ROUNDS", "2")),
+                    dev_timeout=int(os.environ.get("HAKUS_DEEP_DEV_TIMEOUT", "240")),
+                    tester_timeout=int(os.environ.get("HAKUS_DEEP_TESTER_TIMEOUT", "120")),
+                    planner_timeout=int(os.environ.get("HAKUS_DEEP_PLANNER_TIMEOUT", "120")),
+                    auto_recover=os.environ.get("HAKUS_DEEP_AUTO_RECOVER", "0") == "1",
+                    use_multi_dim_test=os.environ.get("HAKUS_DEEP_MULTI_DIM", "0") == "1",
+                    enable_final_test=os.environ.get("HAKUS_DEEP_FINAL_TEST", "0") == "1",
+                    use_deterministic_verifier=(
+                        use_deep_single_task
+                        and os.environ.get("HAKUS_DEEP_DETERMINISTIC_VERIFIER", "1") == "1"
+                    ),
+                ),
             )
-            # stream_execute_v2 yields AgentEvent directly (no need for adapter)
-            event_source = orch.stream_execute_v2(message)
+            # stream_execute*_v2 yields AgentEvent directly (no need for adapter)
+            if use_deep_single_task:
+                event_source = orch.stream_execute_single_task_v2(
+                    message, title="Benchmark isolated task"
+                )
+            else:
+                event_source = orch.stream_execute_v2(message)
         else:
             # AgentCore mode: standard single-agent loop
             event_source = agent.run_turn(message, op_receiver=op_receiver)
@@ -554,6 +747,33 @@ async def run_turn_stream(
                     accumulated_length=len(accumulated),
                     mode="orchestrator" if use_orchestrator else "agentcore",
                 )
+                if use_rule_tester:
+                    try:
+                        from hakus.rule_tester import RuleBasedTester
+                        _working_dir = getattr(agent, "_context", None)
+                        _workspace = getattr(_working_dir, "working_dir", None) if _working_dir else None
+                        if _workspace and os.path.isdir(_workspace):
+                            _rtester = RuleBasedTester(_workspace)
+                            _passed, _results = _rtester.run_all()
+                            _report = _rtester.format_report(_results)
+                            structured(
+                                logger, logging.INFO, "rule_tester_done",
+                                session_id=session_id,
+                                passed=_passed,
+                                rules_total=len(_results),
+                                rules_passed=sum(r.passed for r in _results),
+                            )
+                            yield {
+                                "content": f"\n\n--- Rule-Based Test Results ---\n{_report}\n",
+                                "emotion": None,
+                                "actions": [],
+                                "done": False,
+                                "event_type": "rule_test_result",
+                                "rule_passed": _passed,
+                                "rule_report": _report,
+                            }
+                    except Exception as _rt_err:
+                        logger.warning(f"Rule tester failed: {_rt_err}")
                 yield {
                     "content": "",  # already streamed via text_delta
                     "emotion": None,
@@ -613,6 +833,8 @@ async def run_turn_stream(
                     "reason": evt_dict.get("reason", ""),
                     "partial_content": evt_dict.get("partial_content", ""),
                 }
+
+                # 效率模式：AgentCore 完成后运行规则 Tester (零 LLM)
                 return
             else:
                 # Pass through unknown event types as-is (with empty content)

@@ -43,11 +43,31 @@ interface UpdaterState {
   isPackaged: boolean
 }
 
+interface VoiceProcessStatus {
+  running: boolean
+  pid: number | null
+  startedAt: number | null
+  lastError: string | null
+}
+
+interface VoiceProcessResult {
+  ok: boolean
+  running: boolean
+  pid: number | null
+  error: string | null
+}
+
 interface ElectronAPI {
   store: {
     get: (key: string) => Promise<any>
     set: (key: string, value: unknown) => Promise<void>
     getAll: () => Promise<Record<string, any>>
+  }
+  window: {
+    minimize: () => Promise<boolean>
+    toggleMaximize: () => Promise<boolean>
+    close: () => Promise<boolean>
+    isMaximized: () => Promise<boolean>
   }
   sidecar: {
     status: () => Promise<any>
@@ -73,6 +93,16 @@ interface ElectronAPI {
     setAutoDownload: (enabled: boolean) => Promise<UpdaterState>
     setAutoInstallOnAppQuit: (enabled: boolean) => Promise<UpdaterState>
     onStatusChange: (cb: (s: UpdaterState) => void) => () => void
+  }
+  voice: {
+    status: () => Promise<VoiceProcessStatus>
+    startCelia: (options?: {
+      celiaPath?: string
+      configPath?: string
+      pythonCommand?: string
+      openInTerminal?: boolean
+    }) => Promise<VoiceProcessResult>
+    stopCelia: () => Promise<VoiceProcessResult>
   }
   platform: NodeJS.Platform
   versions: {

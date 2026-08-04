@@ -1,157 +1,176 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { TerminalSquare, Trash2, Loader2 } from 'lucide-react'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
 import { apiClient } from '@/api/client'
 import { useSettingsStore } from '@/store/settings'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-interface OutputLine {
-  id: number
-  text: string
-  kind: 'out' | 'err' | 'cmd' | 'info'
-}
+import '@xterm/xterm/css/xterm.css'
 
 /**
- * Built-in terminal — connects to the sidecar's /ws/terminal WebSocket,
- * which hosts a persistent shell (cmd.exe / bash) in the agent working dir.
+ * Full PTY terminal — connects to the sidecar's /ws/terminal WebSocket,
+ * which hosts a persistent shell (cmd.exe on Windows, bash elsewhere).
  *
- * Lightweight rendering (no xterm.js dependency): output is appended to a
- * scrollable log, input is sent line-by-line. Handles the common case of
- * running `git status`, `npm test`, etc. Interactive TUI apps that need a
- * full PTY (vim, less) are not supported by this pipe-based transport.
+ * Uses xterm.js for rendering, so interactive TUI apps (vim, less, top)
+ * render correctly. Input keys are sent to the PTY, and resize events
+ * are forwarded so the shell knows the terminal dimensions.
  */
 export function TerminalPanel() {
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
-  const [lines, setLines] = useState<OutputLine[]>([])
-  const [input, setInput] = useState('')
-  const [connected, setConnected] = useState(false)
-  const [history, setHistory] = useState<string[]>([])
-  const [histIdx, setHistIdx] = useState(-1)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const idCounter = useRef(0)
   const reconnectRef = useRef(false)
-
-  const pushLine = useCallback((text: string, kind: OutputLine['kind'] = 'out') => {
-    setLines((prev) => {
-      // Batch: split on newlines so each line is independently styled.
-      const parts = text.split('\n')
-      // Drop trailing empty from trailing \n
-      if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop()
-      const next = [...prev]
-      for (const p of parts) {
-        next.push({ id: idCounter.current++, text: p, kind })
-      }
-      // Cap log size to avoid unbounded memory
-      if (next.length > 2000) next.splice(0, next.length - 2000)
-      return next
-    })
-  }, [])
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
-    // Ensure apiClient base URL is in sync with settings before deriving ws URL.
-    if (serverUrl) apiClient.setBaseUrl(serverUrl)
-    const url = apiClient.terminalWsUrl()
-    pushLine(`正在连接 ${url} ...`, 'info')
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(url)
-    } catch (e: any) {
-      pushLine(`连接失败：${e?.message || e}`, 'err')
-      return
-    }
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      setConnected(true)
-      reconnectRef.current = true
-      pushLine('已连接到内置终端（共享工作目录）', 'info')
-    }
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data)
-        if (msg.type === 'stdout' && msg.data) pushLine(msg.data, 'out')
-        else if (msg.type === 'stderr' && msg.data) pushLine(msg.data, 'err')
-        else if (msg.type === 'exit') pushLine(`[进程退出，代码 ${msg.code}]`, 'info')
-        else if (msg.type === 'error') pushLine(`错误：${msg.message}`, 'err')
-      } catch {
-        // Plain text fallback
-        pushLine(typeof e.data === 'string' ? e.data : '', 'out')
-      }
-    }
-    ws.onerror = () => {
-      pushLine('WebSocket 错误', 'err')
-    }
-    ws.onclose = () => {
-      setConnected(false)
-      if (reconnectRef.current) {
-        pushLine('连接已断开，3s 后重连...', 'info')
-        setTimeout(() => {
-          if (reconnectRef.current) connect()
-        }, 3000)
-      }
-    }
-  }, [serverUrl, pushLine])
+  const [connected, setConnected] = useState(false)
 
   useEffect(() => {
+    if (!containerRef.current) return
+
+    const term = new Terminal({
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      fontSize: 12,
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      theme: {
+        background: '#0a0a0b',
+        foreground: '#e4e4e7',
+        cursor: '#e4e4e7',
+        selectionBackground: '#3f3f46',
+        black: '#18181b',
+        red: '#f87171',
+        green: '#4ade80',
+        yellow: '#facc15',
+        blue: '#60a5fa',
+        magenta: '#c084fc',
+        cyan: '#22d3ee',
+        white: '#e4e4e7',
+        brightBlack: '#52525b',
+        brightRed: '#fca5a5',
+        brightGreen: '#86efac',
+        brightYellow: '#fde047',
+        brightBlue: '#93c5fd',
+        brightMagenta: '#d8b4fe',
+        brightCyan: '#67e8f9',
+        brightWhite: '#fafafa',
+      },
+      allowProposedApi: true,
+    })
+
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.open(containerRef.current)
+    fitAddon.fit()
+
+    terminalRef.current = term
+    fitAddonRef.current = fitAddon
+
+    term.focus()
+    term.onData((data) => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stdin', data }))
+      }
+    })
+    term.onResize(({ cols, rows }) => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+      }
+    })
+
+    const handleResize = () => {
+      try {
+        fitAddon.fit()
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      reconnectRef.current = false
+      wsRef.current?.close()
+      wsRef.current = null
+      term.dispose()
+      terminalRef.current = null
+      fitAddonRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const connect = () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
+      if (serverUrl) apiClient.setBaseUrl(serverUrl)
+      const url = apiClient.terminalWsUrl()
+      let ws: WebSocket
+      try {
+        ws = new WebSocket(url)
+      } catch (e: any) {
+        terminalRef.current?.writeln(`\x1b[31m连接失败：${e?.message || e}\x1b[0m`)
+        return
+      }
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        setConnected(true)
+        reconnectRef.current = true
+        // Sync initial size immediately after open.
+        try {
+          fitAddonRef.current?.fit()
+          const { cols, rows } = terminalRef.current ?? { cols: 80, rows: 24 }
+          ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+        } catch {
+          // ignore
+        }
+      }
+      ws.onmessage = (e) => {
+        if (typeof e.data === 'string') {
+          // Fast path: raw terminal output is the common case.
+          if (e.data.startsWith('{')) {
+            try {
+              const msg = JSON.parse(e.data)
+              if (msg.type === 'error') {
+                terminalRef.current?.writeln(`\x1b[31m错误：${msg.message}\x1b[0m`)
+                return
+              }
+            } catch {
+              // fall through to write raw
+            }
+          }
+          terminalRef.current?.write(e.data)
+        }
+      }
+      ws.onerror = () => {
+        terminalRef.current?.writeln('\x1b[31mWebSocket 错误\x1b[0m')
+      }
+      ws.onclose = () => {
+        setConnected(false)
+        if (reconnectRef.current) {
+          terminalRef.current?.writeln('\x1b[33m连接已断开，3s 后重连...\x1b[0m')
+          setTimeout(() => {
+            if (reconnectRef.current) connect()
+          }, 3000)
+        }
+      }
+    }
+
     connect()
     return () => {
       reconnectRef.current = false
       wsRef.current?.close()
     }
-  }, [connect])
+  }, [serverUrl])
 
-  // Auto-scroll to bottom on new output
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [lines])
-
-  const sendCommand = (cmd: string) => {
-    const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    pushLine(`$ ${cmd}`, 'cmd')
-    ws.send(JSON.stringify({ type: 'stdin', data: cmd + '\n' }))
-    if (cmd.trim()) {
-      setHistory((h) => [...h, cmd].slice(-100))
-    }
-    setHistIdx(-1)
+  const handleClear = () => {
+    terminalRef.current?.clear()
   }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      sendCommand(input)
-      setInput('')
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      if (history.length === 0) return
-      const next = histIdx < 0 ? history.length - 1 : Math.max(0, histIdx - 1)
-      setHistIdx(next)
-      setInput(history[next])
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      if (histIdx < 0) return
-      const next = histIdx + 1
-      if (next >= history.length) {
-        setHistIdx(-1)
-        setInput('')
-      } else {
-        setHistIdx(next)
-        setInput(history[next])
-      }
-    } else if (e.key === 'l' && e.ctrlKey) {
-      e.preventDefault()
-      setLines([])
-    }
-  }
-
-  const handleClear = () => setLines([])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-zinc-950/40 dark:bg-zinc-950/30">
+    <div className="flex h-full min-h-0 flex-col bg-[#0a0a0b]">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
         <div className="flex items-center gap-1.5 text-xs">
@@ -175,46 +194,15 @@ export function TerminalPanel() {
         </Button>
       </div>
 
-      {/* Output */}
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 select-text overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed"
-      >
-        {lines.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground/50">
-            {connected ? '输入命令开始...' : <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> 连接中...</>}
+      {/* Terminal */}
+      <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+        {!connected && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0b]/80 text-xs text-muted-foreground">
+            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+            连接中...
           </div>
-        ) : (
-          lines.map((l) => (
-            <div
-              key={l.id}
-              className={cn(
-                'whitespace-pre-wrap break-all',
-                l.kind === 'cmd' && 'text-primary',
-                l.kind === 'err' && 'text-rose-400 dark:text-rose-300',
-                l.kind === 'info' && 'text-muted-foreground italic',
-                l.kind === 'out' && 'text-zinc-700 dark:text-zinc-300',
-              )}
-            >
-              {l.text || ' '}
-            </div>
-          ))
         )}
-      </div>
-
-      {/* Input */}
-      <div className="flex shrink-0 items-center gap-2 border-t border-border/50 px-3 py-2">
-        <span className="select-none font-mono text-[11px] text-emerald-500">$</span>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={!connected}
-          spellCheck={false}
-          autoComplete="off"
-          className="flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
-          placeholder={connected ? '输入命令，回车执行（↑↓ 浏览历史）' : '未连接...'}
-        />
+        <div ref={containerRef} className="h-full w-full" />
       </div>
     </div>
   )

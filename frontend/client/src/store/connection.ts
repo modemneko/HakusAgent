@@ -23,6 +23,7 @@ interface ConnectionStore {
 }
 
 let abortCtrl: AbortController | null = null
+let checkPromise: Promise<boolean> | null = null
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   state: 'disconnected',
@@ -34,7 +35,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
   check: async (serverUrl) => {
     if (serverUrl) apiClient.setBaseUrl(serverUrl)
-    set({ state: 'connecting', error: null })
+    // App and TopBar both perform an initial health check. Reuse the active
+    // request instead of allowing concurrent checks to overwrite each other's
+    // state and leave the UI stuck in `connecting`.
+    if (checkPromise) return checkPromise
+
+    checkPromise = (async () => {
+    // A periodic probe must not downgrade an already usable connection to
+    // `connecting`; App would otherwise unmount ChatView and kill its WS.
+    const wasConnected = get().state === 'connected'
+    set({ state: wasConnected ? 'connected' : 'connecting', error: null })
     abortCtrl?.abort()
     abortCtrl = new AbortController()
     try {
@@ -72,10 +82,18 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       })
       return false
     }
+    })()
+    try {
+      return await checkPromise
+    } finally {
+      checkPromise = null
+      abortCtrl = null
+    }
   },
 
   cancel: () => {
     abortCtrl?.abort()
+    checkPromise = null
     abortCtrl = null
     set({ state: 'disconnected' })
   },

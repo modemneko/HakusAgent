@@ -48,6 +48,20 @@ export interface UpdaterState {
   isPackaged: boolean
 }
 
+export interface VoiceProcessStatus {
+  running: boolean
+  pid: number | null
+  startedAt: number | null
+  lastError: string | null
+}
+
+export interface VoiceProcessResult {
+  ok: boolean
+  running: boolean
+  pid: number | null
+  error: string | null
+}
+
 // Secure bridge between renderer and main process
 // Only expose whitelisted APIs — never expose the full ipcRenderer
 const api = {
@@ -55,6 +69,12 @@ const api = {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),
     getAll: () => ipcRenderer.invoke('store:getAll'),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize') as Promise<boolean>,
+    toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize') as Promise<boolean>,
+    close: () => ipcRenderer.invoke('window:close') as Promise<boolean>,
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized') as Promise<boolean>,
   },
   sidecar: {
     status: () => ipcRenderer.invoke('sidecar:status'),
@@ -96,6 +116,16 @@ const api = {
       ipcRenderer.on('updater:status-changed', listener)
       return () => ipcRenderer.removeListener('updater:status-changed', listener)
     },
+  },
+  voice: {
+    status: () => ipcRenderer.invoke('voice:status') as Promise<VoiceProcessStatus>,
+    startCelia: (options?: {
+      celiaPath?: string
+      configPath?: string
+      pythonCommand?: string
+      openInTerminal?: boolean
+    }) => ipcRenderer.invoke('voice:startCelia', options) as Promise<VoiceProcessResult>,
+    stopCelia: () => ipcRenderer.invoke('voice:stopCelia') as Promise<VoiceProcessResult>,
   },
   platform: process.platform,
   versions: {

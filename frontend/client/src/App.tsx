@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
@@ -9,6 +9,7 @@ import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { SidecarErrorBanner } from '@/components/SidecarErrorBanner'
 import { SidecarOutdatedGlobalBanner } from '@/components/SidecarOutdatedGlobalBanner'
+import { LoadingScreen } from '@/components/LoadingScreen'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
@@ -16,6 +17,7 @@ import { useConnectionStore } from '@/store/connection'
 import { cn } from '@/lib/utils'
 
 function App() {
+  const [hasConnected, setHasConnected] = useState(false)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
@@ -62,6 +64,7 @@ function App() {
   // Refresh server info when connection state changes to connected
   useEffect(() => {
     if (connState === 'connected') {
+      setHasConnected(true)
       refreshServerInfo()
     }
   }, [connState, refreshServerInfo])
@@ -98,8 +101,21 @@ function App() {
               onOpenSettings={() => setSettingsOpen(true)}
             />
             <SidecarOutdatedGlobalBanner />
-            <SidecarErrorBanner onRetry={() => window.location.reload()} />
-            <ChatView />
+            <SidecarErrorBanner
+              onRetry={() => {
+                // Retry the sidecar in-place. A renderer reload tears down active
+                // microphone/WebSocket sessions and is unnecessary for a health
+                // check failure.
+                void useConnectionStore.getState().check(serverUrl)
+              }}
+            />
+            {connState === 'connected' || hasConnected || connState === 'error' ? (
+              <ChatView />
+            ) : (
+              <LoadingScreen
+                status={connState === 'connecting' ? '正在连接 Sidecar 服务…' : '正在启动 HakusAI…'}
+              />
+            )}
           </div>
 
           {/* Right panel (Codex-style review/terminal/preview) */}

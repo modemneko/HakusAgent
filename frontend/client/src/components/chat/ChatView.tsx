@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Sparkles, AlertCircle, WifiOff } from 'lucide-react'
+import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2 } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
+import { useAppStore } from '@/store/app'
 import { apiClient, HakusAIError } from '@/api/client'
 import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
-import { Composer } from './Composer'
+import { Composer, type QueuedComposerMessage } from './Composer'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
-import { generateId } from '@/lib/utils'
+import { cn, generateId } from '@/lib/utils'
+import { playVoiceNotification } from '@/lib/voiceNotifications'
+import { VoiceConversation, type ConversationState } from '@/lib/voiceConversation'
+import { VoiceCallEngine, type VoiceCallState } from '@/lib/voiceCall'
+import { useToast } from '@/components/ui/toast'
 import type { ChatMessage } from '@/api/types'
 
 interface TimelineMessageItem {
@@ -24,6 +29,10 @@ interface TimelineToolCallItem {
 }
 
 type TimelineItem = TimelineMessageItem | TimelineToolCallItem
+
+interface QueuedSendMessage extends QueuedComposerMessage {
+  sessionId: string
+}
 
 function buildTimeline(
   messages: ChatMessage[],
@@ -55,6 +64,7 @@ function buildTimeline(
 }
 
 export function ChatView() {
+  const toast = useToast()
   const sessions = useSessionStore((s) => s.sessions)
   const activeId = useSessionStore((s) => s.activeSessionId)
   const messages = useSessionStore((s) => s.messages)
@@ -77,15 +87,49 @@ export function ChatView() {
   const settings = useSettingsStore()
   const toolCallDisplayMode = useSettingsStore((s) => s.toolCallDisplayMode)
   const connState = useConnectionStore((s) => s.state)
+  const agentMode = useAppStore((s) => s.agentMode)
   const connCheck = useConnectionStore((s) => s.check)
 
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null)
   const [composerDraft, setComposerDraft] = useState<string | undefined>(undefined)
+  const [sendQueue, setSendQueue] = useState<QueuedSendMessage[]>([])
+  const [voiceCallActive, setVoiceCallActive] = useState(false)
+  const [voiceCallLoading, setVoiceCallLoading] = useState(false)
+  const [conversationState, setConversationState] = useState<ConversationState>('idle')
+  const [voiceAudioLevel, setVoiceAudioLevel] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const sendQueueRef = useRef<QueuedSendMessage[]>([])
+  const runSendRef = useRef<((text: string, sessionId: string) => Promise<void>) | null>(null)
+  const voiceConversationRef = useRef<VoiceConversation | null>(null)
+  const voiceCallEngineRef = useRef<VoiceCallEngine | null>(null)
+  const abortCtrlRef = useRef<AbortController | null>(null)
 
   const activeSession = sessions.find((s) => s.id === activeId)
   const activeMessages = activeId ? messages[activeId] || [] : []
+  const activeQueuedMessages = activeId ? sendQueue.filter((item) => item.sessionId === activeId) : []
+  const activeTaskProgress = [...activeMessages]
+    .reverse()
+    .find((msg) => msg.role === 'assistant' && (msg.streaming || msg.task_progress) && msg.task_progress)
+    ?.task_progress
+
+  useEffect(() => {
+    sendQueueRef.current = sendQueue
+  }, [sendQueue])
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      const status = await window.electron?.voice?.status?.()
+      if (!cancelled && status) setVoiceCallActive(status.running)
+    }
+    void refresh()
+    const id = setInterval(refresh, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -99,12 +143,20 @@ export function ChatView() {
     }
   }, [activeMessages, settings.autoScroll])
 
-  const handleSend = useCallback(
-    async (text: string) => {
-      if (!activeId) return
-      const sessionId = activeId
+  const runNextQueued = useCallback(() => {
+    if (useSessionStore.getState().isStreaming) return
+    const next = sendQueueRef.current[0]
+    if (!next) return
+    const rest = sendQueueRef.current.slice(1)
+    sendQueueRef.current = rest
+    setSendQueue(rest)
+    void runSendRef.current?.(next.text, next.sessionId)
+  }, [])
 
-      // 1. Add user message — persist immediately (it's already final)
+  const runSend = useCallback(
+    async (text: string, sessionId: string) => {
+      if (!sessionId) return
+
       const userMsgId = addMessage(sessionId, {
         role: 'user',
         content: text,
@@ -112,40 +164,30 @@ export function ChatView() {
       })
       void persistNewMessage(sessionId, userMsgId)
 
-      // 2. Add assistant placeholder (streaming) — persist as streaming=true,
-      //    will be PATCHed on stream end with final content.
       const assistantMsgId = startStreamingLog(sessionId)
       void persistNewMessage(sessionId, assistantMsgId)
 
-      // 3. Auto-rename session if it's the first message
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
       if (session && session.title === 'New Chat') {
         void renameSession(sessionId, text.slice(0, 40).replace(/\n/g, ' '))
       }
 
-      // 4. Start SSE stream
       const ctrl = new AbortController()
       setAbortCtrl(ctrl)
       setStreaming(true, ctrl)
 
       try {
-        // Pass the current default provider (from settings store) so the
-        // server uses an AgentCore bound to it. This makes the TopBar
-        // "switch provider" dropdown actually take effect — without it,
-        // the server would silently reuse a cached AgentCore created
-        // with whatever provider was default when the session started.
         await apiClient.chatStream(
           text,
           session?.remote_session_id || sessionId,
           (chunk, event) => {
-            // Handle AgentEvent (typed events from protocol layer)
             if (event) {
               handleAgentEvent(event, sessionId)
               return
             }
-            // Handle simple chunk format (current server.py)
             if (chunk.content) {
               appendToStreamingLog(sessionId, chunk.content)
+              voiceConversationRef.current?.feedAgentText(chunk.content)
             }
             if (chunk.error) {
               updateMessage(sessionId, assistantMsgId, {
@@ -155,20 +197,20 @@ export function ChatView() {
             }
             if (chunk.done) {
               updateMessage(sessionId, assistantMsgId, { streaming: false })
+              voiceConversationRef.current?.endAgentTurn()
             }
           },
           ctrl.signal,
           settings.defaultModel,
+          agentMode,
         )
-        // Ensure streaming flag is off
         updateMessage(sessionId, assistantMsgId, { streaming: false })
-        // Persist final assistant message (content + reasoning + tool_calls + tokens)
         void persistMessage(sessionId, assistantMsgId)
       } catch (e: any) {
         if (e?.name === 'AbortError') {
           updateMessage(sessionId, assistantMsgId, {
             streaming: false,
-            content: (useSessionStore.getState().messages[sessionId]?.find((m) => m.id === assistantMsgId)?.content || '') + '\n\n_⏹ Stopped by user_',
+            content: (useSessionStore.getState().messages[sessionId]?.find((m) => m.id === assistantMsgId)?.content || '') + '\\n\\n_Stopped_',
           })
         } else {
           const msg = e instanceof HakusAIError ? e.message : 'Failed to send message'
@@ -177,17 +219,168 @@ export function ChatView() {
             streaming: false,
           })
         }
-        // Persist even on error/abort so the partial content + error is saved
         void persistMessage(sessionId, assistantMsgId)
       } finally {
         stopStreamingLog(sessionId)
         setStreaming(false)
         setAbortCtrl(null)
+        setTimeout(runNextQueued, 0)
+      }
+    },
+    [addMessage, agentMode, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued],
+  )
+
+  useEffect(() => {
+    runSendRef.current = runSend
+  }, [runSend])
+
+  useEffect(() => {
+    abortCtrlRef.current = abortCtrl
+  }, [abortCtrl])
+
+  // Ensure microphone is released if the chat view unmounts while a call is active
+  useEffect(() => {
+    return () => {
+      if (voiceCallEngineRef.current && voiceCallEngineRef.current.currentState !== 'idle') {
+        void voiceCallEngineRef.current.stop()
+      }
+      voiceCallEngineRef.current = null
+      if (voiceConversationRef.current && voiceConversationRef.current.currentState !== 'idle') {
+        void voiceConversationRef.current.stop()
+      }
+      voiceConversationRef.current = null
+    }
+  }, [])
+
+  const handleSend = useCallback(
+    (text: string) => {
+      if (!activeId) return
+      if (useSessionStore.getState().isStreaming) {
+        const nextQueue = [
+          ...sendQueueRef.current,
+          {
+            id: generateId('q_'),
+            sessionId: activeId,
+            text,
+            createdAt: Date.now(),
+          },
+        ]
+        sendQueueRef.current = nextQueue
+        setSendQueue(nextQueue)
+        return
+      }
+      void runSend(text, activeId)
+    },
+    [activeId, runSend],
+  )
+
+  const handleRemoveQueued = useCallback((id: string) => {
+    const nextQueue = sendQueueRef.current.filter((item) => item.id !== id)
+    sendQueueRef.current = nextQueue
+    setSendQueue(nextQueue)
+  }, [])
+
+  const notifyVoice = useCallback((kind: 'complete' | 'permission' | 'ask') => {
+    void playVoiceNotification(kind, useSettingsStore.getState()).catch((error) => {
+      console.warn('[voice] notification failed:', error)
+    })
+  }, [])
+
+  const handleToggleVoiceCall = useCallback(async () => {
+    // If VoiceCallEngine (builtin WS) is running, stop it
+    if (voiceCallEngineRef.current && voiceCallEngineRef.current.currentState !== 'idle') {
+      await voiceCallEngineRef.current.stop()
+      voiceCallEngineRef.current = null
+      setConversationState('idle')
+      setVoiceCallActive(false)
+      return
+    }
+    // If VoiceConversation (legacy) is running, stop it
+    if (voiceConversationRef.current && voiceConversationRef.current.currentState !== 'idle') {
+      await voiceConversationRef.current.stop()
+      voiceConversationRef.current = null
+      setConversationState('idle')
+      setVoiceCallActive(false)
+      return
+    }
+
+    const currentSettings = useSettingsStore.getState()
+    if (!currentSettings.voiceCallEnabled) {
+      toast.info('请先在设置里开启语音通话')
+      return
+    }
+
+    if (currentSettings.voiceCallBackend === 'celia') {
+      toast.info('当前使用 Celia 后端，请在「设置 → 语音通话与播报」中启动 Celia 进程')
+      return
+    }
+
+    setVoiceCallLoading(true)
+    try {
+      const sessionId = useSessionStore.getState().activeSessionId
+      if (!sessionId) {
+        toast.error('没有活动会话，无法启动语音通话')
+        return
       }
 
-    },
-    [activeId, addMessage, appendToStreamingLog, appendReasoningToStreamingLog, startStreamingLog, stopStreamingLog, updateMessage, renameSession, setStreaming, persistNewMessage, persistMessage, settings.defaultModel, clearPendingToolCalls],
-  )
+      // 使用新的 VoiceCallEngine（WebSocket 全双工）
+      const currentSettings = useSettingsStore.getState()
+      const engine = new VoiceCallEngine(
+        {
+          onStateChange: (state: VoiceCallState) => {
+            // VoiceCallState 比 ConversationState 多了 'connecting'，映射到 thinking
+            setConversationState(state as ConversationState)
+          },
+          onUserSpeech: (text) => {
+            // Abort current stream if AI is still responding (interruption)
+            if (abortCtrlRef.current) {
+              abortCtrlRef.current.abort()
+              abortCtrlRef.current = null
+            }
+            // 语音通话模式：后端 voice_call_handler 已自带 LLM+TTS 管线，
+            // 前端只需显示用户消息 + 开始流式日志，不要通过 REST API 重复发送
+            const sid = useSessionStore.getState().activeSessionId
+            if (sid) {
+              addMessage(sid, { role: 'user', content: text, tool_calls: [] })
+              startStreamingLog(sid)
+            }
+          },
+        onAgentToken: (text) => {
+          // 将 LLM token 显示在聊天中
+          const sid = useSessionStore.getState().activeSessionId
+          if (sid) {
+            appendToStreamingLog(sid, text)
+          }
+        },
+        onAgentAudio: (_audioBase64) => {
+          // 音频由 VoiceCallEngine 内部自动播放，此处无需额外处理
+        },
+        onAudioLevel: (level) => setVoiceAudioLevel(level),
+        onError: (msg) => {
+          console.warn('[voice-call]', msg)
+          void engine.stop().finally(() => {
+            voiceCallEngineRef.current = null
+            setVoiceCallActive(false)
+            setVoiceAudioLevel(0)
+            setConversationState('idle')
+          })
+          toast.error(`语音通话异常：${msg}`)
+        },
+      },
+      { dashscopeApiKey: currentSettings.dashscopeApiKey },
+      )
+
+      await engine.start(sessionId)
+      voiceCallEngineRef.current = engine
+      setVoiceCallActive(true)
+      setConversationState('listening')
+    } catch (e: any) {
+      toast.error(`无法启动语音对话：${e?.message || e}`)
+      voiceCallEngineRef.current = null
+    } finally {
+      setVoiceCallLoading(false)
+    }
+  }, [toast, appendToStreamingLog])
 
   // Handle typed AgentEvent from the protocol layer
   const handleAgentEvent = (event: AgentEvent, sessionId: string) => {
@@ -196,7 +389,12 @@ export function ChatView() {
 
     switch (event.event_type) {
       case 'text_delta':
-        appendToStreamingLog(sessionId, (event as any).text || (event as any).content)
+        {
+          const text = (event as any).text || (event as any).content
+          appendToStreamingLog(sessionId, text)
+          // Feed text to voice conversation engine for TTS
+          voiceConversationRef.current?.feedAgentText(text)
+        }
         break
       case 'reasoning_delta':
         appendReasoningToStreamingLog(sessionId, (event as any).text || (event as any).content)
@@ -248,18 +446,22 @@ export function ChatView() {
           input_tokens: event.input_tokens,
           output_tokens: event.output_tokens,
         })
+        notifyVoice('complete')
+        voiceConversationRef.current?.endAgentTurn()
         break
       case 'turn_failed':
         updateMessage(sessionId, messageId, {
           streaming: false,
           error: `[${event.code}] ${event.error}`,
         })
+        voiceConversationRef.current?.endAgentTurn()
         break
       case 'cancelled':
         updateMessage(sessionId, messageId, {
           streaming: false,
           content: event.partial_content || '',
         })
+        voiceConversationRef.current?.endAgentTurn()
         break
       case 'orchestrator_phase_changed':
       case 'activity_changed':
@@ -280,6 +482,9 @@ export function ChatView() {
             answered: false,
           },
         })
+        const questionText = String(q.question || "") + " " + (q.options || []).join(" ")
+        const isPermissionQuestion = /permission|approve|deny|权限|允许|批准|确认执行|危险操作|执行/.test(questionText.toLowerCase())
+        notifyVoice(isPermissionQuestion ? "permission" : "ask")
         break
       }
       case 'question_answered': {
@@ -378,7 +583,7 @@ export function ChatView() {
           </div>
           <h2 className="text-lg font-semibold tracking-tight">Welcome to HakusAI</h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            点击侧栏 <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd> 开始新对话
+            Click the sidebar <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd> to start a new chat
           </p>
         </div>
       </div>
@@ -392,11 +597,66 @@ export function ChatView() {
         <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">
           <div className="flex items-center gap-2">
             <WifiOff className="h-3.5 w-3.5" />
-            <span>无法连接到 HakusAI 服务：{settings.connection.serverUrl}</span>
+            <span>Cannot connect to HakusAI service: {settings.connection.serverUrl}</span>
           </div>
           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => connCheck()}>
             重试
           </Button>
+        </div>
+      )}
+
+      {/* Voice conversation status banner */}
+      {conversationState !== 'idle' && (
+        <div className="flex items-center justify-center border-b bg-muted/30 px-4 py-1.5">
+          <div
+            className={cn(
+              'flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium',
+              conversationState === 'listening' && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+              conversationState === 'speaking' && 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+              conversationState === 'connecting' && 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+              (conversationState === 'transcribing' || conversationState === 'thinking') &&
+                'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+            )}
+          >
+            {conversationState === 'connecting' && (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                连接语音服务中…
+              </>
+            )}
+            {conversationState === 'listening' && (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                <Mic className="h-3 w-3" />
+                聆听中…
+              </>
+            )}
+            {conversationState === 'transcribing' && (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                语音识别中…
+              </>
+            )}
+            {conversationState === 'thinking' && (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                AI 思考中…
+              </>
+            )}
+            {conversationState === 'speaking' && (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+                </span>
+                <Volume2 className="h-3 w-3" />
+                AI 播报中…说话可打断
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -408,17 +668,17 @@ export function ChatView() {
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-base font-semibold">今天想做什么？</p>
+              <p className="text-base font-semibold">What would you like to do?</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                编写代码、撰写文档、分析数据，或随便聊聊。
+                Code, write, inspect data, or talk through an idea.
               </p>
             </div>
             <div className="flex max-w-md flex-wrap items-center justify-center gap-2">
               {[
-                '帮我写一段 Python 脚本',
-                '解释这个项目的架构',
-                '优化我的代码方案',
-                '总结一下最近的改动',
+                "Write a Python script",
+                "Explain this project architecture",
+                "Improve my code plan",
+                "Summarize recent changes",
               ].map((prompt) => (
                 <button
                   key={prompt}
@@ -463,6 +723,14 @@ export function ChatView() {
         placeholder={connState !== 'connected' ? '未连接到服务...' : undefined}
         draftValue={composerDraft}
         onDraftConsumed={() => setComposerDraft(undefined)}
+        pendingQueue={activeQueuedMessages}
+        onRemoveQueued={handleRemoveQueued}
+        taskProgress={activeTaskProgress}
+        isVoiceCallActive={voiceCallActive}
+        voiceCallLoading={voiceCallLoading}
+        voiceAudioLevel={voiceAudioLevel}
+        onToggleVoiceCall={handleToggleVoiceCall}
+        conversationState={conversationState}
       />
     </div>
   )

@@ -151,6 +151,11 @@ class TaskBoard:
         logger.info(f"Task added: {task_id} - {title}")
         return task
 
+    def clear(self) -> None:
+        """Remove all persisted tasks for a fresh isolated run."""
+        self._tasks.clear()
+        self._persist()
+
     def get_task(self, task_id: str) -> Optional[Task]:
         return self._tasks.get(task_id)
 

@@ -1,5 +1,8 @@
-import { app, BrowserWindow, shell, ipcMain, globalShortcut } from 'electron'
-import { join } from 'path'
+import { app, BrowserWindow, shell, ipcMain, globalShortcut, type IpcMainInvokeEvent } from 'electron'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { existsSync } from 'node:fs'
 import Store from 'electron-store'
 import { startSidecar, stopSidecar, isSidecarLaunchable, getSidecarStatus, getSidecarLogBuffer, restartSidecar } from './sidecar'
 import { startGateway, stopGateway, setTargetBaseUrl } from './gateway'
@@ -17,8 +20,8 @@ import {
   checkForUpdates,
 } from './updater'
 
-// In CommonJS context, __dirname is a Node global (declared by @types/node).
-// vite-plugin-electron handles __dirname correctly when package.json has no "type": "module".
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 // Type for our persisted store schema
 interface PersistedSettings {
@@ -35,6 +38,15 @@ interface PersistedSettings {
   ttsEnabled: boolean
   ttsVoice: string
   ttsSpeed: number
+  voiceCallEnabled: boolean
+  voiceCallBackend: 'celia'
+  celiaPath: string
+  celiaConfigPath: string
+  celiaPythonCommand: string
+  celiaOpenInTerminal: boolean
+  voiceBroadcastEnabled: boolean
+  voiceBroadcastMode: 'tts' | 'chime'
+  voiceBroadcastChime: 'dingdong' | 'soft'
   // Phase 3 — system tray + global shortcuts
   trayEnabled: boolean
   minimizeToTray: boolean
@@ -58,6 +70,15 @@ const store = new Store<PersistedSettings>({
     ttsEnabled: false,
     ttsVoice: 'zh-CN-XiaoxiaoNeural',
     ttsSpeed: 1.0,
+    voiceCallEnabled: false,
+    voiceCallBackend: 'celia',
+    celiaPath: 'D:\\项目\\Celia',
+    celiaConfigPath: 'config.yaml',
+    celiaPythonCommand: 'D:\\项目\\Celia\\.venv\\Scripts\\python.exe',
+    celiaOpenInTerminal: false,
+    voiceBroadcastEnabled: false,
+    voiceBroadcastMode: 'chime',
+    voiceBroadcastChime: 'dingdong',
     // Tray: enabled by default so users see it on first launch.
     trayEnabled: true,
     // When tray is on, the close button hides instead of quitting.
@@ -76,6 +97,14 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let win: BrowserWindow | null = null
+const DEV_RENDERER_FALLBACK_URL = 'http://127.0.0.1:1421/'
+let voiceCallProcess: ChildProcess | null = null
+let voiceCallStartedAt: number | null = null
+let voiceCallLastError: string | null = null
+
+function getEventWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
+  return BrowserWindow.fromWebContents(event.sender) ?? win
+}
 
 function createWindow() {
   const bounds = store.get('windowBounds', { width: 1280, height: 800 })
@@ -88,7 +117,12 @@ function createWindow() {
     backgroundColor: '#0a0a0b',
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    frame: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    thickFrame: true,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -97,7 +131,14 @@ function createWindow() {
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL)
+    const rendererUrl = process.env.VITE_DEV_SERVER_URL
+    win.loadURL(rendererUrl).catch((error) => {
+      console.error(`[main] Failed to load renderer URL ${rendererUrl}:`, error)
+      if (!app.isPackaged && rendererUrl !== DEV_RENDERER_FALLBACK_URL) {
+        console.warn(`[main] Retrying renderer with ${DEV_RENDERER_FALLBACK_URL}`)
+        void win?.loadURL(DEV_RENDERER_FALLBACK_URL)
+      }
+    })
   } else {
     win.loadFile(join(RENDERER_DIST, 'index.html'))
   }
@@ -153,6 +194,123 @@ ipcMain.handle('store:set', (_event, key: string, value: unknown) => {
 
 ipcMain.handle('store:getAll', () => {
   return (store as any).store
+})
+
+ipcMain.handle('window:minimize', (event) => {
+  const target = getEventWindow(event)
+  if (!target || target.isDestroyed()) return false
+  target.minimize()
+  return true
+})
+
+ipcMain.handle('window:toggleMaximize', (event) => {
+  const target = getEventWindow(event)
+  if (!target || target.isDestroyed()) return false
+  if (target.isMaximized()) {
+    target.unmaximize()
+  } else {
+    target.maximize()
+  }
+  return target.isMaximized()
+})
+
+ipcMain.handle('window:close', (event) => {
+  const target = getEventWindow(event)
+  if (!target || target.isDestroyed()) return false
+  target.close()
+  return true
+})
+
+ipcMain.handle('window:isMaximized', (event) => {
+  return Boolean(getEventWindow(event)?.isMaximized())
+})
+
+ipcMain.handle('voice:status', () => {
+  return {
+    running: voiceCallProcess !== null && !voiceCallProcess.killed,
+    pid: voiceCallProcess?.pid ?? null,
+    startedAt: voiceCallStartedAt,
+    lastError: voiceCallLastError,
+  }
+})
+
+ipcMain.handle('voice:startCelia', async (_event, options?: {
+  celiaPath?: string
+  configPath?: string
+  pythonCommand?: string
+  openInTerminal?: boolean
+}) => {
+  if (voiceCallProcess && !voiceCallProcess.killed) {
+    return { ok: true, running: true, pid: voiceCallProcess.pid, error: null }
+  }
+
+  const celiaPath = options?.celiaPath || store.get('celiaPath', 'D:\\项目\\Celia')
+  const configPath = options?.configPath || store.get('celiaConfigPath', 'config.yaml')
+  const pythonCommand = options?.pythonCommand || store.get('celiaPythonCommand', 'D:\\项目\\Celia\\.venv\\Scripts\\python.exe')
+  const openInTerminal = options?.openInTerminal ?? store.get('celiaOpenInTerminal', false)
+  const runPy = join(celiaPath, 'run.py')
+
+  if (!existsSync(runPy)) {
+    voiceCallLastError = `Celia run.py not found: ${runPy}`
+    return { ok: false, running: false, pid: null, error: voiceCallLastError }
+  }
+
+  const args = ['run.py', '--voice', '--config', configPath]
+  try {
+    if (process.platform === 'win32' && openInTerminal) {
+      voiceCallProcess = spawn(
+        'cmd.exe',
+        ['/c', 'start', '"Celia Voice Call"', pythonCommand, ...args],
+        { cwd: celiaPath, windowsHide: false, shell: false },
+      )
+    } else {
+      voiceCallProcess = spawn(pythonCommand, args, {
+        cwd: celiaPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      })
+    }
+    voiceCallStartedAt = Date.now()
+    voiceCallLastError = null
+    voiceCallProcess.stdout?.on('data', (chunk) => {
+      console.log(`[voice:celia] ${chunk.toString().trim()}`)
+    })
+    voiceCallProcess.stderr?.on('data', (chunk) => {
+      console.error(`[voice:celia] ${chunk.toString().trim()}`)
+    })
+    voiceCallProcess.on('exit', (code, signal) => {
+      console.log(`[voice:celia] exited code=${code} signal=${signal}`)
+      voiceCallProcess = null
+      voiceCallStartedAt = null
+    })
+    voiceCallProcess.on('error', (error) => {
+      voiceCallLastError = error.message
+      voiceCallProcess = null
+      voiceCallStartedAt = null
+    })
+    return { ok: true, running: true, pid: voiceCallProcess.pid ?? null, error: null }
+  } catch (error: any) {
+    voiceCallLastError = error?.message || String(error)
+    voiceCallProcess = null
+    voiceCallStartedAt = null
+    return { ok: false, running: false, pid: null, error: voiceCallLastError }
+  }
+})
+
+ipcMain.handle('voice:stopCelia', () => {
+  if (!voiceCallProcess) {
+    return { ok: true, running: false, pid: null, error: null }
+  }
+  try {
+    voiceCallProcess.kill('SIGTERM')
+    voiceCallProcess = null
+    voiceCallStartedAt = null
+    return { ok: true, running: false, pid: null, error: null }
+  } catch (error: any) {
+    voiceCallLastError = error?.message || String(error)
+    return { ok: false, running: true, pid: voiceCallProcess?.pid ?? null, error: voiceCallLastError }
+  }
 })
 
 app.whenReady().then(async () => {
@@ -345,6 +503,11 @@ ipcMain.handle('shortcuts:validate', (_event, accelerator: string) => {
 app.on('before-quit', () => {
   // Signal the close handler that this is a real quit, not a hide-to-tray.
   app.quitting = true
+  try {
+    voiceCallProcess?.kill('SIGTERM')
+  } catch {
+    /* ignore */
+  }
   stopGateway()
   stopSidecar()
   destroyTray()

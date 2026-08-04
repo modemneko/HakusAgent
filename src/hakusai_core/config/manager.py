@@ -139,6 +139,41 @@ class ConfigManager:
         )
         return config_dict
 
+    def _migrate_voice_providers(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        迁移旧的 voice provider 值到当前 schema 支持的值。
+
+        旧值 → 新值:
+          asr: sherpa_onnx → funasr
+          tts: edge / bert-vits2 / voxcpm / sherpa-onnx → cosyvoice
+          vad: silero → funasr
+        """
+        voice = config_dict.get("voice")
+        if not isinstance(voice, dict):
+            return config_dict
+
+        migrations = {
+            "asr": {"sherpa_onnx": "funasr", "sherpa-onnx": "funasr"},
+            "tts": {"edge": "cosyvoice", "bert-vits2": "cosyvoice",
+                     "bert_vits2": "cosyvoice", "voxcpm": "cosyvoice",
+                     "sherpa-onnx": "cosyvoice", "sherpa_onnx": "cosyvoice",
+                     "api": "cosyvoice"},
+            "vad": {"silero": "funasr"},
+        }
+
+        changed = False
+        for sub, mapping in migrations.items():
+            sub_cfg = voice.get(sub)
+            if isinstance(sub_cfg, dict):
+                provider = sub_cfg.get("provider")
+                if provider in mapping:
+                    sub_cfg["provider"] = mapping[provider]
+                    changed = True
+
+        if changed:
+            logger.info("Migrated legacy voice provider values to current schema")
+        return config_dict
+
     def _apply_env_overrides(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         应用环境变量覆盖
@@ -228,9 +263,12 @@ class ConfigManager:
                 # 把 UI 保存的 models.* 同步到顶层 model.*
                 config_dict = self._sync_models_to_model(config_dict)
 
+                # 迁移旧的 voice provider 值
+                config_dict = self._migrate_voice_providers(config_dict)
+
                 # 应用环境变量覆盖
                 config_dict = self._apply_env_overrides(config_dict)
-                
+
                 # 验证并创建配置对象
                 self._config = HakusAIConfig(**config_dict)
                 logger.info(f"Config loaded from: {config_path}")
@@ -286,10 +324,13 @@ class ConfigManager:
 
                 # 把 UI 保存的 models.* 同步到顶层 model.*
                 config_dict = self._sync_models_to_model(config_dict)
-                
+
+                # 迁移旧的 voice provider 值
+                config_dict = self._migrate_voice_providers(config_dict)
+
                 # 应用环境变量覆盖
                 config_dict = self._apply_env_overrides(config_dict)
-                
+
                 # 验证并创建配置对象
                 self._config = HakusAIConfig(**config_dict)
                 logger.info("Config reloaded successfully")

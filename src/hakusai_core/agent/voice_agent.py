@@ -1,471 +1,324 @@
 """
-HakusAI 2.0 语音Agent
-整合语音管道和AI对话能力
+HakusAI 独立语音 Agent
+
+直接使用 OpenAI 兼容 API 调用 LLM，不经过 agent_bridge / AgentCore。
+维护独立的 per-session 对话历史，不共享 Coding Agent 的 session。
 """
 
-import asyncio
-from typing import Optional, Dict, Any, Callable, AsyncIterator
-from dataclasses import dataclass
-import numpy as np
 import logging
-
-from .base_agent import BaseAgent, AgentContext, AgentResponse, AgentState
-from ..voice.pipeline import VoicePipeline, VoicePipelineConfig, PipelineState
-from ..memory.manager import MemoryManager, MemoryStorage
-from ..utils.events import EventType, emit, on_event
+from typing import AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class VoiceAgentConfig:
-    """语音Agent配置"""
-    # 语音管道配置
-    voice_config: VoicePipelineConfig = None
-    
-    # 记忆配置
-    memory_config: MemoryStorage = None
-    
-    # 行为配置
-    enable_voice: bool = True
-    enable_memory: bool = True
-    auto_speak: bool = True  # 自动语音回复
-    interrupt_enabled: bool = True  # 支持语音打断
-    
-    # 对话配置
-    max_context_messages: int = 20
+# GPT-Live 风格系统提示 —— 简短、口语化、有情感温度
+DEFAULT_VOICE_SYSTEM_PROMPT = """\
+你是 HakusAI 的语音助手，正在和用户进行实时语音对话。
+
+核心原则：
+1. 回复极简——通常 1-2 句话，不超过 3 句。像发语音消息一样简短。
+2. 自然口语化——用"嗯"、"哦"、"啊"等语气词，不要书面语。
+3. 有情感温度——感知用户情绪，适时共情、鼓励、调侃。
+4. 不要 Markdown、代码块、列表、标题。
+5. 不要说"作为AI助手"——你就是你。
+6. 用户问编程问题，简短给方向，建议去聊天框详聊。
+7. 不确定时坦诚说"我不太确定"，不要编造。
+8. 用户沉默或犹豫时，可以主动接话或追问。\
+"""
+
+# 对话历史上限（条消息数，不含系统提示）
+_MAX_HISTORY_MESSAGES = 20
 
 
 class VoiceAgent:
     """
-    语音Agent
-    
-    整合能力：
-    - AI对话 (BaseAgent)
-    - 语音识别/合成 (VoicePipeline)
-    - 记忆系统 (MemoryManager)
-    - 虚拟形象控制
+    独立语音 Agent，直接调用 LLM API。
+
+    - 不依赖 agent_bridge / AgentCore
+    - 维护独立的 per-session 对话历史
+    - 无工具调用，纯对话
+    - GPT-Live 风格简短回复
     """
-    
+
     def __init__(
         self,
-        agent: BaseAgent,
-        config: Optional[VoiceAgentConfig] = None
+        api_key: str,
+        base_url: str = "",
+        model_name: str = "deepseek-chat",
+        system_prompt: Optional[str] = None,
     ):
         """
-        初始化语音Agent
-        
+        初始化 VoiceAgent。
+
         Args:
-            agent: 基础Agent实例
-            config: 语音Agent配置
+            api_key: LLM API Key
+            base_url: LLM API Base URL（OpenAI 兼容）
+            model_name: 模型名称
+            system_prompt: 自定义系统提示（None 则使用默认 GPT-Live 风格提示）
         """
-        self.agent = agent
-        self.config = config or VoiceAgentConfig()
-        
-        # 语音管道
-        self.voice_pipeline: Optional[VoicePipeline] = None
-        
-        # 记忆系统
-        self.memory: Optional[MemoryManager] = None
-        
-        # 状态
-        self._initialized = False
-        self._listening = False
-        self._current_response_task: Optional[asyncio.Task] = None
-        
-        # 回调
-        self._on_user_speech: Optional[Callable] = None
-        self._on_agent_speech: Optional[Callable] = None
-        self._on_avatar_expression: Optional[Callable] = None
-        
-    async def initialize(self):
-        """初始化语音Agent"""
-        logger.info("Initializing VoiceAgent...")
-        
-        # 初始化语音管道
-        if self.config.enable_voice:
-            self.voice_pipeline = VoicePipeline(self.config.voice_config)
-            self.voice_pipeline.set_callbacks(
-                on_text=self._on_asr_text,
-                on_audio=self._on_tts_audio,
-                on_state_change=self._on_voice_state_change
-            )
-            await self.voice_pipeline.initialize()
-            logger.info("Voice pipeline initialized")
-        
-        # 初始化记忆系统
-        if self.config.enable_memory:
-            memory_config = self.config.memory_config or MemoryStorage()
-            self.memory = MemoryManager(memory_config)
-            await self.memory.initialize()
-            logger.info("Memory system initialized")
-        
-        # 设置Agent记忆钩子
-        if self.memory:
-            self.agent.add_hook("before_chat", self._before_chat_hook)
-            self.agent.add_hook("after_chat", self._after_chat_hook)
-        
-        self._initialized = True
-        logger.info("VoiceAgent initialized successfully")
-    
-    def set_callbacks(
+        from openai import AsyncOpenAI
+
+        self._api_key = api_key
+        self._base_url = base_url or None
+        self._model_name = model_name
+        self._default_system_prompt = system_prompt or DEFAULT_VOICE_SYSTEM_PROMPT
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=self._base_url,
+        )
+        # per-session 对话历史: {session_id: [{"role": "...", "content": "..."}, ...]}
+        self._sessions: Dict[str, List[dict]] = {}
+        self._agent_bridge = None
+
+        logger.info(f"VoiceAgent 初始化完成: model={model_name}, base_url={base_url or 'default'}")
+
+    def _get_messages(self, session_id: str) -> List[dict]:
+        """获取 session 的完整消息列表（含系统提示）"""
+        if session_id not in self._sessions:
+            self._sessions[session_id] = [
+                {"role": "system", "content": self._default_system_prompt}
+            ]
+        return self._sessions[session_id]
+
+    def _trim_history(self, session_id: str):
+        """截断对话历史，保留系统提示 + 最近 _MAX_HISTORY_MESSAGES 条消息"""
+        messages = self._sessions.get(session_id, [])
+        if len(messages) > _MAX_HISTORY_MESSAGES + 1:  # +1 for system prompt
+            # 保留系统提示 + 最后 _MAX_HISTORY_MESSAGES 条
+            self._sessions[session_id] = [messages[0]] + messages[-(_MAX_HISTORY_MESSAGES):]
+            logger.debug(f"VoiceAgent: session {session_id} 历史已截断至 {_MAX_HISTORY_MESSAGES} 条")
+
+    def set_system_prompt(self, session_id: str, prompt: str):
+        """动态更新系统提示（兼容 voice_call_handler 调用）"""
+        messages = self._get_messages(session_id)
+        messages[0] = {"role": "system", "content": prompt}
+        logger.debug(f"VoiceAgent: session {session_id} 系统提示已更新")
+
+    def clear_session(self, session_id: str):
+        """清理 session 的对话历史"""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            logger.debug(f"VoiceAgent: session {session_id} 历史已清理")
+
+    async def chat_stream(
         self,
-        on_user_speech: Optional[Callable] = None,
-        on_agent_speech: Optional[Callable] = None,
-        on_avatar_expression: Optional[Callable] = None
-    ):
+        user_text: str,
+        session_id: str = "default",
+    ) -> AsyncIterator[str]:
         """
-        设置回调函数
-        
-        Args:
-            on_user_speech: 用户语音输入回调
-            on_agent_speech: Agent语音输出回调
-            on_avatar_expression: 虚拟形象表情回调
-        """
-        self._on_user_speech = on_user_speech
-        self._on_agent_speech = on_agent_speech
-        self._on_avatar_expression = on_avatar_expression
-    
-    async def start_listening(self):
-        """开始监听语音输入"""
-        if not self._initialized:
-            raise RuntimeError("VoiceAgent not initialized")
-        
-        if not self.voice_pipeline:
-            logger.warning("Voice pipeline not enabled")
-            return
-        
-        self._listening = True
-        await self.voice_pipeline.start()
-        logger.info("Started listening for voice input")
-    
-    async def stop_listening(self):
-        """停止监听语音输入"""
-        self._listening = False
-        
-        if self.voice_pipeline:
-            await self.voice_pipeline.stop()
-        
-        logger.info("Stopped listening")
-    
-    async def feed_audio(self, audio_data: np.ndarray):
-        """
-        输入音频数据（用于外部音频源）
-        
-        Args:
-            audio_data: 音频数据
-        """
-        if self.voice_pipeline and self._listening:
-            await self.voice_pipeline.feed_audio(audio_data)
-    
-    async def chat(
-        self,
-        user_input: str,
-        context: Optional[AgentContext] = None,
-        stream: bool = True
-    ) -> AsyncIterator[AgentResponse]:
-        """
-        文本对话
-        
-        Args:
-            user_input: 用户输入
-            context: 对话上下文
-            stream: 是否流式输出
-            
-        Yields:
-            Agent响应
-        """
-        # 保存用户输入到记忆
-        if self.memory:
-            await self.memory.add_message("user", user_input)
-        
-        # 调用Agent对话
-        async for response in self.agent.chat(user_input, context, stream):
-            yield response
-        
-        # 保存Agent回复到记忆
-        if self.memory and not stream:
-            await self.memory.add_message("assistant", response.content)
-    
-    async def chat_with_voice(
-        self,
-        user_input: str,
-        context: Optional[AgentContext] = None
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        语音对话（文本+语音输出）
-        
-        Args:
-            user_input: 用户输入
-            context: 对话上下文
-            
-        Yields:
-            包含文本和/或音频的数据
-        """
-        if not self.voice_pipeline:
-            logger.warning("Voice pipeline not available")
-            async for response in self.chat(user_input, context, stream=True):
-                yield {"type": "text", "content": response.content}
-            return
-        
-        # 收集完整回复
-        full_text = ""
-        
-        async for response in self.agent.chat(user_input, context, stream=True):
-            full_text += response.content
-            
-            # 发送文本
-            yield {
-                "type": "text",
-                "content": response.content,
-                "emotion": response.emotion,
-                "actions": response.actions
-            }
-            
-            # 触发虚拟形象表情
-            if self._on_avatar_expression and response.emotion:
-                await self._trigger_avatar_expression(response.emotion)
-        
-        # 保存到记忆
-        if self.memory:
-            await self.memory.add_message("assistant", full_text)
-        
-        # 合成语音
-        if self.config.auto_speak and full_text:
-            yield {"type": "tts_start", "text": full_text}
-            
-            async for audio_chunk in self.voice_pipeline.speak(full_text):
-                yield {"type": "audio", "data": audio_chunk}
-            
-            yield {"type": "tts_end"}
-    
-    async def speak(self, text: str) -> AsyncIterator[bytes]:
-        """
-        合成语音
-        
-        Args:
-            text: 要合成的文本
-            
-        Yields:
-            音频数据
-        """
-        if not self.voice_pipeline:
-            logger.error("Voice pipeline not available")
-            return
-        
-        async for chunk in self.voice_pipeline.speak(text):
-            yield chunk
-    
-    async def interrupt(self):
-        """打断当前语音输出"""
-        if self._current_response_task and not self._current_response_task.done():
-            self._current_response_task.cancel()
-            try:
-                await self._current_response_task
-            except asyncio.CancelledError:
-                pass
-        
-        if self.voice_pipeline:
-            # 停止当前TTS
-            pass  # TTS是流式的，自然结束
-        
-        logger.info("Speech interrupted")
-        await emit(EventType.VOICE_INTERRUPTED)
-    
-    # ========== 回调处理 ==========
-    
-    async def _on_asr_text(self, text: str):
-        """
-        ASR识别到文本的回调
-        
-        Args:
-            text: 识别的文本
-        """
-        logger.info(f"User said: {text}")
-        
-        # 触发事件
-        await emit(EventType.VOICE_USER_SPEECH, {"text": text})
-        
-        # 调用用户回调
-        if self._on_user_speech:
-            if asyncio.iscoroutinefunction(self._on_user_speech):
-                await self._on_user_speech(text)
-            else:
-                self._on_user_speech(text)
-        
-        # 如果启用了自动回复，开始对话
-        if self.config.auto_speak:
-            # 打断当前回复
-            if self.config.interrupt_enabled:
-                await self.interrupt()
-            
-            # 开始新的回复
-            self._current_response_task = asyncio.create_task(
-                self._handle_voice_response(text)
-            )
-    
-    async def _handle_voice_response(self, user_text: str):
-        """
-        处理语音回复
-        
+        流式对话，yield 文本片段。
+
+        直接调用 LLM API，维护独立对话历史。
+
         Args:
             user_text: 用户输入文本
-        """
-        try:
-            async for chunk in self.chat_with_voice(user_text):
-                if chunk["type"] == "text":
-                    # 可以在这里发送到前端
-                    pass
-                elif chunk["type"] == "audio":
-                    # 调用Agent语音回调
-                    if self._on_agent_speech:
-                        if asyncio.iscoroutinefunction(self._on_agent_speech):
-                            await self._on_agent_speech(chunk["data"])
-                        else:
-                            self._on_agent_speech(chunk["data"])
-        except asyncio.CancelledError:
-            logger.debug("Voice response cancelled")
-        except Exception as e:
-            logger.error(f"Error in voice response: {e}")
-    
-    async def _on_tts_audio(self, audio_data: bytes):
-        """
-        TTS生成音频的回调
-        
-        Args:
-            audio_data: 音频数据
-        """
-        # 可以在这里处理音频输出
-        pass
-    
-    async def _on_voice_state_change(self, state: PipelineState):
-        """
-        语音状态变化的回调
-        
-        Args:
-            state: 新的状态
-        """
-        logger.debug(f"Voice pipeline state: {state.name}")
-        
-        # 可以在这里更新UI状态
-        await emit(EventType.VOICE_STATE_CHANGE, {"state": state.name})
-    
-    # ========== 记忆钩子 ==========
-    
-    async def _before_chat_hook(self, user_input: str, context: AgentContext):
-        """对话前的钩子 - 加载记忆上下文"""
-        if not self.memory:
-            return
-        
-        # 获取相关记忆作为上下文
-        memory_context = await self.memory.get_context_for_model(
-            max_short_term=self.config.max_context_messages,
-            max_long_term=3,
-            query=user_input
-        )
-        
-        # 将记忆添加到Agent的系统提示词中
-        if memory_context:
-            memory_text = "\n".join([
-                f"{msg['role']}: {msg['content']}"
-                for msg in memory_context
-            ])
-            
-            # 更新系统提示词
-            original_prompt = self.agent.system_prompt
-            enhanced_prompt = f"""{original_prompt}
+            session_id: 会话 ID
 
-相关记忆：
-{memory_text}
-"""
-            self.agent.system_prompt = enhanced_prompt
-    
-    async def _after_chat_hook(self, user_input: str, context: AgentContext):
-        """对话后的钩子 - 恢复系统提示词"""
-        # 恢复原始系统提示词（在before_chat中可能被修改）
-        # 这里可以添加记忆更新逻辑
-        pass
-    
-    # ========== 虚拟形象控制 ==========
-    
-    async def _trigger_avatar_expression(self, emotion: str):
+        Yields:
+            文本片段字符串
         """
-        触发虚拟形象表情
-        
-        Args:
-            emotion: 表情名称
-        """
-        emotion_to_expression = {
-            "joy": "happy",
-            "sadness": "sad",
-            "anger": "angry",
-            "surprise": "surprised",
-            "fear": "scared",
-            "neutral": "normal",
-        }
-        
-        expression = emotion_to_expression.get(emotion, "normal")
-        
-        await emit(EventType.AVATAR_EXPRESSION, {"expression": expression})
-        
-        if self._on_avatar_expression:
-            if asyncio.iscoroutinefunction(self._on_avatar_expression):
-                await self._on_avatar_expression(expression)
+        if not self._api_key:
+            logger.error("VoiceAgent: api_key 未设置")
+            yield "抱歉，语音服务未配置 API Key。"
+            return
+
+        # 获取/创建 session 历史
+        messages = self._get_messages(session_id)
+
+        # 添加用户消息
+        messages.append({"role": "user", "content": user_text})
+
+        # 截断历史
+        self._trim_history(session_id)
+
+        try:
+            # 流式调用 LLM
+            response = await self._client.chat.completions.create(
+                model=self._model_name,
+                messages=messages,
+                stream=True,
+                temperature=0.8,  # 稍高温度，让回复更自然多样
+                max_tokens=300,   # 限制回复长度，保持简短
+            )
+
+            full_response = ""
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text = chunk.choices[0].delta.content
+                    full_response += text
+                    yield text
+
+            # 将助手回复添加到历史
+            if full_response:
+                messages.append({"role": "assistant", "content": full_response})
             else:
-                self._on_avatar_expression(expression)
-    
-    async def set_avatar_expression(self, expression: str):
+                # 如果 LLM 返回空，移除刚添加的用户消息
+                messages.pop()
+                logger.warning(f"VoiceAgent: session {session_id} LLM 返回空响应")
+
+        except Exception as e:
+            logger.error(f"VoiceAgent: LLM 调用失败: {e}")
+            # 移除刚添加的用户消息（避免历史中有问无答）
+            if messages and messages[-1].get("role") == "user":
+                messages.pop()
+            yield "抱歉，处理时出现错误，请稍后再试。"
+
+    async def _post_correct_asr(self, text: str, session_id: str) -> str:
         """
-        设置虚拟形象表情
-        
-        Args:
-            expression: 表情名称
+        ASR 后纠正：结合对话历史消除同音异义错误。
+        超时 2s 时跳过，返回原文。
         """
-        await self._trigger_avatar_expression(expression)
-    
-    async def set_avatar_motion(self, motion: str):
+        if not text or len(text) < 2:
+            return text
+
+        # 获取最近 3 轮对话历史
+        messages = self._sessions.get(session_id, [])
+        # 过滤出非系统消息，取最后 6 条（3 轮）
+        history_msgs = [m for m in messages if m.get("role") != "system"][-6:]
+        if not history_msgs:
+            return text  # 无历史不需要纠正
+
+        # 构造历史摘要
+        history_text = ""
+        for m in history_msgs:
+            role = "用户" if m["role"] == "user" else "AI"
+            history_text += f"{role}: {m['content']}\n"
+
+        try:
+            import asyncio
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._model_name,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "根据对话历史，纠正语音识别结果中的同音异义错误。只输出纠正后的文本，不要解释，不要加引号。"
+                        },
+                        {
+                            "role": "user",
+                            "content": f"对话历史:\n{history_text}\n识别结果: {text}\n纠正后:"
+                        }
+                    ],
+                    max_tokens=100,
+                    temperature=0.1,
+                    stream=False,
+                ),
+                timeout=2.0,
+            )
+            corrected = response.choices[0].message.content.strip()
+            if corrected and corrected != text:
+                logger.info(f"VoiceAgent: ASR后纠正 '{text}' -> '{corrected}'")
+                return corrected
+            return text
+        except asyncio.TimeoutError:
+            logger.warning(f"VoiceAgent: ASR后纠正超时，使用原文")
+            return text
+        except Exception as e:
+            logger.warning(f"VoiceAgent: ASR后纠正失败: {e}")
+            return text
+
+    # 编程任务关键词
+    _CODING_KEYWORDS = [
+        "修", "fix", "bug", "写代码", "code", "创建文件", "create file",
+        "运行", "run", "测试", "test", "重构", "refactor", "部署", "deploy",
+        "错误", "error", "实现", "implement", "添加功能", "删除", "优化",
+        "新建项目", "安装依赖", "编译", "build", "调试", "debug",
+    ]
+
+    def _detect_coding_intent(self, text: str) -> bool:
+        """检测是否是编程任务意图"""
+        text_lower = text.lower()
+        for keyword in self._CODING_KEYWORDS:
+            if keyword.lower() in text_lower:
+                return True
+        return False
+
+    def set_agent_bridge(self, agent_bridge):
+        """注入 agent_bridge（仅用于委派 Coding Agent）"""
+        self._agent_bridge = agent_bridge
+
+    async def delegate_to_coding_agent(
+        self,
+        text: str,
+        session_id: str = "default",
+    ) -> AsyncIterator[str]:
         """
-        设置虚拟形象动作
+        委派任务给 Coding Agent。
         
-        Args:
-            motion: 动作名称
+        yield 文本片段或进度标记：
+        - 普通文本：LLM 生成的回答
+        - "[PROGRESS]xxx"：进度播报文本
         """
-        await emit(EventType.AVATAR_MOTION, {"motion": motion})
-    
-    # ========== 生命周期 ==========
-    
-    async def close(self):
-        """关闭语音Agent"""
-        logger.info("Closing VoiceAgent...")
+        if not hasattr(self, '_agent_bridge') or self._agent_bridge is None:
+            yield "抱歉，Coding Agent 未连接，无法处理编程任务。"
+            return
+
+        try:
+            # 调用 agent_bridge.run_turn_stream
+            async for event in self._agent_bridge.run_turn_stream(text, session_id):
+                event_type = event.get("type", "")
+                
+                if event_type == "text_delta":
+                    content = event.get("content", "")
+                    if content:
+                        yield content
+                
+                elif event_type == "tool_call_started":
+                    tool_name = event.get("tool_name", "")
+                    args = event.get("args", {})
+                    
+                    # 生成进度文本
+                    if any(kw in tool_name.lower() for kw in ["write", "edit", "file", "create"]):
+                        filename = args.get("path", args.get("file_path", args.get("filename", "")))
+                        if filename:
+                            # 只取文件名部分
+                            filename = filename.split("/")[-1].split("\\")[-1]
+                            yield f"[PROGRESS]我正在修改{filename}"
+                        else:
+                            yield "[PROGRESS]我正在修改文件"
+                    elif any(kw in tool_name.lower() for kw in ["run", "exec", "bash", "command", "terminal"]):
+                        yield "[PROGRESS]我正在执行命令"
+                    elif any(kw in tool_name.lower() for kw in ["search", "grep", "find", "glob"]):
+                        yield "[PROGRESS]我正在搜索"
+                
+                elif event_type == "turn_completed":
+                    yield "[PROGRESS]完成了"
+                
+                elif event_type == "turn_failed":
+                    error = event.get("error", "未知错误")
+                    yield f"[PROGRESS]处理时出了点问题"
+                
+                elif event_type == "cancelled":
+                    yield "[PROGRESS]任务已取消"
+                    break
+
+        except Exception as e:
+            logger.error(f"VoiceAgent: 委派失败: {e}")
+            yield f"[PROGRESS]处理时出了点问题"
+
+    def _compress_history(self, messages: List[dict]) -> List[dict]:
+        """
+        Token 级压缩对话历史（P2 功能，当前仅设计）。
         
-        # 停止监听
-        await self.stop_listening()
+        使用 LLMLingua-2 将历史消息压缩至 40%。
+        只压缩历史消息，不压缩系统提示。
+        当对话 < 5 轮时不压缩。
+        """
+        # 分离系统提示和历史消息
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        history_msgs = [m for m in messages if m.get("role") != "system"]
         
-        # 关闭语音管道
-        if self.voice_pipeline:
-            await self.voice_pipeline.stop()
+        # 不足 5 轮（10 条消息）不压缩
+        if len(history_msgs) < 10:
+            return messages
         
-        # 关闭记忆系统
-        if self.memory:
-            await self.memory.close()
-        
-        self._initialized = False
-        logger.info("VoiceAgent closed")
-    
-    @property
-    def is_listening(self) -> bool:
-        """是否正在监听"""
-        return self._listening
-    
-    @property
-    def is_speaking(self) -> bool:
-        """是否正在说话"""
-        return (
-            self.voice_pipeline is not None and
-            self.voice_pipeline.is_speaking
-        )
-    
-    @property
-    def state(self) -> AgentState:
-        """Agent状态"""
-        return self.agent.state
+        try:
+            # TODO: 实现 LLMLingua-2 压缩
+            # from llmlingua import PromptCompressor
+            # compressor = PromptCompressor()
+            # compressed = compressor.compress_prompt(...)
+            logger.debug("VoiceAgent: token压缩未启用，返回原始消息")
+            return messages
+        except Exception as e:
+            logger.warning(f"VoiceAgent: 压缩失败，使用原始消息: {e}")
+            return messages

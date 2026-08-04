@@ -44,7 +44,7 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div
       className={cn(
-        'group flex gap-3 px-5 py-4 animate-fade-in',
+        'group flex gap-3 px-5 py-3 animate-fade-in',
         isUser && 'flex-row-reverse',
       )}
     >
@@ -61,7 +61,7 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
 
       {/* Message body */}
-      <div className={cn('flex min-w-0 max-w-[85%] flex-col gap-1', isUser && 'items-end')}>
+      <div className={cn('flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
         {/* Reasoning + tool calls — unified log-style stack (hidden in inline mode) */}
         {!hideToolCalls &&
           (message.tool_calls.length > 0 ||
@@ -77,10 +77,10 @@ export const MessageBubble = memo(function MessageBubble({
         {message.content && (
           <div
             className={cn(
-              'selectable rounded-[1.25rem] px-4 py-2.5 backdrop-blur-xl',
+              'selectable rounded-2xl px-4 py-2.5',
               isUser
-                ? 'border border-primary/30 bg-primary/85 text-primary-foreground shadow-sm'
-                : 'border border-border/70 bg-card/80 text-card-foreground shadow-sm',
+                ? 'border border-primary/35 bg-primary text-primary-foreground shadow-sm'
+                : 'border border-border/80 bg-card/95 text-card-foreground shadow-none',
               message.streaming && 'ring-1 ring-primary/20',
             )}
             style={{ fontSize: `${fontSize}px` }}
@@ -106,7 +106,7 @@ export const MessageBubble = memo(function MessageBubble({
 
         {/* Task progress / TODO list from agent execution */}
         {isAssistant && message.task_progress && (
-          <div className="w-full rounded-[1.5rem] border border-primary/30 bg-primary/10 px-6 py-5 backdrop-blur-xl">
+          <div className="w-full rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4">
             <div className="mb-4 flex items-center gap-3 text-base font-semibold text-primary">
               <ListTodo className="h-5 w-5" />
               <span>执行计划</span>
@@ -160,7 +160,7 @@ export const MessageBubble = memo(function MessageBubble({
 
         {/* Error */}
         {message.error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
             {message.error}
           </div>
         )}
@@ -239,13 +239,13 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
 
   if (question.answered) {
     return (
-      <div className="w-full overflow-hidden rounded-[1.25rem] border border-primary/30 bg-primary/10 px-5 py-4 backdrop-blur-xl">
+      <div className="w-full overflow-hidden rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
           <HelpCircle className="h-4 w-4" />
           <span>羽汐想问</span>
         </div>
         <div className="mb-4 text-sm text-foreground">{question.question}</div>
-        <div className="flex items-center gap-2 rounded-xl bg-background/60 px-3 py-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 rounded-xl bg-background/80 px-3 py-2 text-sm text-muted-foreground">
           <Check className="h-4 w-4 text-emerald-500" />
           <span>
             已选择：<span className="font-medium text-foreground">{question.selected || '跳过'}</span>
@@ -256,7 +256,7 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
   }
 
   return (
-    <div className="w-full overflow-hidden rounded-[1.25rem] border border-primary/30 bg-primary/10 px-5 py-4 backdrop-blur-xl">
+    <div className="w-full overflow-hidden rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
         <HelpCircle className="h-4 w-4" />
         <span>羽汐想问</span>
@@ -274,7 +274,7 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
                 'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
                 isSelected
                   ? 'border-primary/50 bg-primary/20 text-foreground'
-                  : 'border-border/40 bg-background/40 text-foreground/90 hover:bg-accent/40',
+                  : 'border-border/60 bg-background/80 text-foreground/90 hover:bg-accent/45',
               )}
             >
               <span
@@ -307,7 +307,7 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
           </Button>
           <Button
             size="sm"
-            className="h-8 rounded-lg bg-primary px-4 text-xs text-primary-foreground hover:bg-primary/90"
+            className="h-8 rounded-xl bg-primary px-4 text-xs text-primary-foreground hover:bg-primary/90"
             onClick={handleConfirm}
             disabled={!selected || isSubmitting}
           >
