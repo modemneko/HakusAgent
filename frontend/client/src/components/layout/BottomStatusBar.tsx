@@ -30,7 +30,7 @@ export function BottomStatusBar() {
   }
 
   return (
-    <footer className="hk-statusbar app-region-drag">
+    <footer className="statusbar app-region-drag">
       <div className="app-region-no-drag flex min-w-0 items-center gap-3">
         <span className="inline-flex items-center gap-1">
           <GitBranch className="h-3 w-3 text-primary/80" />

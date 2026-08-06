@@ -181,7 +181,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
           : '未连接'
 
   return (
-    <header className="hk-titlebar flex overflow-hidden">
+    <header className="titlebar flex overflow-hidden">
       <div className={cn('app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -199,7 +199,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
           <TooltipContent>切换侧栏</TooltipContent>
         </Tooltip>
 
-        <div className="hk-segment">
+        <div className="segment">
           {RUN_MODES.map((mode) => {
             const Icon = mode.icon
             const active = runMode === mode.id
@@ -207,7 +207,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               <Tooltip key={mode.id}>
                 <TooltipTrigger asChild>
                   <button
-                    className={cn('hk-segment-btn', active && 'hk-segment-btn-active')}
+                    className={cn('segment-btn', active && 'segment-btn-active')}
                     onClick={() => setRunMode(mode.id)}
                     aria-label={`运行环境：${mode.label}`}
                     title={`运行环境：${mode.label}`}

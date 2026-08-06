@@ -763,7 +763,7 @@ export function Composer({
           className={cn(
             'relative flex flex-col gap-1.5 rounded-[22px] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
             'focus-within:border-primary/45 focus-within:ring-1 focus-within:ring-primary/20',
-            conversationState !== 'idle' && 'hk-voice-composer-active',
+            conversationState !== 'idle' && 'voice-composer-active',
             !hasExpandedContent && 'p-2',
             dragOver && 'border-primary/50 bg-accent/20 ring-1 ring-primary/25',
           )}
@@ -956,13 +956,13 @@ export function Composer({
           />
 
           <div
-            className={cn('hk-voice-waveform', conversationState !== 'idle' && 'hk-voice-waveform-active')}
+            className={cn('voice-waveform', conversationState !== 'idle' && 'voice-waveform-active')}
             style={{ '--wave-level': Math.max(0.12, Math.min(1, voiceAudioLevel)) } as CSSProperties}
             aria-hidden="true"
           >
             <svg viewBox="0 0 640 24" preserveAspectRatio="none" focusable="false">
               <defs>
-                <linearGradient id="hk-wave-gradient" x1="0" x2="1">
+                <linearGradient id="wave-gradient" x1="0" x2="1">
                   <stop offset="0" stopColor="#a78bfa" stopOpacity="0" />
                   <stop offset=".2" stopColor="#a78bfa" />
                   <stop offset=".55" stopColor="#60a5fa" />
@@ -970,8 +970,8 @@ export function Composer({
                   <stop offset="1" stopColor="#60a5fa" stopOpacity="0" />
                 </linearGradient>
               </defs>
-              <path className="hk-voice-waveform-path hk-voice-waveform-path-back" d="M0 12 C40 12 48 12 72 12 S105 12 120 12 S150 12 168 12 S200 12 224 12 S256 12 280 12 S320 12 344 12 S376 12 400 12 S432 12 456 12 S488 12 512 12 S544 12 568 12 S608 12 640 12" />
-              <path className="hk-voice-waveform-path" d="M0 12 C24 12 28 6 48 6 S72 18 96 18 S120 4 144 4 S168 20 192 20 S216 7 240 7 S264 17 288 17 S312 3 336 3 S360 21 384 21 S408 8 432 8 S456 16 480 16 S504 5 528 5 S552 19 576 19 S600 10 640 12" />
+              <path className="voice-waveform-path voice-waveform-path-back" d="M0 12 C40 12 48 12 72 12 S105 12 120 12 S150 12 168 12 S200 12 224 12 S256 12 280 12 S320 12 344 12 S376 12 400 12 S432 12 456 12 S488 12 512 12 S544 12 568 12 S608 12 640 12" />
+              <path className="voice-waveform-path" d="M0 12 C24 12 28 6 48 6 S72 18 96 18 S120 4 144 4 S168 20 192 20 S216 7 240 7 S264 17 288 17 S312 3 336 3 S360 21 384 21 S408 8 432 8 S456 16 480 16 S504 5 528 5 S552 19 576 19 S600 10 640 12" />
             </svg>
           </div>
 

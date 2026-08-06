@@ -198,15 +198,15 @@ export function DiffReview() {
           <span className="truncate font-medium">{status.branch || 'detached'}</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="hk-segment">
+          <div className="segment">
             <button
-              className={cn('hk-segment-btn', scope === 'unstaged' && 'hk-segment-btn-active')}
+              className={cn('segment-btn', scope === 'unstaged' && 'segment-btn-active')}
               onClick={() => setScope('unstaged')}
             >
               未暂存
             </button>
             <button
-              className={cn('hk-segment-btn', scope === 'staged' && 'hk-segment-btn-active')}
+              className={cn('segment-btn', scope === 'staged' && 'segment-btn-active')}
               onClick={() => setScope('staged')}
             >
               已暂存
@@ -288,8 +288,8 @@ export function DiffReview() {
                     <div className="overflow-x-auto border-t border-border/30 bg-background/40 py-1">
                       {fd.hunks.map((h, hi) => (
                         <div key={hi} className="mb-2">
-                          <div className="hk-diff-line hk-diff-line-meta">
-                            <span className="hk-diff-line-no" />
+                          <div className="diff-line diff-line-meta">
+                            <span className="diff-line-no" />
                             <span className="text-amber-600 dark:text-amber-400/80">
                               {h.lines[0]?.content}
                             </span>
@@ -298,14 +298,14 @@ export function DiffReview() {
                             <div
                               key={li}
                               className={cn(
-                                'hk-diff-line',
-                                ln.type === 'add' && 'hk-diff-line-add',
-                                ln.type === 'del' && 'hk-diff-line-del',
-                                ln.type === 'context' && 'hk-diff-line-context',
-                                ln.type === 'meta' && 'hk-diff-line-meta',
+                                'diff-line',
+                                ln.type === 'add' && 'diff-line-add',
+                                ln.type === 'del' && 'diff-line-del',
+                                ln.type === 'context' && 'diff-line-context',
+                                ln.type === 'meta' && 'diff-line-meta',
                               )}
                             >
-                              <span className="hk-diff-line-no">
+                              <span className="diff-line-no">
                                 {ln.type === 'add' ? ln.newNo : ln.type === 'del' ? ln.oldNo : ''}
                               </span>
                               <span className="w-3 shrink-0 select-none text-center text-muted-foreground/50">

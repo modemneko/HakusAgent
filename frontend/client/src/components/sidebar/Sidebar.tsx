@@ -151,7 +151,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="hk-sidebar flex h-full w-[var(--sidebar-width)] shrink-0 flex-col">
+    <aside className="sidebar flex h-full w-[var(--sidebar-width)] shrink-0 flex-col">
       {/* Brand + new chat (Codex 风格品牌区) */}
       <div className="flex items-center justify-between gap-2 px-4 py-3">
         <div className="flex items-center gap-2">

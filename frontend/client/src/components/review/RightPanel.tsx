@@ -17,7 +17,7 @@ export function RightPanel() {
   const setTab = useAppStore((s) => s.setRightPanelTab)
 
   return (
-    <aside className="hk-right-panel flex h-full w-[var(--right-panel-width)] shrink-0 flex-col">
+    <aside className="right-panel flex h-full w-[var(--right-panel-width)] shrink-0 flex-col">
       {/* Codex Tab bar — 底部边框激活态 */}
       <div className="flex shrink-0 items-center gap-0 border-b border-border/60 px-2">
         {TABS.map((t) => {
