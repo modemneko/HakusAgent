@@ -614,6 +614,8 @@ class AgentCore:
         self._snapshot_interval = 5  # Save snapshot every 5 iterations
         
         self._init_model()
+        # P1 Enhancement integration (CodexMemories, GuardianAI, RolloutRecorder, etc.)
+        self._p1: Optional[Any] = None  # type: P1Enhancements | None
         logger.info(f"AgentCore initialized (model: {self._model_type}, "
                      f"permission: {permission_mode.value}, session: {self._session_id}, "
                      f"tools: {self._tool_registry.list_tools()})")
@@ -632,6 +634,56 @@ class AgentCore:
         except Exception as e:
             logger.error(f"Failed to init LLM client: {e}")
             raise RuntimeError("All LLM client initializations failed") from e
+
+    def enable_p1_enhancements(
+        self,
+        *,
+        enable_memories: bool = True,
+        enable_guardian: bool = True,
+        enable_rollout: bool = True,
+        enable_worldstate: bool = True,
+        enable_compression: bool = True,
+        enable_sandbox: bool = True,
+        enable_agents_md: bool = True,
+        guardian_model_client: Any = None,
+        sandbox_config: Any = None,
+    ) -> "P1Enhancements":
+        """Enable P1 enhancements (CodexMemories, Guardian, Rollout, WorldState, etc.).
+        
+        Returns the P1Enhancements instance for further configuration.
+        """
+        from .p1_integration import P1Enhancements
+        self._p1 = P1Enhancements(
+            agent_core=self,
+            working_dir=self._context._working_dir or os.getcwd(),
+            session_id=self._session_id,
+            enable_memories=enable_memories,
+            enable_guardian=enable_guardian,
+            enable_rollout=enable_rollout,
+            enable_worldstate=enable_worldstate,
+            enable_compression=enable_compression,
+            enable_sandbox=enable_sandbox,
+            enable_agents_md=enable_agents_md,
+            guardian_model_client=guardian_model_client,
+            sandbox_config=sandbox_config,
+        )
+        self._p1.initialize()
+        return self._p1
+
+    @property
+    def p1(self) -> Any:
+        """Access P1 enhancements (None if not enabled)."""
+        return self._p1
+
+    def shutdown_p1(self) -> None:
+        """Shutdown P1 enhancements (Rollout, Guardian, etc.) if enabled."""
+        if self._p1:
+            try:
+                self._p1.shutdown()
+            except Exception as e:
+                logger.debug(f"P1 shutdown failed: {e}")
+            finally:
+                self._p1 = None
 
     def _get_oa_client(self):
         """获取底层 OpenAI 兼容客户端.
@@ -2139,6 +2191,10 @@ class AgentCore:
         # Always emit TurnStarted at the entry
         yield TurnStarted(turn_id=turn_id, model=str(model_name))
 
+        # ── P1: Turn start hook (Rollout, WorldState, etc.) ──
+        if self._p1:
+            self._p1.hook_turn_start(user_message=user_input)
+
         accumulated_text = ""  # For partial_content on cancel
         all_tool_results: List[ToolCallResult] = []
         turn_failed = False
@@ -2269,9 +2325,42 @@ class AgentCore:
                 return
 
             # 3) Compress + build messages
-            compression = await self._context.compress(self._model)
-            compressed_flag = compression != CompressionLevel.NONE
-            messages = self._build_messages()
+            # ── P1: Pre-turn compression hook ──
+            if self._p1:
+                try:
+                    raw_messages = self._build_messages()
+                    budget = self._context.budget
+                    compressed_msgs, comp_metrics = await self._p1.hook_pre_compress(
+                        raw_messages, budget,
+                    )
+                    if comp_metrics and comp_metrics.after_tokens < comp_metrics.before_tokens:
+                        messages = compressed_msgs
+                        compressed_flag = True
+                    else:
+                        compression = await self._context.compress(self._model)
+                        compressed_flag = compression != CompressionLevel.NONE
+                        messages = self._build_messages()
+                except Exception as e:
+                    logger.warning(f"P1 pre_compress hook failed, falling back: {e}")
+                    compression = await self._context.compress(self._model)
+                    compressed_flag = compression != CompressionLevel.NONE
+                    messages = self._build_messages()
+            else:
+                compression = await self._context.compress(self._model)
+                compressed_flag = compression != CompressionLevel.NONE
+                messages = self._build_messages()
+
+            # ── P1: WorldState build_messages hook ──
+            if self._p1:
+                try:
+                    ws_messages, ws_cache_info = self._p1.hook_build_messages([])
+                    if ws_cache_info and ws_cache_info.cache_hit_rate > 0:
+                        logger.debug(
+                            f"P1 WorldState cache: {ws_cache_info.cache_hit_rate:.1%} "
+                            f"({ws_cache_info.cached_tokens}/{ws_cache_info.total_tokens} tokens)"
+                        )
+                except Exception as e:
+                    logger.debug(f"P1 WorldState hook skipped: {e}")
 
             # ── Debug: log messages to API ──
             _dbg = _get_dbg()
@@ -2415,6 +2504,25 @@ class AgentCore:
             )
         finally:
             self._running = False
+            # ── P1: Turn end hook ──
+            if self._p1:
+                try:
+                    if turn_failed:
+                        self._p1.hook_turn_failed(
+                            error=turn_failed_msg, code=turn_failed_code,
+                        )
+                    else:
+                        elapsed_ms = int(elapsed * 1000) if 'elapsed' in dir() else 0
+                        self._p1.hook_turn_end(
+                            response=accumulated_text[:500] if accumulated_text else "",
+                            input_tokens=input_tokens_total,
+                            output_tokens=output_tokens_total,
+                            tool_calls_count=len(all_tool_results),
+                            duration_ms=elapsed_ms,
+                            compressed=compressed_flag,
+                        )
+                except Exception as e:
+                    logger.debug(f"P1 turn_end hook failed: {e}")
             # Schedule stop hooks asynchronously to avoid GeneratorExit issues
             # when the async generator is closed prematurely by TUI
             try:
