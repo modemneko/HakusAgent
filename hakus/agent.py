@@ -1673,6 +1673,12 @@ class AgentCore:
                     )
                 except Exception:
                     pass
+            # HarnessGuard: record tool call for loop detection
+            if self._harness_guard:
+                try:
+                    self._harness_guard.record_tool_call(lookup_name, arguments)
+                except Exception:
+                    pass
             return ToolCallResult(lookup_name, arguments, result_str, tr.success, time.time() - start)
         except Exception as e:
             logger.error(f"Tool execution error [{lookup_name}]: {e}")
@@ -1685,6 +1691,12 @@ class AgentCore:
                         success=False,
                         duration_ms=(time.time() - start) * 1000,
                     )
+                except Exception:
+                    pass
+            # HarnessGuard: record failed tool call too
+            if self._harness_guard:
+                try:
+                    self._harness_guard.record_tool_call(lookup_name, arguments)
                 except Exception:
                     pass
             return ToolCallResult(lookup_name, arguments, f"Error: {e}", False, time.time() - start)
@@ -3200,6 +3212,12 @@ class AgentCore:
                     is_loop, loop_tool = self._doom_loop_detector.is_loop_detected()
                     if is_loop:
                         logger.warning(f"Doom loop detected: same call to '{loop_tool}' repeated")
+                        # P5: record doom loop detection in Prometheus metrics
+                        try:
+                            from hakus.observability import metrics_registry
+                            metrics_registry.doomloop_detected_total.inc()
+                        except Exception:
+                            pass
                         _dbg = _get_dbg()
                         if _dbg:
                             _dbg.log_raw(f"\n  [DOOM LOOP] Detected repeated call to '{loop_tool}', injecting break prompt\n")
@@ -3630,6 +3648,29 @@ class AgentCore:
                 if non_ask_user_calls:
                     results = await self._execute_tool_batch(non_ask_user_calls)
                 all_tool_results.extend(results)
+
+                # Doom Loop detection (mirrors streaming path at ~line 3189)
+                for tc_in, result in zip(non_ask_user_calls, results):
+                    tool_name_dl = tc_in.get("function", {}).get("name", "")
+                    tool_args_dl = self._safe_parse_args(
+                        tc_in.get("function", {}).get("arguments", ""),
+                    )
+                    self._doom_loop_detector.record(tool_name_dl, tool_args_dl)
+                    is_loop, loop_tool = self._doom_loop_detector.is_loop_detected()
+                    if is_loop:
+                        logger.warning(
+                            f"Doom loop detected (non-streaming): "
+                            f"same call to '{loop_tool}' repeated"
+                        )
+                        # P5: record doom loop detection in Prometheus metrics
+                        try:
+                            from hakus.observability import metrics_registry
+                            metrics_registry.doomloop_detected_total.inc()
+                        except Exception:
+                            pass
+                        self._context.add_user_message(DOOM_LOOP_PROMPT)
+                        self._doom_loop_detector.reset()
+                        break
 
                 for tc_in, result in zip(non_ask_user_calls, results):
                     yield ToolCallFinished(
