@@ -23,6 +23,9 @@ api_keys:
   # OpenCode Zen API
   opencode_api_key: ${OPENCODE_API_KEY:***REMOVED***}
 
+  # Guardian API (默认使用 OpenCode)
+  guardian_api_key: ${GUARDIAN_API_KEY:${OPENCODE_API_KEY:***REMOVED***}}
+
 # ==================== 模型配置 ====================
 models:
   # 默认使用的模型类型: gemini, qwen, deepseek, glm, mimo, opencode, 或自定义 provider 名
@@ -60,8 +63,13 @@ models:
   
   # OpenCode Zen 模型设置 (免费模型)
   opencode:
-    model_name: ${OPENCODE_MODEL_NAME:deepseek-v4-flash-free}
+    model_name: ${OPENCODE_MODEL_NAME:mimo-v2.5-free}
     base_url: ${OPENCODE_BASE_URL:https://opencode.ai/zen/v1}
+
+  # Guardian 审批模型设置 (独立轻量模型，默认使用 OpenCode mimo-v2.5-free)
+  guardian:
+    model_name: ${GUARDIAN_MODEL_NAME:mimo-v2.5-free}
+    base_url: ${GUARDIAN_BASE_URL:https://opencode.ai/zen/v1}
 
 # ==================== 自定义模型 Provider ====================
 # 添加任意 OpenAI 兼容的 API 端点，在 models.default_model 中填入 key 即可使用

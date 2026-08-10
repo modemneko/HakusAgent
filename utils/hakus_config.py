@@ -98,7 +98,12 @@ class ModelsConfig:
     ))
     opencode: ProviderConfig = field(default_factory=lambda: ProviderConfig(
         provider="opencode",
-        model_name="deepseek-v4-flash-free",
+        model_name="mimo-v2.5-free",
+        base_url="https://opencode.ai/zen/v1",
+    ))
+    guardian: ProviderConfig = field(default_factory=lambda: ProviderConfig(
+        provider="opencode",
+        model_name="mimo-v2.5-free",
         base_url="https://opencode.ai/zen/v1",
     ))
 
@@ -233,7 +238,8 @@ def _build_config(raw: Dict[str, Any]) -> HakusConfig:
         "glm": {"base_url": "https://open.bigmodel.cn/api/paas/v4/"},
         "mimo": {"base_url": "https://api.xiaomimimo.com/v1"},
         "ollama": {"base_url": "http://localhost:11434/v1", "api_key": "ollama"},
-        "opencode": {"base_url": "https://opencode.ai/zen/v1"},
+        "opencode": {"base_url": "https://opencode.ai/zen/v1", "model_name": "mimo-v2.5-free"},
+        "guardian": {"base_url": "https://opencode.ai/zen/v1", "model_name": "mimo-v2.5-free"},
     }
     _api_key_map = {
         "deepseek": api_keys.get("deepseek_api_key", ""),
@@ -244,7 +250,8 @@ def _build_config(raw: Dict[str, Any]) -> HakusConfig:
         "glm": api_keys.get("glm_api_key", ""),
         "mimo": api_keys.get("mimo_api_key", ""),
         "ollama": "ollama",
-        "opencode": api_keys.get("opencode_api_key", ""),
+        "opencode": api_keys.get("opencode_api_key", os.getenv("OPENCODE_API_KEY", "")),
+        "guardian": api_keys.get("guardian_api_key", os.getenv("GUARDIAN_API_KEY", os.getenv("OPENCODE_API_KEY", ""))),
     }
 
     for name, defaults in _provider_defaults.items():

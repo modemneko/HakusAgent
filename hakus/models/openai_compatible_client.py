@@ -75,6 +75,41 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         return self._parse_response(response)
 
+    async def generate_response_no_tools(
+        self,
+        system_prompt: str,
+        messages: List[Dict[str, Any]],
+        max_tokens: int = 4096,
+    ) -> str:
+        """Call the model without tools. Returns content string only.
+
+        This is the interface used by GuardianAI for LLM-level approval.
+        The Guardian needs a simple text-in/text-out call without
+        function calling or streaming.
+        """
+        oa_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            oa_messages.append({"role": "system", "content": system_prompt})
+        for msg in messages:
+            oa_messages.append({
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", ""),
+            })
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model_name,
+                messages=oa_messages,
+                max_tokens=max_tokens,
+                temperature=0.2,  # Low temperature for consistent Guardian decisions
+            )
+            if response.choices and response.choices[0].message.content:
+                return response.choices[0].message.content
+            return ""
+        except Exception as e:
+            logger.error(f"generate_response_no_tools failed: {e}")
+            raise
+
     @staticmethod
     def _to_oa(msg: LLMMessage) -> Dict[str, Any]:
         """将 LLMMessage 转换为 OpenAI API 消息格式."""

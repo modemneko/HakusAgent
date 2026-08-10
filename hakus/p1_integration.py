@@ -115,11 +115,16 @@ class P1Enhancements:
         if self._enable_guardian:
             try:
                 from .guardian import GuardianAI
+                # Auto-create Guardian model client if not provided
+                guardian_model = self._guardian_model
+                if guardian_model is None:
+                    guardian_model = self._create_guardian_model_client()
                 self.guardian = GuardianAI(
-                    model_client=self._guardian_model,
-                    enabled=self._guardian_model is not None,
+                    model_client=guardian_model,
+                    enabled=guardian_model is not None,
+                    guardian_model=getattr(guardian_model, 'model_name', '') if guardian_model else '',
                 )
-                logger.info(f"GuardianAI initialized (model={'set' if self._guardian_model else 'none'})")
+                logger.info(f"GuardianAI initialized (model={'set: ' + getattr(guardian_model, 'model_name', '?') if guardian_model else 'none'})")
             except Exception as e:
                 logger.warning(f"GuardianAI init failed: {e}")
                 self.guardian = None
@@ -463,6 +468,52 @@ class P1Enhancements:
                 return (msg.get("content") or "")[:200]
         return ""
 
+    def _create_guardian_model_client(self) -> Any:
+        """Auto-create a Guardian model client from config (OpenCode mimo-v2.5-free).
+
+        This method creates an OpenCodeClient (which is OpenAI-compatible)
+        using the Guardian section of hakus_config. If no API key is found,
+        it returns None and Guardian will operate in fail-closed mode.
+        """
+        try:
+            from utils.hakus_config import get_config
+            from .models.base_client import LLMProvider, ModelConfig
+            from .models.opencode_client import OpenCodeClient
+
+            config = get_config()
+            # Try guardian-specific config first, then fall back to opencode
+            guardian_prov = config.models.get_provider("guardian")
+            opencode_prov = config.models.get_provider("opencode")
+            prov = guardian_prov or opencode_prov
+
+            api_key = prov.api_key if prov else ""
+            base_url = prov.base_url if prov else "https://opencode.ai/zen/v1"
+            model_name = prov.model_name if prov else "mimo-v2.5-free"
+
+            if not api_key:
+                # Try environment variables as last resort
+                api_key = os.getenv("GUARDIAN_API_KEY") or os.getenv("OPENCODE_API_KEY", "")
+
+            if not api_key:
+                logger.warning("No Guardian API key found — Guardian will be disabled (?fail-closed)")
+                return None
+
+            # Create an OpenCode client configured for Guardian
+            from .models.openai_compatible_client import OpenAICompatibleClient
+            client = OpenAICompatibleClient(ModelConfig(
+                provider=LLMProvider.OPENCODE,
+                api_key=api_key,
+                base_url=base_url,
+                model_name=model_name,
+            ))
+
+            logger.info(f"Guardian auto-client: {model_name} @ {base_url}")
+            return client
+
+        except Exception as e:
+            logger.warning(f"Failed to auto-create Guardian client: {e}")
+            return None
+
     def _get_estimate_tokens_fn(self) -> Any:
         """Get the token estimation function from context manager."""
         ctx = getattr(self._agent, "_context", None)
@@ -495,9 +546,14 @@ def create_enhanced_agent(
     model_type: Optional[str] = None,
     working_dir: Optional[str] = None,
     session_id: Optional[str] = None,
+    guardian_model_client: Any = None,
     **kwargs: Any,
 ) -> tuple:
     """Create an AgentCore with all P1 enhancements.
+
+    Args:
+        guardian_model_client: Optional pre-configured Guardian LLM client.
+            If None, auto-creates an OpenCodeClient with mimo-v2.5-free.
 
     Returns:
         (agent_core, p1_enhancements)
@@ -515,6 +571,7 @@ def create_enhanced_agent(
         agent_core=agent,
         working_dir=working_dir or os.getcwd(),
         session_id=session_id or getattr(agent, "_session_id", ""),
+        guardian_model_client=guardian_model_client,
     )
     p1.initialize()
 

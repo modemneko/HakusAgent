@@ -388,11 +388,26 @@ Rules:
     async def _call_model(self, prompt: str) -> str:
         """Call the Guardian's LLM."""
         if hasattr(self._model, "generate_response_no_tools"):
-            return await self._model.generate_response_no_tools(
+            response = await self._model.generate_response_no_tools(
                 system_prompt="You are a security evaluator. You evaluate tool invocations for safety risks. Be conservative: when in doubt, deny. Respond with JSON only.",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=256,
             )
+            # Some models (e.g., mimo) may return empty/None content
+            if response and response.strip():
+                return response
+            # Fallback: try chat() method
+            if hasattr(self._model, "chat"):
+                from .models.base_client import LLMMessage
+                msgs = [
+                    LLMMessage(role="system", content="You are a security evaluator. Respond with JSON only."),
+                    LLMMessage(role="user", content=prompt),
+                ]
+                llm_resp = await self._model.chat(msgs)
+                if llm_resp and llm_resp.content:
+                    return llm_resp.content
+            # If still empty, this will trigger parse failure → deny (fail-closed)
+            return response or ""
         raise RuntimeError("Guardian model has no generate_response_no_tools method")
 
     def _parse_response(self, response: str) -> GuardianDecision:
