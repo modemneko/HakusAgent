@@ -1,7 +1,6 @@
 //! Backend process management — spawns and manages the HakusAI Python server.
 //!
-//! Replaces the old "sidecar" concept. The Python FastAPI server is simply
-//! called "the backend" — no more sidecar naming anywhere.
+//! The Python FastAPI server is called "the backend".
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -72,12 +71,12 @@ pub async fn backend_start(
     }
 
     // Spawn the Python backend via tauri-plugin-shell
-    let sidecar_command = app
+    let backend_cmd = app
         .shell()
         .sidecar("hakusai-server")
-        .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
+        .map_err(|e| format!("Failed to create backend command: {e}"))?;
 
-    let (mut rx, child) = sidecar_command
+    let (mut rx, child) = backend_cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn backend: {e}"))?;
 

@@ -67,7 +67,7 @@ function App() {
     return () => { unlisten?.() }
   }, [])
 
-  // Refresh server info when connection state changes to connected
+  // Refresh server info when connection is ready
   useEffect(() => {
     if (connState === 'connected') {
       setHasConnected(true)
@@ -107,11 +107,11 @@ function App() {
               onOpenSettings={() => setSettingsOpen(true)}
             />
 
-            {connState === 'connected' || hasConnected || connState === 'error' ? (
+            {hasConnected || connState === 'connected' || connState === 'error' ? (
               <ChatView />
             ) : (
               <LoadingScreen
-                status="正在启动 HakusAI…"
+                status=""
               />
             )}
           </div>

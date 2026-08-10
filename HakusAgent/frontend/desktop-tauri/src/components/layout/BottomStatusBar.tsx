@@ -1,6 +1,5 @@
-import { GitBranch, Cpu, Wifi, Circle, Zap, Layers, Ship } from 'lucide-react'
+import { GitBranch, Cpu, Circle, Zap, Layers, Ship } from 'lucide-react'
 import { useAppStore, type AgentMode } from '@/store/app'
-import { useConnectionStore } from '@/store/connection'
 import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
 import { getAgentModeMeta } from '@/lib/agentModes'
@@ -16,8 +15,6 @@ export function BottomStatusBar() {
   const agentMode = useAppStore((s) => s.agentMode)
   const totalInput = useAppStore((s) => s.totalInputTokens)
   const totalOutput = useAppStore((s) => s.totalOutputTokens)
-  const connState = useConnectionStore((s) => s.state)
-  const connHealth = useConnectionStore((s) => s.health)
   const isStreaming = useSessionStore((s) => s.isStreaming)
 
   const modeLabel = { local: 'Local', worktree: 'Worktree', cloud: 'Cloud' }[runMode]
@@ -60,31 +57,6 @@ export function BottomStatusBar() {
             </span>
           </span>
         )}
-        {connHealth?.version && (
-          <span className="hidden text-muted-foreground/60 sm:inline tabular-nums">
-            v{connHealth.version}
-          </span>
-        )}
-        <span
-          className={cn(
-            'inline-flex items-center gap-1',
-            connState === 'connected' && 'text-emerald-500',
-            connState === 'connecting' && 'text-amber-500',
-            connState === 'error' && 'text-rose-500',
-            connState === 'disconnected' && 'text-muted-foreground',
-          )}
-        >
-          <Wifi className="h-3 w-3" />
-          <span>
-            {connState === 'connected'
-              ? '在线'
-              : connState === 'connecting'
-                ? '连接中'
-                : connState === 'error'
-                  ? '离线'
-                  : '未连接'}
-          </span>
-        </span>
       </div>
     </footer>
   )

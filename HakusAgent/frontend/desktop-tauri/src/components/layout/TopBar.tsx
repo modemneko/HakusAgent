@@ -6,7 +6,6 @@ import {
   Monitor,
   PanelLeft,
   PanelRight,
-  RefreshCw,
   Settings,
   Square,
   Trash2,
@@ -133,8 +132,6 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   const sessions = useSessionStore((s) => s.sessions)
   const clearMessages = useSessionStore((s) => s.clearMessages)
   const connState = useConnectionStore((s) => s.state)
-  const connHealth = useConnectionStore((s) => s.health)
-  const connCheck = useConnectionStore((s) => s.check)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
   const model = useAppStore((s) => s.model)
@@ -155,30 +152,10 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   const isMac = window.electron?.platform === 'darwin'
 
   useEffect(() => {
-    if (serverUrl) apiClient.setBaseUrl(serverUrl)
-    connCheck()
-    const id = setInterval(() => {
-      if (useConnectionStore.getState().state !== 'connecting') {
-        connCheck()
-      }
-    }, 30000)
-    return () => clearInterval(id)
-  }, [serverUrl]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
     if (connState === 'connected') {
       refreshServerInfo()
     }
   }, [connState]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const connectionLabel =
-    connState === 'connected'
-      ? '在线'
-      : connState === 'connecting'
-        ? '连接中'
-        : connState === 'error'
-          ? '离线'
-          : '未连接'
 
   return (
     <header className="titlebar flex overflow-hidden">
@@ -252,38 +229,20 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
           <TooltipContent>审阅 / 终端面板</TooltipContent>
         </Tooltip>
 
-        <div className="flex items-center gap-1 rounded-md border border-border/60 bg-background/85 px-1.5 py-0.5 text-[10px] tabular-nums">
-          <span
-            className={cn('h-1.5 w-1.5 rounded-full', {
-              'bg-emerald-500': connState === 'connected',
-              'animate-pulse bg-amber-500': connState === 'connecting',
-              'bg-destructive': connState === 'error',
-              'bg-muted-foreground': connState === 'disconnected',
-            })}
-          />
-          <span className="text-muted-foreground">{connectionLabel}</span>
-        </div>
-
-        {connHealth && (
-          <span className="hidden text-[10px] text-muted-foreground/60 lg:inline tabular-nums">
-            v{connHealth.version}
-          </span>
-        )}
-
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               size="icon"
               variant="ghost"
               className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              onClick={() => connCheck()}
-              title="重新连接"
-              aria-label="重新连接"
+              onClick={onOpenSettings}
+              title="设置"
+              aria-label="设置"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <Settings className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>重新连接</TooltipContent>
+          <TooltipContent>设置</TooltipContent>
         </Tooltip>
 
         {activeId && (

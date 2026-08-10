@@ -22,7 +22,7 @@ pub fn run() {
 
         // ── Commands (replacing 22 IPC channels) ────────────────
         .invoke_handler(tauri::generate_handler![
-            // Backend (was "sidecar")
+            // Backend
             backend::backend_status,
             backend::backend_logs,
             backend::backend_start,

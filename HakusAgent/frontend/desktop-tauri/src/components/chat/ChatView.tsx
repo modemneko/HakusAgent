@@ -720,7 +720,6 @@ export function ChatView() {
         onStop={handleStop}
         isStreaming={isStreaming}
         disabled={connState !== 'connected'}
-        placeholder={connState !== 'connected' ? '未连接到服务...' : undefined}
         draftValue={composerDraft}
         onDraftConsumed={() => setComposerDraft(undefined)}
         pendingQueue={activeQueuedMessages}

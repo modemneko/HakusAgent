@@ -7,7 +7,6 @@ interface LoadingScreenProps {
 
 const STATUS_MESSAGES = [
   '正在初始化 HakusAI…',
-  '正在连接 Backend 服务…',
   '正在加载 Agent 核心…',
   '正在准备工作区…',
 ]

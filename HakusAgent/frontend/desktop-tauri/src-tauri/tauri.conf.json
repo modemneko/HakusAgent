@@ -40,14 +40,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      {
-        "path": "../sidecar/**",
-        "target": "sidecar/"
-      }
-    ],
+    "resources": [],
     "externalBin": [
-      "sidecar/hakusai-server"
+      "binaries/hakusai-server"
     ],
     "linux": {
       "deb": {
@@ -71,7 +66,7 @@
     "shell": {
       "scope": [
         {
-          "name": "sidecar/hakusai-server",
+          "name": "binaries/hakusai-server",
           "sidecar": true,
           "args": true
         }

@@ -1,8 +1,6 @@
 /**
  * Tauri API Bridge — replaces window.electron IPC with Tauri invoke().
- *
- * NO "backend" naming anywhere. The Python server is called "backend".
- * NO connection error banners — if the backend isn't ready, we just wait.
+ * The Python server is called "backend".
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +20,7 @@ export const window = {
   isMaximized: () => invoke<boolean>("window_is_maximized"),
 };
 
-// ── Backend (was "backend" — NEVER use that word again) ───────────
+// ── Backend ────────────────────────────────────────────────────────
 export const backend = {
   status: () =>
     invoke<{ running: boolean; port: number | null }>("backend_status"),
