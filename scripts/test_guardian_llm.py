@@ -28,44 +28,67 @@ GUARDIAN_MODEL = os.getenv("OPENCODE_MODEL_NAME", "mimo-v2.5-free")
 
 
 async def call_opencode(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
-    """Call OpenCode API directly using httpx."""
-    async with httpx.AsyncClient(
-        base_url=OPENCODE_BASE_URL,
-        headers={
-            "Authorization": f"Bearer {OPENCODE_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        timeout=30.0,
-    ) as client:
-        payload = {
-            "model": GUARDIAN_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0.2,
-        }
-        resp = await client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    """Call OpenCode API directly using httpx, with retry for 503/429."""
+    max_retries = 3
+    base_delay = 2.0
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(
+                base_url=OPENCODE_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {OPENCODE_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30.0,
+            ) as client:
+                payload = {
+                    "model": GUARDIAN_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.2,
+                }
+                resp = await client.post("/chat/completions", json=payload)
+                if resp.status_code in (503, 429, 502) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"API {resp.status_code}, retry {attempt+1}/{max_retries} in {delay}s")
+                    await asyncio.sleep(delay)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
 
-        # Some models (e.g., mimo) may return content=None with reasoning_content
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        content = message.get("content") or ""
+                # Some models (e.g., mimo) may return content=None with reasoning_content
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                content = message.get("content") or ""
 
-        # Fallback: check for reasoning_content (mimo models)
-        if not content:
-            reasoning = message.get("reasoning_content") or ""
-            if reasoning:
-                content = reasoning
+                # Fallback: check for reasoning_content (mimo models)
+                if not content:
+                    reasoning = message.get("reasoning_content") or ""
+                    if reasoning:
+                        # Try to extract JSON verdict from reasoning
+                        import re
+                        json_match = re.search(r'\{[^{}]*"verdict"[^{}]*\}', reasoning)
+                        if json_match:
+                            content = json_match.group(0)
+                        else:
+                            content = reasoning
 
-        # Fallback: return full message as string
-        if not content:
-            content = json.dumps(message, ensure_ascii=False)
+                # Fallback: return full message as string
+                if not content:
+                    content = json.dumps(message, ensure_ascii=False)
 
-        return content
+                return content
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Connection error, retry {attempt+1}/{max_retries} in {delay}s: {e}")
+                await asyncio.sleep(delay)
+                continue
+            raise
+    raise RuntimeError(f"API call failed after {max_retries} attempts")
 
 
 # ─── Guardian System Prompt ──────────────────────────────────────
@@ -77,7 +100,10 @@ Your job is to evaluate proposed tool invocations and decide whether they should
 - deny: The operation is dangerous, harmful, or misaligned
 - caution: Allowed but with warnings
 
-Respond with ONLY a JSON object:
+IMPORTANT: You MUST output your final verdict as a JSON object in your 'content' field.
+Do NOT just think about it — actually OUTPUT the JSON as your final answer.
+
+Output format (copy this structure):
 {"verdict": "approve"|"deny"|"caution", "reason": "...", "risk_factors": ["..."], "confidence": 0.0-1.0}
 
 Rules:

@@ -386,29 +386,72 @@ Rules:
             )
 
     async def _call_model(self, prompt: str) -> str:
-        """Call the Guardian's LLM."""
-        if hasattr(self._model, "generate_response_no_tools"):
-            response = await self._model.generate_response_no_tools(
-                system_prompt="You are a security evaluator. You evaluate tool invocations for safety risks. Be conservative: when in doubt, deny. Respond with JSON only.",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=256,
-            )
-            # Some models (e.g., mimo) may return empty/None content
-            if response and response.strip():
-                return response
-            # Fallback: try chat() method
-            if hasattr(self._model, "chat"):
-                from .models.base_client import LLMMessage
-                msgs = [
-                    LLMMessage(role="system", content="You are a security evaluator. Respond with JSON only."),
-                    LLMMessage(role="user", content=prompt),
-                ]
-                llm_resp = await self._model.chat(msgs)
-                if llm_resp and llm_resp.content:
-                    return llm_resp.content
-            # If still empty, this will trigger parse failure → deny (fail-closed)
-            return response or ""
-        raise RuntimeError("Guardian model has no generate_response_no_tools method")
+        """Call the Guardian's LLM.
+
+        Handles:
+          - Reasoning models (mimo, deepseek-r1) that return content=null
+          - Transient API errors (503, 429) with retry
+          - Multiple fallback paths for robustness
+        """
+        system_prompt = (
+            "You are a security evaluator. You evaluate tool invocations for safety risks. "
+            "Be conservative: when in doubt, deny. "
+            "IMPORTANT: You MUST output your final verdict as a JSON object in your 'content' field, "
+            'not just in your reasoning. Output format: '
+            '\{"verdict": "approve"|"deny"|"caution", "reason": "...", "risk_factors": ["..."], "confidence": 0.0-1.0\}'
+        )
+
+        # Retry loop for transient errors (503, 429)
+        max_retries = 3
+        base_delay = 2.0
+        for attempt in range(max_retries):
+            try:
+                if hasattr(self._model, "generate_response_no_tools"):
+                    response = await self._model.generate_response_no_tools(
+                        system_prompt=system_prompt,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=512,  # Increased for reasoning models
+                    )
+                    # Some models (e.g., mimo) may return empty/None content
+                    if response and response.strip():
+                        return response
+
+                # Fallback: try chat() method
+                if hasattr(self._model, "chat"):
+                    from .models.base_client import LLMMessage
+                    msgs = [
+                        LLMMessage(role="system", content=system_prompt),
+                        LLMMessage(role="user", content=prompt),
+                    ]
+                    llm_resp = await self._model.chat(msgs)
+                    if llm_resp and llm_resp.content:
+                        return llm_resp.content
+                    # Reasoning model fallback: check reasoning_content in raw response
+                    if llm_resp and hasattr(llm_resp, 'raw'):
+                        reasoning = getattr(llm_resp.raw, 'reasoning_content', None)
+                        if reasoning:
+                            return reasoning
+
+                # If still empty, this will trigger parse failure → deny (fail-closed)
+                return response or ""
+
+            except Exception as e:
+                import asyncio as _asyncio
+                # Check if retryable (503, 429, timeout, connection error)
+                status = getattr(e, 'status_code', None) or getattr(getattr(e, 'response', None), 'status_code', None)
+                is_retryable = (
+                    status in (503, 429, 502, 500)
+                    or isinstance(e, (_asyncio.TimeoutError, ConnectionError, OSError))
+                )
+                if is_retryable and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Guardian LLM retry {attempt+1}/{max_retries}: {e}, waiting {delay}s")
+                    await _asyncio.sleep(delay)
+                    continue
+                # Non-retryable or max retries reached → raise
+                raise RuntimeError(f"Guardian model call failed after {attempt+1} attempts: {e}")
+
+        raise RuntimeError("Guardian model has no usable method")
 
     def _parse_response(self, response: str) -> GuardianDecision:
         """Parse the Guardian LLM's JSON response."""

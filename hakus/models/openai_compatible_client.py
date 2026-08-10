@@ -103,8 +103,24 @@ class OpenAICompatibleClient(BaseLLMClient):
                 max_tokens=max_tokens,
                 temperature=0.2,  # Low temperature for consistent Guardian decisions
             )
-            if response.choices and response.choices[0].message.content:
-                return response.choices[0].message.content
+            if response.choices:
+                message = response.choices[0].message
+                # Primary: content field
+                content = message.content or ""
+                # Fallback for reasoning models (mimo, deepseek-r1, etc.)
+                # that return content=null with reasoning_content
+                if not content:
+                    reasoning = getattr(message, 'reasoning_content', None) or ""
+                    if reasoning:
+                        # Try to extract JSON verdict from reasoning
+                        import re as _re
+                        json_match = _re.search(r'\{[^{}]*"verdict"[^{}]*\}', reasoning)
+                        if json_match:
+                            content = json_match.group(0)
+                        else:
+                            # Use reasoning as content (Guardian will parse it)
+                            content = reasoning
+                return content
             return ""
         except Exception as e:
             logger.error(f"generate_response_no_tools failed: {e}")
