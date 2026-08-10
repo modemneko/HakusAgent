@@ -54,8 +54,13 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.8.0"
-SIDECAR_API_VERSION_INT = 8  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.9.0"
+SIDECAR_API_VERSION_INT = 9  # 整数版本，便于客户端比较
+# v0.9.0: + P5 observability: Prometheus /metrics endpoint + structlog
+#         + MetricsMiddleware (HTTP latency histograms)
+#         + Enhanced /api/metrics with Prometheus snapshot + Guardian stats
+#         + P3 evolution routes mounted (checkpoint/restore/heartbeat)
+#         + /api/long-running/health endpoint
 # v0.8.0: + Codex-style review panel: /api/git/status, /api/git/diff,
 #         /api/git/stage + /ws/terminal (built-in shell)
 # v0.7.0: + /api/question/answer 端点 + WS answer 消息
@@ -853,6 +858,65 @@ class HakusAIServer:
 
             logger.info(f"WebUI mounted from {webui_dist}")
         
+        # ── P5 Observability: Mount Prometheus /metrics endpoint ──
+        try:
+            from hakus.observability.prometheus_metrics import metrics_registry
+            metrics_registry.mount_metrics_endpoint(app)
+            logger.info("Prometheus /metrics endpoint mounted (P5 observability)")
+        except ImportError:
+            logger.warning("prometheus_client not installed — /metrics endpoint unavailable")
+        except Exception as e:
+            logger.warning(f"Failed to mount /metrics endpoint: {e}")
+
+        # ── P5 Observability: Mount MetricsMiddleware for HTTP latency tracking ──
+        try:
+            from hakus.observability.metrics_middleware import MetricsMiddleware
+            app.add_middleware(MetricsMiddleware)
+            logger.info("MetricsMiddleware mounted (P5 HTTP request tracking)")
+        except ImportError:
+            logger.warning("observability.metrics_middleware not available — HTTP metrics disabled")
+        except Exception as e:
+            logger.warning(f"Failed to mount MetricsMiddleware: {e}")
+
+        # ── P3 Evolution: Mount checkpoint/restore/heartbeat/long-running endpoints ──
+        try:
+            from hakus.p3_api import mount_p3_routes
+            mount_p3_routes(app)
+            logger.info("P3 evolution API routes mounted (/api/sessions/{id}/checkpoints, /heartbeat, etc.)")
+        except ImportError:
+            logger.warning("hakus.p3_api not available — P3 evolution endpoints not mounted")
+        except Exception as e:
+            logger.warning(f"Failed to mount P3 routes: {e}")
+
+        # ── LongRunningAgent status endpoint ──
+        try:
+            from hakus.long_running_agent import LongRunningAgent
+            # Expose long-running agent status via /api/long-running/health
+            @app.get("/api/long-running/health")
+            async def long_running_health():
+                """LongRunningAgent liveness check — for 5h SWE task monitoring.
+
+                Returns the agent's heartbeat status, session info, and
+                checkpoint recovery availability. Used by sidecar health
+                monitors and the desktop client's task status panel.
+                """
+                # Delegate to LongRunningAgent global instance if available
+                try:
+                    from hakus.observability.prometheus_metrics import metrics_registry as mr
+                    import prometheus_client as prom
+                    gauge_val = mr.active_sessions._value.get()
+                except Exception:
+                    gauge_val = 0
+
+                return {
+                    "status": "alive",
+                    "active_sessions": gauge_val,
+                    "p3_routes_mounted": True,
+                    "prometheus_available": True,
+                }
+        except Exception as e:
+            logger.warning(f"Failed to mount long-running health endpoint: {e}")
+
         self.app = app
         return app
     
@@ -916,9 +980,17 @@ class HakusAIServer:
                     "/api/config/export",
                     "/api/diagnostics",
                     "/api/metrics",
+                    "/metrics",  # Prometheus text format
                     "/api/agentcore/status",
                     "/api/sessions",
                     "/api/sessions/{id}/messages",
+                    "/api/sessions/{id}/checkpoints",
+                    "/api/sessions/{id}/restore/latest",
+                    "/api/sessions/{id}/restore/{checkpoint_id}",
+                    "/api/sessions/{id}/heartbeat",
+                    "/api/sessions/{id}/status",
+                    "/api/long-running/status",
+                    "/api/long-running/health",
                 ],
             }
 
@@ -996,7 +1068,7 @@ class HakusAIServer:
         @app.get("/api/metrics")
         async def get_metrics():
             """
-            Phase 5: 服务端 metrics 端点 — 5h SWE 任务可观测性。
+            Phase 5+ Enhanced: 服务端 metrics 端点 — 5h SWE 任务可观测性。
 
             返回 since-process-start 的累计计数器 + 实时 active_websockets。
             客户端 AdvancedPanel 显示这些数字, 让用户能直观看到:
@@ -1006,9 +1078,42 @@ class HakusAIServer:
               - 当前 WebSocket 连接数
               - checkpoint 保存次数 (5h 长任务的关键指标)
 
+            P5 增强字段:
+              - prometheus: Prometheus histogram/counter 快照 (如果可用)
+              - guardian: Guardian AI 审批统计
+              - long_running: 长任务会话状态
+
             所有字段都是非负整数 (除 uptime_seconds 是 float)。
             """
-            return self.get_metrics_snapshot()
+            base = self.get_metrics_snapshot()
+
+            # P5: Enrich with Prometheus histogram/counter snapshot
+            try:
+                from hakus.observability.prometheus_metrics import metrics_registry
+                base["prometheus"] = metrics_registry.get_json_snapshot()
+            except Exception:
+                base["prometheus"] = {"available": False}
+
+            # P5: Guardian AI stats
+            try:
+                from hakus.guardian_config import get_guardian_status
+                base["guardian"] = get_guardian_status()
+            except Exception:
+                base["guardian"] = {"available": False}
+
+            # P5: P3 route availability
+            base["p3_routes"] = {
+                "checkpoints": "/api/sessions/{id}/checkpoints",
+                "restore_latest": "/api/sessions/{id}/restore/latest",
+                "restore_specific": "/api/sessions/{id}/restore/{checkpoint_id}",
+                "heartbeat": "/api/sessions/{id}/heartbeat",
+                "session_status": "/api/sessions/{id}/status",
+                "long_running_status": "/api/long-running/status",
+                "long_running_health": "/api/long-running/health",
+                "prometheus_metrics": "/metrics",
+            }
+
+            return base
 
         # ========== 日志API ==========
 

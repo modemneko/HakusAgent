@@ -65,6 +65,10 @@ dependencies = [
     # via stdio. Used by hakus/mcp/manager.py. Version 1.27+ required for
     # stable ClientSession API.
     "mcp>=1.27.0",
+
+    # P5 Observability — structured logging + Prometheus metrics
+    "structlog>=24.0.0",
+    "prometheus_client>=0.20.0",
 ]
 
 [project.optional-dependencies]
