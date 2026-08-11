@@ -18,7 +18,7 @@
     "shell:allow-spawn",
     "shell:allow-execute",
     "shell:allow-kill",
-    "shell:allow-sidecar",
+    "shell:allow-stdin-write",
     "store:default",
     "store:allow-get",
     "store:allow-set",
