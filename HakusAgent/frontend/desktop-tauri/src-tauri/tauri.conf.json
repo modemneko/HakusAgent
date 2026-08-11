@@ -41,9 +41,6 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "externalBin": [
-      "binaries/hakusai-server"
-    ],
     "linux": {
       "deb": {
         "depends": []
@@ -66,8 +63,13 @@
     "shell": {
       "scope": [
         {
-          "name": "binaries/hakusai-server",
-          "sidecar": true,
+          "name": "python",
+          "cmd": "python",
+          "args": true
+        },
+        {
+          "name": "python3",
+          "cmd": "python3",
           "args": true
         }
       ]
