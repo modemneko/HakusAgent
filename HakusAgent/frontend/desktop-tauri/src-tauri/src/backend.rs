@@ -72,11 +72,11 @@ pub async fn backend_start(
 
     // Spawn the Python backend via tauri-plugin-shell Command
     // Uses `python -m hakus.server` so no pre-built binary is needed in dev.
+    // Note: Shell::command() returns Command (not Result), unlike sidecar().
     let backend_cmd = app
         .shell()
         .command("python")
-        .args(["-m", "hakus.server"])
-        .map_err(|e| format!("Failed to create backend command: {e}"))?;
+        .args(["-m", "hakus.server"]);
 
     let (mut rx, child) = backend_cmd
         .spawn()

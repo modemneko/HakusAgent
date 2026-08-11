@@ -61,18 +61,7 @@
       "pubkey": ""
     },
     "shell": {
-      "scope": [
-        {
-          "name": "python",
-          "cmd": "python",
-          "args": true
-        },
-        {
-          "name": "python3",
-          "cmd": "python3",
-          "args": true
-        }
-      ]
+      "scope": []
     }
   }
 }
