@@ -3,12 +3,12 @@
 //! The Python FastAPI server is called "the backend".
 
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 
 /// State holding the running backend process handle.
 pub struct BackendState {
-    child: Mutex<Option<CommandChild<tauri_plugin_shell::process::CommandEvent>>>,
+    child: Mutex<Option<CommandChild>>,
     port: Mutex<Option<u16>>,
     logs: Mutex<Vec<String>>,
 }
@@ -70,7 +70,7 @@ pub async fn backend_start(
         }
     }
 
-    // Spawn the Python backend via tauri-plugin-shell Command
+    // Spawn the Python backend via tauri-plugin-shell Command.
     // Uses `python -m hakus.server` so no pre-built binary is needed in dev.
     // Note: Shell::command() returns Command (not Result), unlike sidecar().
     let backend_cmd = app
@@ -169,9 +169,11 @@ pub fn backend_stop(
 
 #[tauri::command]
 pub async fn backend_health(state: State<'_, BackendState>) -> Result<serde_json::Value, String> {
-    let port_lock = state.port.lock().map_err(|e| e.to_string())?;
-    let port = *port_lock;
-    drop(port_lock);
+    // Extract port value before any await — MutexGuard is !Send
+    let port: Option<u16> = {
+        let port_lock = state.port.lock().map_err(|e| e.to_string())?;
+        *port_lock
+    }; // port_lock dropped here, before await
 
     if port.is_none() {
         return Ok(serde_json::json!({

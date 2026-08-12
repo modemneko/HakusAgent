@@ -1,6 +1,6 @@
 //! Shortcut commands — global keyboard shortcut configuration.
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 /// Default accelerator: Shift+CommandOrControl+H
