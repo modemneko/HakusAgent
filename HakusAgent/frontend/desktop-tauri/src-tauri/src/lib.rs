@@ -22,14 +22,12 @@ pub fn run() {
 
         // ── Setup: auto-start Python backend ────────────────────
         .setup(|app| {
-            let handle = app.handle().clone();
-            // Spawn backend in background — don't block window creation
-            tauri::async_runtime::spawn_blocking(move || {
-                match backend::spawn_backend(&handle) {
-                    Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
-                    Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
-                }
-            });
+            // spawn_backend() is non-blocking — it just calls shell.spawn()
+            // and kicks off an async log reader. No need for spawn_blocking.
+            match backend::spawn_backend(app.handle()) {
+                Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
+                Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
+            }
             Ok(())
         })
 
