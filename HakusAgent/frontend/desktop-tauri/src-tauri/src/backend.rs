@@ -153,7 +153,7 @@ pub async fn backend_start(
 
 #[tauri::command]
 pub fn backend_stop(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<BackendState>,
 ) -> Result<serde_json::Value, String> {
     let mut child_lock = state.child.lock().map_err(|e| e.to_string())?;
