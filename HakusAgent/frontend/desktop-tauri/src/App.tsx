@@ -13,6 +13,7 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
 import { useConnectionStore } from '@/store/connection'
+import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 function App() {
@@ -30,11 +31,30 @@ function App() {
   const connState = useConnectionStore((s) => s.state)
 
   // In Tauri desktop mode, the Rust setup hook already spawned the backend.
-  // We just need to make sure the connection check fires after the Python
-  // server has had time to start (it takes ~2-3s for uvicorn to be ready).
+  // 1. Listen for backend:port event to update apiClient when port is detected
+  // 2. Poll health every 2s until connected (uvicorn takes ~2-3s to be ready)
   useEffect(() => {
     if (typeof __TAURI_INTERNALS__ === 'undefined') return
-    // Poll health every 2s until connected (max 30s)
+
+    let unlisten: (() => void) | undefined
+    ;(async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event")
+        // Listen for actual port from Rust backend
+        unlisten = await listen<number>("backend:port", (event) => {
+          const port = event.payload
+          const url = `http://127.0.0.1:${port}`
+          apiClient.setBaseUrl(url)
+          console.log(`[Tauri] Backend port detected: ${port}`)
+          // Immediately check connection with the new URL
+          useConnectionStore.getState().check(url)
+        })
+      } catch {
+        // Not in Tauri context — ignore
+      }
+    })()
+
+    // Also poll health as fallback (in case port event was missed)
     let attempts = 0
     const maxAttempts = 15
     const timer = setInterval(() => {
@@ -45,7 +65,11 @@ function App() {
       }
       useConnectionStore.getState().check()
     }, 2000)
-    return () => clearInterval(timer)
+
+    return () => {
+      unlisten?.()
+      clearInterval(timer)
+    }
   }, [])
 
   // Initialize on first mount.

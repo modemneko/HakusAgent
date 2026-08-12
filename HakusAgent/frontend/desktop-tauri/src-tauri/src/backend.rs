@@ -7,7 +7,7 @@
 //! so it's already running by the time the frontend loads.
 
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 
 const DEFAULT_BACKEND_PORT: u16 = 48081;
@@ -30,7 +30,8 @@ impl BackendState {
 }
 
 /// Spawn the Python backend. Called from the Tauri setup hook AND from the
-/// backend_start command. Returns the port on success.
+/// backend_start command. Returns immediately with the default port;
+/// the actual port is detected from `HAKUSAI_PORT=` on stdout.
 pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
     let state = app.state::<BackendState>();
 
@@ -43,13 +44,13 @@ pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
         }
     }
 
-    eprintln!("[backend] Spawning python -m hakus.server ...");
+    eprintln!("[backend] Spawning python -m hakusai_server.server ...");
 
     // Spawn the Python backend via tauri-plugin-shell Command.
     let backend_cmd = app
         .shell()
         .command("python")
-        .args(["-m", "hakus.server"]);
+        .args(["-m", "hakusai_server.server"]);
 
     let (rx, child) = backend_cmd
         .spawn()
@@ -67,7 +68,7 @@ pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
 
     eprintln!("[backend] Process spawned, default port = {DEFAULT_BACKEND_PORT}");
 
-    // Spawn a background task to collect logs
+    // Spawn a background task to collect logs and detect the actual port
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut rx = rx;
@@ -77,6 +78,19 @@ pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
                 tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
                     let text = String::from_utf8_lossy(&line).trim_end().to_string();
                     eprintln!("[backend:stdout] {text}");
+
+                    // Detect port from "HAKUSAI_PORT=XXXXX" printed by server.py
+                    if let Some(port_str) = text.strip_prefix("HAKUSAI_PORT=") {
+                        if let Ok(port) = port_str.trim().parse::<u16>() {
+                            eprintln!("[backend] Detected actual port: {port}");
+                            if let Ok(mut port_lock) = backend_state.port.lock() {
+                                *port_lock = Some(port);
+                            }
+                            // Emit event to frontend so it can update the base URL
+                            let _ = app_handle.emit("backend:port", port);
+                        }
+                    }
+
                     if let Ok(mut logs) = backend_state.logs.lock() {
                         if logs.len() >= 500 {
                             logs.remove(0);
