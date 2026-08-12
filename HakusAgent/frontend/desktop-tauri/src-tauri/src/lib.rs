@@ -20,6 +20,19 @@ pub fn run() {
         // ── State ───────────────────────────────────────────────
         .manage(BackendState::new())
 
+        // ── Setup: auto-start Python backend ────────────────────
+        .setup(|app| {
+            let handle = app.handle().clone();
+            // Spawn backend in background — don't block window creation
+            tauri::async_runtime::spawn_blocking(move || {
+                match backend::spawn_backend(&handle) {
+                    Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
+                    Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
+                }
+            });
+            Ok(())
+        })
+
         // ── Commands (replacing 22 IPC channels) ────────────────
         .invoke_handler(tauri::generate_handler![
             // Backend

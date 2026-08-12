@@ -2,6 +2,9 @@
 //!
 //! The Python FastAPI server is called "the backend".
 //! Default port is 48081 (matching apiClient default).
+//!
+//! The backend is auto-started from the Tauri setup hook (lib.rs),
+//! so it's already running by the time the frontend loads.
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -24,6 +27,92 @@ impl BackendState {
             logs: Mutex::new(Vec::with_capacity(500)),
         }
     }
+}
+
+/// Spawn the Python backend. Called from the Tauri setup hook AND from the
+/// backend_start command. Returns the port on success.
+pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
+    let state = app.state::<BackendState>();
+
+    // Check if already running
+    {
+        let child_lock = state.child.lock().map_err(|e| e.to_string())?;
+        if child_lock.is_some() {
+            let port_lock = state.port.lock().map_err(|e| e.to_string())?;
+            return Ok(port_lock.unwrap_or(DEFAULT_BACKEND_PORT));
+        }
+    }
+
+    eprintln!("[backend] Spawning python -m hakus.server ...");
+
+    // Spawn the Python backend via tauri-plugin-shell Command.
+    let backend_cmd = app
+        .shell()
+        .command("python")
+        .args(["-m", "hakus.server"]);
+
+    let (rx, child) = backend_cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn backend: {e}"))?;
+
+    // Store the child handle and default port
+    {
+        let mut child_lock = state.child.lock().map_err(|e| e.to_string())?;
+        *child_lock = Some(child);
+    }
+    {
+        let mut port_lock = state.port.lock().map_err(|e| e.to_string())?;
+        *port_lock = Some(DEFAULT_BACKEND_PORT);
+    }
+
+    eprintln!("[backend] Process spawned, default port = {DEFAULT_BACKEND_PORT}");
+
+    // Spawn a background task to collect logs
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut rx = rx;
+        while let Some(event) = rx.recv().await {
+            let backend_state = app_handle.state::<BackendState>();
+            match event {
+                tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
+                    let text = String::from_utf8_lossy(&line).trim_end().to_string();
+                    eprintln!("[backend:stdout] {text}");
+                    if let Ok(mut logs) = backend_state.logs.lock() {
+                        if logs.len() >= 500 {
+                            logs.remove(0);
+                        }
+                        logs.push(text);
+                    }
+                }
+                tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
+                    let text = String::from_utf8_lossy(&line).trim_end().to_string();
+                    eprintln!("[backend:stderr] {text}");
+                    if let Ok(mut logs) = backend_state.logs.lock() {
+                        if logs.len() >= 500 {
+                            logs.remove(0);
+                        }
+                        logs.push(format!("[stderr] {text}"));
+                    }
+                }
+                tauri_plugin_shell::process::CommandEvent::Terminated(_status) => {
+                    eprintln!("[backend] Process terminated");
+                    if let Ok(mut child_lock) = backend_state.child.lock() {
+                        *child_lock = None;
+                    }
+                    if let Ok(mut port_lock) = backend_state.port.lock() {
+                        *port_lock = None;
+                    }
+                    if let Ok(mut logs) = backend_state.logs.lock() {
+                        logs.push("[backend] Process terminated".to_string());
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    Ok(DEFAULT_BACKEND_PORT)
 }
 
 // ── Tauri Commands ─────────────────────────────────────────────────
@@ -57,96 +146,22 @@ pub async fn backend_restart(
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Start fresh
-    backend_start(app, state).await
+    let port = spawn_backend(&app)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "port": port,
+    }))
 }
 
 #[tauri::command]
-pub async fn backend_start(
+pub fn backend_start(
     app: AppHandle,
-    state: State<'_, BackendState>,
+    _state: State<BackendState>,
 ) -> Result<serde_json::Value, String> {
-    // Check if already running
-    {
-        let child_lock = state.child.lock().map_err(|e| e.to_string())?;
-        if child_lock.is_some() {
-            let port_lock = state.port.lock().map_err(|e| e.to_string())?;
-            return Ok(serde_json::json!({
-                "ok": true,
-                "port": *port_lock,
-                "message": "Backend already running"
-            }));
-        }
-    }
-
-    // Spawn the Python backend via tauri-plugin-shell Command.
-    // Uses `python -m hakus.server` so no pre-built binary is needed in dev.
-    let backend_cmd = app
-        .shell()
-        .command("python")
-        .args(["-m", "hakus.server"]);
-
-    let (rx, child) = backend_cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn backend: {e}"))?;
-
-    // Store the child handle and default port
-    {
-        let mut child_lock = state.child.lock().map_err(|e| e.to_string())?;
-        *child_lock = Some(child);
-    }
-    {
-        let mut port_lock = state.port.lock().map_err(|e| e.to_string())?;
-        *port_lock = Some(DEFAULT_BACKEND_PORT);
-    }
-
-    // Spawn a background task to collect logs (don't block the command response).
-    // We access state via app.handle() since State<> isn't Send.
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut rx = rx;
-        while let Some(event) = rx.recv().await {
-            let backend_state = app_handle.state::<BackendState>();
-            match event {
-                tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line).trim_end().to_string();
-                    if let Ok(mut logs) = backend_state.logs.lock() {
-                        if logs.len() >= 500 {
-                            logs.remove(0);
-                        }
-                        logs.push(text);
-                    }
-                }
-                tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                    let text = String::from_utf8_lossy(&line).trim_end().to_string();
-                    if let Ok(mut logs) = backend_state.logs.lock() {
-                        if logs.len() >= 500 {
-                            logs.remove(0);
-                        }
-                        logs.push(format!("[stderr] {text}"));
-                    }
-                }
-                tauri_plugin_shell::process::CommandEvent::Terminated(_status) => {
-                    // Backend process died — clear handles
-                    if let Ok(mut child_lock) = backend_state.child.lock() {
-                        *child_lock = None;
-                    }
-                    if let Ok(mut port_lock) = backend_state.port.lock() {
-                        *port_lock = None;
-                    }
-                    if let Ok(mut logs) = backend_state.logs.lock() {
-                        logs.push("[backend] Process terminated".to_string());
-                    }
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Return immediately with the default port — frontend will health-check
+    let port = spawn_backend(&app)?;
     Ok(serde_json::json!({
         "ok": true,
-        "port": DEFAULT_BACKEND_PORT,
+        "port": port,
     }))
 }
 
