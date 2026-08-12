@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
@@ -17,12 +17,13 @@ import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
+const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
 
 function App() {
-  // Splash state: true while showing, transitions to false once backend is ready
-  const [showSplash, setShowSplash] = useState(true)
+  const mountedAt = useRef(Date.now())
+  const [showSplash, setShowSplash] = useState(IS_TAURI)
   const [splashExiting, setSplashExiting] = useState(false)
-  const [appReady, setAppReady] = useState(false)
+  const [appReady, setAppReady] = useState(!IS_TAURI)
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
@@ -36,76 +37,73 @@ function App() {
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
 
-  // ── Backend readiness: poll health aggressively until connected ────
+  // ── Dismiss splash: respects MIN_SPLASH_MS so animation plays fully ──
+  const tryDismissSplash = useCallback(() => {
+    if (splashExiting) return
+    const elapsed = Date.now() - mountedAt.current
+    const remaining = Math.max(0, MIN_SPLASH_MS - elapsed)
+
+    setTimeout(() => {
+      setSplashExiting(true)
+      // Wait for exit animation (0.5s in AwakenSplash) + small buffer
+      setTimeout(() => {
+        setShowSplash(false)
+        setAppReady(true)
+      }, 600)
+    }, remaining)
+  }, [splashExiting])
+
+  // ── Backend readiness: aggressive health poll ──────────────────────
   const checkBackend = useCallback(() => {
     useConnectionStore.getState().check()
   }, [])
 
   useEffect(() => {
-    if (!IS_TAURI) {
-      // Non-Tauri (browser dev): no splash, just connect
-      setShowSplash(false)
-      return
-    }
+    if (!IS_TAURI) return
 
-    // 1. Listen for backend:port event (Rust emits when HAKUSAI_PORT= detected)
+    // 1. Listen for backend:port event
     let unlisten: (() => void) | undefined
     ;(async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event")
         unlisten = await listen<number>("backend:port", (event) => {
-          const port = event.payload
-          apiClient.setBaseUrl(`http://127.0.0.1:${port}`)
+          apiClient.setBaseUrl(`http://127.0.0.1:${event.payload}`)
           checkBackend()
         })
       } catch { /* ignore */ }
     })()
 
-    // 2. Aggressive health poll: every 300ms, up to 5s (17 attempts)
+    // 2. Poll health every 300ms, up to 5s
     let attempts = 0
-    const maxAttempts = 17
     const timer = setInterval(() => {
       const { state } = useConnectionStore.getState()
-      if (state === 'connected') {
-        clearInterval(timer)
-        return
-      }
-      if (++attempts >= maxAttempts) {
+      if (state === 'connected' || ++attempts >= 17) {
         clearInterval(timer)
         return
       }
       checkBackend()
     }, 300)
-    // Fire first check immediately
-    checkBackend()
+    checkBackend() // immediate first check
 
-    return () => {
-      unlisten?.()
-      clearInterval(timer)
-    }
+    return () => { unlisten?.(); clearInterval(timer) }
   }, [checkBackend])
 
-  // ── When connected → dismiss splash & mark ready ──────────────────
+  // ── When connected or errored → dismiss splash ─────────────────────
   useEffect(() => {
-    if (connState === 'connected' && showSplash) {
-      setSplashExiting(true)
-      // Wait for splash exit animation (0.4s) then hide
-      const t = setTimeout(() => {
-        setShowSplash(false)
-        setAppReady(true)
-      }, 700)
-      return () => clearTimeout(t)
+    if (!IS_TAURI) return
+    if (connState === 'connected' || connState === 'error') {
+      tryDismissSplash()
     }
-    // Non-connected but splash done (error case after timeout)
-    if (connState === 'error' && showSplash && !splashExiting) {
-      setSplashExiting(true)
-      const t = setTimeout(() => {
-        setShowSplash(false)
-        setAppReady(true)
-      }, 700)
-      return () => clearTimeout(t)
-    }
-  }, [connState, showSplash, splashExiting])
+  }, [connState, IS_TAURI, tryDismissSplash])
+
+  // ── Fallback: if splash still showing after 6s, dismiss anyway ─────
+  useEffect(() => {
+    if (!IS_TAURI) return
+    const t = setTimeout(() => {
+      if (showSplash) tryDismissSplash()
+    }, 6000)
+    return () => clearTimeout(t)
+  }, [IS_TAURI, showSplash, tryDismissSplash])
 
   // ── Initialize sessions after app is ready ─────────────────────────
   useEffect(() => {
@@ -143,9 +141,7 @@ function App() {
 
   // ── Refresh server info when connection is ready ───────────────────
   useEffect(() => {
-    if (connState === 'connected') {
-      refreshServerInfo()
-    }
+    if (connState === 'connected') refreshServerInfo()
   }, [connState, refreshServerInfo])
 
   // ── Watch for server URL changes (settings panel) ──────────────────
@@ -160,18 +156,18 @@ function App() {
       {/* Splash overlay */}
       {showSplash && <AwakenSplash exiting={splashExiting} />}
 
-      {/* Main UI — hidden behind splash until ready */}
+      {/* Main UI — invisible until appReady, then fades in */}
       <TooltipProvider delayDuration={300}>
         <div
           className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground"
           style={{
             opacity: appReady ? 1 : 0,
             transition: 'opacity 0.3s ease-in',
+            // Keep layout space but invisible, so there's no layout jump
+            visibility: appReady ? 'visible' : 'hidden',
           }}
         >
-          {/* Three-column workspace */}
           <div className="flex min-h-0 flex-1">
-            {/* Sidebar */}
             <div
               data-testid="sidebar-wrapper"
               className={cn(
@@ -183,7 +179,6 @@ function App() {
               <Sidebar />
             </div>
 
-            {/* Main area (chat) */}
             <div className="flex min-h-0 flex-1 flex-col">
               <TopBar
                 onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
@@ -193,7 +188,6 @@ function App() {
               <ChatView />
             </div>
 
-            {/* Right panel */}
             <div
               data-testid="right-panel-wrapper"
               className={cn(
@@ -206,13 +200,8 @@ function App() {
             </div>
           </div>
 
-          {/* Bottom status bar */}
           <BottomStatusBar />
-
-          {/* Settings dialog */}
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-
-          {/* Global toaster */}
           <Toaster />
         </div>
       </TooltipProvider>

@@ -1,19 +1,21 @@
 /**
- * AwakenSplash — Frosted glass splash screen with choreographed reveal.
+ * AwakenSplash — Frosted glass splash screen with theme-aware colors.
+ *
+ * Uses CSS variables (--background, --primary, --foreground, --muted) so
+ * the splash blends with whatever theme (light/dark) is active.
  *
  * Timeline:
- *   0.0s  Full black
- *   0.3s  Color orbs fade in from left
- *   0.8s  "AWAKENING" text appears (letter-spacing stagger)
+ *   0.0s  Theme background (dark: near-black, light: deep blue-gray)
+ *   0.3s  Color orbs fade in from left (derived from --primary hue)
+ *   0.8s  "AWAKENING" text appears
  *   1.2s  "HAKUS" text appears below
- *   1.5s+ Breathing / gradient flow on text
- *   on backend ready → 0.4s crossfade to main UI
+ *   1.5s+ Subtle breathing on text
+ *   on exit → 0.5s crossfade to main UI
  */
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 
 interface AwakenSplashProps {
-  /** If true, start the exit animation immediately */
   exiting: boolean
 }
 
@@ -22,8 +24,7 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
 
   useEffect(() => {
     if (exiting && !exitStarted) {
-      // Hold for a tiny beat so user sees "HAKUS" at least briefly
-      const t = setTimeout(() => setExitStarted(true), 300)
+      const t = setTimeout(() => setExitStarted(true), 200)
       return () => clearTimeout(t)
     }
   }, [exiting, exitStarted])
@@ -32,14 +33,31 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden"
       style={{
-        background: '#0a0a0f',
         opacity: exitStarted ? 0 : 1,
-        transition: exitStarted ? 'opacity 0.4s ease-out' : 'none',
+        transition: exitStarted ? 'opacity 0.5s cubic-bezier(0.4,0,0.2,1)' : 'none',
       }}
     >
-      {/* ── Color orbs ─────────────────────────────────── */}
+      {/* ── Frosted glass base layer ───────────────────── */}
+      {/* Uses theme --background as the solid base, then a blur overlay */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundColor: 'hsl(var(--background))',
+        }}
+      />
+      {/* Slight frosted glass tint layer */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--card)) 100%)',
+          backdropFilter: 'blur(2px) saturate(1.2)',
+          opacity: 0.6,
+        }}
+      />
+
+      {/* ── Color orbs — derived from --primary hue ────── */}
       <div className="pointer-events-none absolute inset-0">
-        {/* Purple orb */}
+        {/* Primary orb (large, left) */}
         <div
           className="absolute rounded-full"
           style={{
@@ -47,12 +65,12 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
             height: '55vmax',
             left: '-18%',
             top: '10%',
-            background: 'radial-gradient(circle, rgba(120,60,180,0.35) 0%, transparent 70%)',
+            background: `radial-gradient(circle, hsla(var(--primary), 0.28) 0%, transparent 70%)`,
             filter: 'blur(100px)',
-            animation: 'splashOrbIn 0.8s ease-out 0.3s both, splashOrbDrift1 12s ease-in-out 1.1s infinite',
+            animation: 'splashOrbIn 0.8s ease-out 0.3s both, splashDrift1 14s ease-in-out 1.1s infinite',
           }}
         />
-        {/* Blue orb */}
+        {/* Secondary orb (blue-shifted) */}
         <div
           className="absolute rounded-full"
           style={{
@@ -60,12 +78,12 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
             height: '40vmax',
             left: '-5%',
             top: '50%',
-            background: 'radial-gradient(circle, rgba(40,80,200,0.30) 0%, transparent 70%)',
+            background: `radial-gradient(circle, hsla(var(--ring), 0.22) 0%, transparent 70%)`,
             filter: 'blur(90px)',
-            animation: 'splashOrbIn 0.8s ease-out 0.45s both, splashOrbDrift2 15s ease-in-out 1.3s infinite',
+            animation: 'splashOrbIn 0.8s ease-out 0.45s both, splashDrift2 17s ease-in-out 1.3s infinite',
           }}
         />
-        {/* Cyan orb */}
+        {/* Tertiary orb (accent/muted) */}
         <div
           className="absolute rounded-full"
           style={{
@@ -73,12 +91,12 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
             height: '30vmax',
             left: '5%',
             top: '70%',
-            background: 'radial-gradient(circle, rgba(30,180,200,0.20) 0%, transparent 70%)',
+            background: `radial-gradient(circle, hsla(var(--accent-foreground), 0.15) 0%, transparent 70%)`,
             filter: 'blur(80px)',
-            animation: 'splashOrbIn 0.8s ease-out 0.55s both, splashOrbDrift3 18s ease-in-out 1.5s infinite',
+            animation: 'splashOrbIn 0.8s ease-out 0.55s both, splashDrift3 20s ease-in-out 1.5s infinite',
           }}
         />
-        {/* Amber accent */}
+        {/* Warm accent (info/skill hue) */}
         <div
           className="absolute rounded-full"
           style={{
@@ -86,21 +104,23 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
             height: '18vmax',
             left: '15%',
             top: '25%',
-            background: 'radial-gradient(circle, rgba(200,160,40,0.12) 0%, transparent 70%)',
+            background: `radial-gradient(circle, hsla(var(--info), 0.12) 0%, transparent 70%)`,
             filter: 'blur(70px)',
             animation: 'splashOrbIn 0.8s ease-out 0.6s both',
           }}
         />
       </div>
 
-      {/* ── Center text ────────────────────────────────── */}
+      {/* ── Central text ────────────────────────────────── */}
       <div className="relative z-10 flex flex-col items-center gap-3">
         {/* AWAKENING */}
         <span
-          className="font-light tracking-[0.35em] uppercase"
           style={{
             fontSize: '11px',
-            color: 'rgba(180,180,220,0.7)',
+            letterSpacing: '0.35em',
+            color: 'hsl(var(--muted-foreground))',
+            fontWeight: 300,
+            textTransform: 'uppercase',
             animation: 'splashTextIn 0.6s ease-out 0.8s both',
           }}
         >
@@ -109,10 +129,12 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
 
         {/* HAKUS */}
         <span
-          className="font-extralight tracking-[0.4em] uppercase"
           style={{
             fontSize: '18px',
-            background: 'linear-gradient(135deg, rgba(200,190,240,0.9) 0%, rgba(140,170,240,0.9) 50%, rgba(100,180,220,0.9) 100%)',
+            letterSpacing: '0.4em',
+            fontWeight: 200,
+            textTransform: 'uppercase',
+            background: `linear-gradient(135deg, hsl(var(--foreground)) 0%, hsl(var(--primary)) 60%, hsl(var(--ring)) 100%)`,
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
@@ -123,21 +145,21 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
         </span>
       </div>
 
-      {/* ── Keyframes injected once ────────────────────── */}
+      {/* ── Keyframes ───────────────────────────────────── */}
       <style>{`
         @keyframes splashOrbIn {
           from { opacity: 0; transform: scale(0.6); }
           to   { opacity: 1; transform: scale(1); }
         }
-        @keyframes splashOrbDrift1 {
+        @keyframes splashDrift1 {
           0%, 100% { transform: translate(0, 0); }
           50%      { transform: translate(3vw, -2vh); }
         }
-        @keyframes splashOrbDrift2 {
+        @keyframes splashDrift2 {
           0%, 100% { transform: translate(0, 0); }
           50%      { transform: translate(-2vw, 3vh); }
         }
-        @keyframes splashOrbDrift3 {
+        @keyframes splashDrift3 {
           0%, 100% { transform: translate(0, 0); }
           50%      { transform: translate(2vw, 2vh); }
         }
@@ -147,7 +169,7 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
         }
         @keyframes splashBreath {
           0%, 100% { opacity: 1; filter: brightness(1); }
-          50%      { opacity: 0.85; filter: brightness(1.15); }
+          50%      { opacity: 0.85; filter: brightness(1.12); }
         }
       `}</style>
     </div>
