@@ -13,6 +13,8 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
 import { useConnectionStore } from '@/store/connection'
+import { apiClient } from '@/api/client'
+import { backend as tauriBackend } from '@/api/tauriBridge'
 import { cn } from '@/lib/utils'
 
 function App() {
@@ -28,6 +30,25 @@ function App() {
   const loadSettings = useSettingsStore((s) => s.load)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
+
+  // Auto-start Python backend in Tauri desktop mode
+  useEffect(() => {
+    if (typeof __TAURI_INTERNALS__ === 'undefined') return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const result = await tauriBackend.start()
+        if (cancelled) return
+        if (result.ok && result.port) {
+          apiClient.setBaseUrl(`http://127.0.0.1:${result.port}`)
+          console.log(`[Tauri] Backend started on port ${result.port}`)
+        }
+      } catch (e) {
+        console.error('[Tauri] Failed to start backend:', e)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   // Initialize on first mount.
   useEffect(() => {
