@@ -155,6 +155,7 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     user-select: none;
+    overflow: hidden;
   }
   /* Allow text selection in chat / code blocks */
   .selectable,

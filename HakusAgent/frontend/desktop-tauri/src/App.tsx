@@ -45,11 +45,11 @@ function App() {
 
     setTimeout(() => {
       setSplashExiting(true)
-      // Wait for exit animation (0.5s in AwakenSplash) + small buffer
+      // Wait for exit animation (0.6s in AwakenSplash) + small buffer
       setTimeout(() => {
         setShowSplash(false)
         setAppReady(true)
-      }, 600)
+      }, 700)
     }, remaining)
   }, [splashExiting])
 
