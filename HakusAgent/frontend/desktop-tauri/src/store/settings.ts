@@ -72,7 +72,6 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       trayEnabled: all?.trayEnabled ?? DEFAULT_SETTINGS.trayEnabled,
       minimizeToTray: all?.minimizeToTray ?? DEFAULT_SETTINGS.minimizeToTray,
       toggleShortcut: all?.toggleShortcut || DEFAULT_SETTINGS.toggleShortcut,
-      toolCallDisplayMode: all?.toolCallDisplayMode || DEFAULT_SETTINGS.toolCallDisplayMode,
     }
   }
   // Browser dev fallback — localStorage
@@ -132,7 +131,6 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('trayEnabled', settings.trayEnabled)
     await api.set('minimizeToTray', settings.minimizeToTray)
     await api.set('toggleShortcut', settings.toggleShortcut)
-    await api.set('toolCallDisplayMode', settings.toolCallDisplayMode)
     return
   }
   localStorage.setItem('hakusai-settings', JSON.stringify(settings))

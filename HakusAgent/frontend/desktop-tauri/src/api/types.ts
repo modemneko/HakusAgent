@@ -542,6 +542,27 @@ export interface ToolCall {
   finished_at?: number
 }
 
+/**
+ * A run of assistant text bounded by tool calls.
+ *
+ * `after_tool_call_id` is set on every segment except the first one — it's
+ * the call_id of the tool call that PRECEDES this segment. The timeline
+ * renderer uses this to interleave text and tool-call bubbles in execution
+ * order, so the chat reads like an article (text → tool → text → tool → …).
+ */
+export interface TextSegment {
+  id: string
+  text: string
+  after_tool_call_id?: string
+}
+
+/** Same shape as TextSegment but holds reasoning/thinking-chain content. */
+export interface ReasoningSegment {
+  id: string
+  text: string
+  after_tool_call_id?: string
+}
+
 export interface QuestionAttachment {
   question_id: string
   question: string
@@ -565,6 +586,18 @@ export interface ChatMessage {
   content: string
   reasoning?: string
   tool_calls: ToolCall[]
+  /**
+   * Ordered text segments, one per "turn" between tool calls.
+   * - segments[0] = text before the first tool call
+   * - segments[i] (i>0) = text after tool_calls[i-1]
+   *
+   * For legacy messages loaded from the server (which stores only a flat
+   * `content` string), this is undefined and the renderer falls back to a
+   * single segment containing `content`.
+   */
+  text_segments?: TextSegment[]
+  /** Same as text_segments but for reasoning/thinking-chain content. */
+  reasoning_segments?: ReasoningSegment[]
   // Streaming flags
   streaming?: boolean
   // Metadata
@@ -724,8 +757,6 @@ export interface AppSettings {
   trayEnabled: boolean
   minimizeToTray: boolean
   toggleShortcut: string
-  // How tool calls are rendered in the chat timeline
-  toolCallDisplayMode: 'stacked' | 'inline'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -763,7 +794,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trayEnabled: true,
   minimizeToTray: true,
   toggleShortcut: 'Shift+CommandOrControl+H',
-  toolCallDisplayMode: 'stacked',
 }
 
 // =====================================================================

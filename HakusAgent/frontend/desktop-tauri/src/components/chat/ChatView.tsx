@@ -5,7 +5,7 @@ import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
 import { apiClient, HakusAIError } from '@/api/client'
-import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment } from '@/api/types'
+import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
 import { Composer, type QueuedComposerMessage } from './Composer'
@@ -21,6 +21,15 @@ import type { ChatMessage } from '@/api/types'
 interface TimelineMessageItem {
   kind: 'message'
   message: ChatMessage
+  /** When the assistant message owns multiple segments, this is the segment
+   *  index. -1 means "render as a plain user/system message". */
+  segmentIndex: number
+  /** Total number of segments in the owning assistant message (1 for user). */
+  totalSegments: number
+  /** Reasoning text paired with this segment (may be empty). */
+  reasoning: string
+  /** True only for the last segment of a streaming assistant message. */
+  isStreamingCursor: boolean
 }
 
 interface TimelineToolCallItem {
@@ -34,10 +43,20 @@ interface QueuedSendMessage extends QueuedComposerMessage {
   sessionId: string
 }
 
-function buildTimeline(
-  messages: ChatMessage[],
-  mode: 'stacked' | 'inline',
-): TimelineItem[] {
+/**
+ * Build a flat, article-style timeline: text → tool → text → tool → …
+ *
+ * For user messages, emits a single message item.
+ * For assistant messages, expands the message into multiple items by walking
+ * its `text_segments` and `tool_calls` arrays in lock-step:
+ *   - segment[i] is the text BEFORE tool_calls[i]
+ *   - segment[i+1] is the text AFTER tool_calls[i]
+ *
+ * If `text_segments` is missing (legacy messages), falls back to a single
+ * segment containing `content`. If `tool_calls` is longer than `segments-1`,
+ * the extra tool calls render at the end (no trailing text segment).
+ */
+function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
   // Deduplicate by message id to guard against backend/state bugs that
   // surface the same message twice. Keeps the first occurrence.
   const seen = new Set<string>()
@@ -47,19 +66,59 @@ function buildTimeline(
     return true
   })
 
-  if (mode === 'stacked') {
-    return uniqueMessages.map((m) => ({ kind: 'message', message: m }))
-  }
-
   const items: TimelineItem[] = []
-  uniqueMessages.forEach((msg) => {
-    items.push({ kind: 'message', message: msg })
-    if (msg.tool_calls && msg.tool_calls.length > 0) {
-      // Sort tool calls by start time so inline bubbles appear in execution order
-      const sortedCalls = [...msg.tool_calls].sort((a, b) => (a.started_at || 0) - (b.started_at || 0))
-      sortedCalls.forEach((tc) => items.push({ kind: 'tool_call', toolCall: tc }))
+  for (const msg of uniqueMessages) {
+    if (msg.role !== 'assistant') {
+      items.push({
+        kind: 'message',
+        message: msg,
+        segmentIndex: 0,
+        totalSegments: 1,
+        reasoning: '',
+        isStreamingCursor: false,
+      })
+      continue
     }
-  })
+
+    // Assistant message — expand into segments + tool calls
+    const textSegs: TextSegment[] =
+      msg.text_segments && msg.text_segments.length > 0
+        ? msg.text_segments
+        : [{ id: 'legacy', text: msg.content || '' }]
+    const reasonSegs = msg.reasoning_segments && msg.reasoning_segments.length > 0
+      ? msg.reasoning_segments
+      : []
+    // Tool calls sorted by start time so the visual order matches execution
+    const toolCalls = [...(msg.tool_calls || [])].sort(
+      (a, b) => (a.started_at || 0) - (b.started_at || 0),
+    )
+
+    const len = Math.max(textSegs.length, toolCalls.length)
+    for (let i = 0; i < len; i++) {
+      if (i < textSegs.length) {
+        const seg = textSegs[i]
+        const reasoning = reasonSegs[i]?.text || ''
+        const isLast = i === textSegs.length - 1
+        // Skip totally-empty non-last segments (no text + no reasoning) so we
+        // don't render a blank bubble between two tool calls. The last segment
+        // is always emitted so the streaming cursor has a home.
+        const isEmpty = !seg.text?.trim() && !reasoning?.trim()
+        if (!isEmpty || isLast) {
+          items.push({
+            kind: 'message',
+            message: msg,
+            segmentIndex: i,
+            totalSegments: textSegs.length,
+            reasoning,
+            isStreamingCursor: isLast && !!msg.streaming,
+          })
+        }
+      }
+      if (i < toolCalls.length) {
+        items.push({ kind: 'tool_call', toolCall: toolCalls[i] })
+      }
+    }
+  }
   return items
 }
 
@@ -85,7 +144,6 @@ export function ChatView() {
   const rewindToMessage = useSessionStore((s) => s.rewindToMessage)
 
   const settings = useSettingsStore()
-  const toolCallDisplayMode = useSettingsStore((s) => s.toolCallDisplayMode)
   const connState = useConnectionStore((s) => s.state)
   const agentMode = useAppStore((s) => s.agentMode)
   const connCheck = useConnectionStore((s) => s.check)
@@ -692,17 +750,20 @@ export function ChatView() {
           </div>
         ) : (
           <div className="mx-auto max-w-3xl py-6">
-            {buildTimeline(activeMessages, toolCallDisplayMode).map((item, idx, arr) => {
+            {buildTimeline(activeMessages).map((item, idx, arr) => {
               if (item.kind === 'message') {
                 return (
                   <MessageBubble
-                    key={item.message.id}
+                    key={`${item.message.id}#seg${item.segmentIndex}`}
                     message={item.message}
-                    isLast={idx === arr.length - 1}
+                    segmentIndex={item.segmentIndex}
+                    totalSegments={item.totalSegments}
+                    segmentReasoning={item.reasoning}
+                    isStreamingCursor={item.isStreamingCursor}
+                    isLastMessage={idx === arr.length - 1}
                     onRegenerate={handleRegenerate}
                     onRewind={handleRewind}
                     onAnswer={handleAnswerQuestion}
-                    hideToolCalls={toolCallDisplayMode === 'inline'}
                   />
                 )
               }

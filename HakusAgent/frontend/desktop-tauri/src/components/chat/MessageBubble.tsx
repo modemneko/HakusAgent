@@ -5,27 +5,42 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { ChatMessage } from '@/api/types'
 import { cn, copyToClipboard, formatTime } from '@/lib/utils'
-import { ToolCallStack } from './ToolCallStack'
+import { ReasoningLogItem } from './ReasoningLogItem'
 import { CodeBlock } from './CodeBlock'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/store/settings'
 
 interface MessageBubbleProps {
   message: ChatMessage
-  isLast: boolean
+  /** Index of the segment within message.text_segments to render. -1 (or 0 for
+   *  non-assistant messages) means "render the whole message" (user/system). */
+  segmentIndex?: number
+  /** Total segments in the owning assistant message (1 for user). Used to
+   *  decide whether to show the avatar (only on the first segment). */
+  totalSegments?: number
+  /** Reasoning text paired with this segment. */
+  segmentReasoning?: string
+  /** True if this is the last segment of a streaming assistant message —
+   *  controls the streaming cursor. */
+  isStreamingCursor?: boolean
+  /** True if this is the last item in the entire timeline — controls
+   *  regenerate button visibility. */
+  isLastMessage?: boolean
   onRegenerate?: () => void
   onRewind?: (messageId: string) => void
   onAnswer?: (messageId: string, choice: string) => void
-  hideToolCalls?: boolean
 }
 
 export const MessageBubble = memo(function MessageBubble({
   message,
-  isLast,
+  segmentIndex = 0,
+  totalSegments = 1,
+  segmentReasoning = '',
+  isStreamingCursor = false,
+  isLastMessage = false,
   onRegenerate,
   onRewind,
   onAnswer,
-  hideToolCalls,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false)
   const showReasoning = useSettingsStore((s) => s.showReasoning)
@@ -33,55 +48,87 @@ export const MessageBubble = memo(function MessageBubble({
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
 
+  // Pull the segment text for assistant messages; user/system messages
+  // ignore segmentIndex and use message.content directly.
+  const segmentText = isAssistant
+    ? (message.text_segments?.[segmentIndex]?.text ?? (segmentIndex === 0 ? message.content : ''))
+    : message.content
+
   const handleCopy = async () => {
-    const ok = await copyToClipboard(message.content)
+    const ok = await copyToClipboard(segmentText)
     if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     }
   }
 
+  // For assistant multi-segment messages, show the avatar only on the first
+  // segment so the chat reads like an article (one avatar per turn, with
+  // text/tool bubbles flowing below it).
+  const showAvatar = isUser || segmentIndex === 0
+  const isFirstSegmentOfAssistantTurn = isAssistant && segmentIndex === 0
+  const isLastSegmentOfAssistantTurn = isAssistant && segmentIndex === totalSegments - 1
+
+  // Reasoning for this segment — only show if user wants it AND there's content
+  // (or we're streaming this segment with no text yet, so the "thinking…"
+  // indicator has a home).
+  const reasoningText = isAssistant && showReasoning ? segmentReasoning : ''
+  const showReasoningBlock =
+    isAssistant &&
+    showReasoning &&
+    (!!reasoningText?.trim() || (isStreamingCursor && !segmentText?.trim()))
+
+  // Reduce vertical gap for non-first assistant segments so the article reads
+  // as a continuous flow rather than separate "messages".
+  const verticalGap =
+    isAssistant && !isFirstSegmentOfAssistantTurn ? 'py-1' : 'py-3'
+
   return (
     <div
       className={cn(
-        'group flex gap-3 px-5 py-3 animate-fade-in',
-        isUser && 'flex-row-reverse',
+        'group flex gap-3 px-5 animate-fade-in',
+        verticalGap,
+        isUser && 'flex-row-reverse py-3',
       )}
     >
-      {/* Avatar */}
-      <div
-        className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
-          isUser
-            ? 'bg-secondary text-secondary-foreground'
-            : 'bg-primary text-primary-foreground shadow-sm',
-        )}
-      >
-        {isUser ? <User className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-      </div>
+      {/* Avatar — only on first segment of an assistant turn (or always for user) */}
+      {showAvatar ? (
+        <div
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
+            isUser
+              ? 'bg-secondary text-secondary-foreground'
+              : 'bg-primary text-primary-foreground shadow-sm',
+          )}
+        >
+          {isUser ? <User className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+        </div>
+      ) : (
+        <div className="h-7 w-7 shrink-0" aria-hidden />
+      )}
 
       {/* Message body */}
       <div className={cn('flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
-        {/* Reasoning + tool calls — unified log-style stack (hidden in inline mode) */}
-        {!hideToolCalls &&
-          (message.tool_calls.length > 0 ||
-            (isAssistant && showReasoning && (!!message.reasoning || message.streaming))) && (
-          <ToolCallStack
-            toolCalls={message.tool_calls}
-            reasoning={isAssistant && showReasoning ? message.reasoning : undefined}
-            isStreaming={message.streaming}
-          />
+        {/* Reasoning (collapsible Think block) — shown above the text bubble */}
+        {showReasoningBlock && (
+          <div className="w-full overflow-hidden rounded-lg border border-amber-500/20 bg-amber-500/[0.03]">
+            <ReasoningLogItem
+              reasoning={reasoningText || ''}
+              isStreaming={isStreamingCursor && !segmentText?.trim()}
+            />
+          </div>
         )}
 
-        {/* Content bubble */}
-        {message.content && (
+        {/* Content bubble — subtle edges for assistant (article-like flow),
+            still prominent for user messages */}
+        {segmentText ? (
           <div
             className={cn(
               'selectable rounded-2xl px-4 py-2.5',
               isUser
                 ? 'border border-primary/35 bg-primary text-primary-foreground shadow-sm'
-                : 'border border-border/80 bg-card/95 text-card-foreground shadow-none',
-              message.streaming && 'ring-1 ring-primary/20',
+                : 'border border-transparent bg-transparent text-foreground shadow-none',
+              isStreamingCursor && 'ring-1 ring-primary/10',
             )}
             style={{ fontSize: `${fontSize}px` }}
           >
@@ -92,20 +139,31 @@ export const MessageBubble = memo(function MessageBubble({
                   rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
                   components={{ pre: CodeBlock }}
                 >
-                  {message.content}
+                  {segmentText}
                 </ReactMarkdown>
-                {message.streaming && (
+                {isStreamingCursor && (
                   <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse-dot bg-primary align-text-bottom" />
                 )}
               </div>
             ) : (
-              <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              <div className="whitespace-pre-wrap break-words">{segmentText}</div>
             )}
           </div>
+        ) : (
+          /* Streaming cursor when there's no text yet but the segment is the
+             active streaming one — give it a tiny host so the cursor shows. */
+          isStreamingCursor && (
+            <div
+              className="rounded-2xl px-4 py-2.5 ring-1 ring-primary/10"
+              style={{ fontSize: `${fontSize}px` }}
+            >
+              <span className="inline-block h-3.5 w-1.5 animate-pulse-dot bg-primary align-text-bottom" />
+            </div>
+          )
         )}
 
-        {/* Task progress / TODO list from agent execution */}
-        {isAssistant && message.task_progress && (
+        {/* Task progress — only on the last segment of the assistant turn */}
+        {isLastSegmentOfAssistantTurn && message.task_progress && (
           <div className="w-full rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4">
             <div className="mb-4 flex items-center gap-3 text-base font-semibold text-primary">
               <ListTodo className="h-5 w-5" />
@@ -149,8 +207,8 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {/* Interactive question from agent execution */}
-        {isAssistant && message.question && (
+        {/* Interactive question — only on the last segment */}
+        {isLastSegmentOfAssistantTurn && message.question && (
           <QuestionCard
             messageId={message.id}
             question={message.question}
@@ -158,58 +216,61 @@ export const MessageBubble = memo(function MessageBubble({
           />
         )}
 
-        {/* Error */}
-        {message.error && (
+        {/* Error — only on the last segment */}
+        {isLastSegmentOfAssistantTurn && message.error && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
             {message.error}
           </div>
         )}
 
-        {/* Footer: time + actions */}
-        <div
-          className={cn(
-            'flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100',
-            isUser && 'flex-row-reverse',
-          )}
-        >
-          <span>{formatTime(message.created_at)}</span>
-          {(message.input_tokens || message.output_tokens) && (
-            <span className="text-muted-foreground/70">
-              · {message.input_tokens || 0}↑ {message.output_tokens || 0}↓
-            </span>
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-5 w-5"
-            onClick={handleCopy}
-            title="Copy"
+        {/* Footer: time + actions — only on the last segment of an assistant turn,
+            or always for user messages */}
+        {(isUser || isLastSegmentOfAssistantTurn) && (
+          <div
+            className={cn(
+              'flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100',
+              isUser && 'flex-row-reverse',
+            )}
           >
-            {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-          </Button>
-          {isUser && onRewind && !message.streaming && (
+            <span>{formatTime(message.created_at)}</span>
+            {(message.input_tokens || message.output_tokens) && (
+              <span className="text-muted-foreground/70">
+                · {message.input_tokens || 0}↑ {message.output_tokens || 0}↓
+              </span>
+            )}
             <Button
               size="icon"
               variant="ghost"
               className="h-5 w-5"
-              onClick={() => onRewind(message.id)}
-              title="回撤此轮"
+              onClick={handleCopy}
+              title="Copy"
             >
-              <Undo2 className="h-3 w-3" />
+              {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
             </Button>
-          )}
-          {isAssistant && isLast && onRegenerate && !message.streaming && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-5 w-5"
-              onClick={onRegenerate}
-              title="Regenerate"
-            >
-              <RefreshCw className="h-3 w-3" />
-            </Button>
-          )}
-        </div>
+            {isUser && onRewind && !message.streaming && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-5 w-5"
+                onClick={() => onRewind(message.id)}
+                title="回撤此轮"
+              >
+                <Undo2 className="h-3 w-3" />
+              </Button>
+            )}
+            {isAssistant && isLastMessage && onRegenerate && !message.streaming && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-5 w-5"
+                onClick={onRegenerate}
+                title="Regenerate"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

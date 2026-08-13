@@ -23,7 +23,7 @@
  */
 
 import { create } from 'zustand'
-import type { ChatMessage, ChatSession, ToolCall } from '@/api/types'
+import type { ChatMessage, ChatSession, ToolCall, TextSegment, ReasoningSegment } from '@/api/types'
 import { generateId } from '@/lib/utils'
 import { apiClient } from '@/api/client'
 
@@ -80,15 +80,18 @@ interface SessionStore {
   /**
    * Create an assistant placeholder for streaming and remember it as the
    * current streaming log for the session. Returns the new message id.
+   * Initializes text_segments / reasoning_segments with one empty entry each
+   * so streaming tokens have somewhere to land.
    */
   startStreamingLog: (sessionId: string) => string
   /**
-   * Append text to the current streaming log for the session.
-   * Falls back to appendTextToMessage if no streaming log is tracked.
+   * Append text to the current streaming log's LAST text segment.
+   * Also keeps `content` in sync (concatenation of all segment texts joined
+   * by "\n\n") so the persisted shape stays compatible with the server schema.
    */
   appendToStreamingLog: (sessionId: string, text: string) => void
   /**
-   * Append reasoning text to the current streaming log for the session.
+   * Append reasoning text to the current streaming log's LAST reasoning segment.
    */
   appendReasoningToStreamingLog: (sessionId: string, text: string) => void
   /**
@@ -270,20 +273,34 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     try {
       const data = await apiClient.getSession(id)
       // Map ServerMessage -> ChatMessage (fields match closely)
-      const msgs: ChatMessage[] = (data.messages || []).map((m) => ({
-        id: m.id,
-        session_id: m.session_id,
-        role: m.role as ChatMessage['role'],
-        content: m.content,
-        reasoning: m.reasoning || undefined,
-        tool_calls: m.tool_calls || [],
-        input_tokens: m.input_tokens || undefined,
-        output_tokens: m.output_tokens || undefined,
-        error: m.error || undefined,
-        streaming: m.streaming,
-        created_at: m.created_at,
-        updated_at: m.updated_at,
-      }))
+      const msgs: ChatMessage[] = (data.messages || []).map((m) => {
+        const msg: ChatMessage = {
+          id: m.id,
+          session_id: m.session_id,
+          role: m.role as ChatMessage['role'],
+          content: m.content,
+          reasoning: m.reasoning || undefined,
+          tool_calls: m.tool_calls || [],
+          input_tokens: m.input_tokens || undefined,
+          output_tokens: m.output_tokens || undefined,
+          error: m.error || undefined,
+          streaming: m.streaming,
+          created_at: m.created_at,
+          updated_at: m.updated_at,
+        }
+        // Synthesize a single-segment layout for legacy server rows so the
+        // article-style renderer has a consistent shape to work with. The
+        // full content goes into one segment; tool calls render after it.
+        if (msg.role === 'assistant') {
+          if (!msg.text_segments) {
+            msg.text_segments = [{ id: generateId('seg_'), text: msg.content || '' }]
+          }
+          if (!msg.reasoning_segments) {
+            msg.reasoning_segments = [{ id: generateId('rseg_'), text: msg.reasoning || '' }]
+          }
+        }
+        return msg
+      })
       set({
         messages: { ...get().messages, [id]: msgs },
         hydratedSessionIds: new Set([...get().hydratedSessionIds, id]),
@@ -354,9 +371,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({
       messages: {
         ...get().messages,
-        [sessionId]: list.map((m) =>
-          m.id === messageId ? { ...m, ...patch, updated_at: Date.now() } : m,
-        ),
+        [sessionId]: list.map((m) => {
+          if (m.id !== messageId) return m
+          const next = { ...m, ...patch, updated_at: Date.now() }
+          // If patch overwrites content/reasoning wholesale (e.g. turn_completed
+          // delivers the final assembled string from the server), collapse the
+          // segment arrays into a single segment so the renderer doesn't show
+          // stale multi-segment text alongside the new content.
+          if (patch.content !== undefined) {
+            next.text_segments = [{ id: generateId('seg_'), text: patch.content }]
+          }
+          if (patch.reasoning !== undefined) {
+            next.reasoning_segments = [{ id: generateId('rseg_'), text: patch.reasoning }]
+          }
+          return next
+        }),
       },
     })
   },
@@ -367,9 +396,23 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({
       messages: {
         ...get().messages,
-        [sessionId]: list.map((m) =>
-          m.id === messageId ? { ...m, content: (m.content || '') + text, updated_at: Date.now() } : m,
-        ),
+        [sessionId]: list.map((m) => {
+          if (m.id !== messageId) return m
+          // Append to the last text segment (creating one if needed) and
+          // keep `content` in sync so persistence / external consumers still
+          // see the full string.
+          const segs = m.text_segments && m.text_segments.length > 0
+            ? [...m.text_segments]
+            : [{ id: generateId('seg_'), text: '' } as TextSegment]
+          const last = segs[segs.length - 1]
+          segs[segs.length - 1] = { ...last, text: last.text + text }
+          return {
+            ...m,
+            text_segments: segs,
+            content: segs.map((s) => s.text).filter(Boolean).join('\n\n'),
+            updated_at: Date.now(),
+          }
+        }),
       },
     })
   },
@@ -380,11 +423,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({
       messages: {
         ...get().messages,
-        [sessionId]: list.map((m) =>
-          m.id === messageId
-            ? { ...m, reasoning: (m.reasoning || '') + text, updated_at: Date.now() }
-            : m,
-        ),
+        [sessionId]: list.map((m) => {
+          if (m.id !== messageId) return m
+          const segs = m.reasoning_segments && m.reasoning_segments.length > 0
+            ? [...m.reasoning_segments]
+            : [{ id: generateId('rseg_'), text: '' } as ReasoningSegment]
+          const last = segs[segs.length - 1]
+          segs[segs.length - 1] = { ...last, text: last.text + text }
+          return {
+            ...m,
+            reasoning_segments: segs,
+            reasoning: segs.map((s) => s.text).filter(Boolean).join('\n\n'),
+            updated_at: Date.now(),
+          }
+        }),
       },
     })
   },
@@ -393,8 +445,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const id = get().addMessage(sessionId, {
       role: 'assistant',
       content: '',
+      reasoning: '',
       tool_calls: [],
       streaming: true,
+      text_segments: [{ id: generateId('seg_'), text: '' }],
+      reasoning_segments: [{ id: generateId('rseg_'), text: '' }],
     })
     set({ streamingLogId: { ...get().streamingLogId, [sessionId]: id } })
     return id
@@ -462,7 +517,32 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           // duplicate React keys when the backend retries or emits the event
           // more than once.
           const existing = m.tool_calls.filter((tc) => tc.call_id !== callId)
-          return { ...m, tool_calls: [...existing, toolCall], updated_at: Date.now() }
+          // Push a fresh empty text + reasoning segment so subsequent
+          // streaming tokens land in a NEW bubble (article-style flow:
+          // text → tool → text → tool → …). Only push if we don't already
+          // have a trailing empty segment for this call_id (idempotent on
+          // duplicate finished events).
+          const textSegs = m.text_segments && m.text_segments.length > 0
+            ? [...m.text_segments]
+            : [{ id: generateId('seg_'), text: m.content || '' } as TextSegment]
+          const lastText = textSegs[textSegs.length - 1]
+          if (!lastText || (lastText.after_tool_call_id !== callId && (lastText.text || lastText.after_tool_call_id))) {
+            textSegs.push({ id: generateId('seg_'), text: '', after_tool_call_id: callId })
+          }
+          const reasonSegs = m.reasoning_segments && m.reasoning_segments.length > 0
+            ? [...m.reasoning_segments]
+            : [{ id: generateId('rseg_'), text: m.reasoning || '' } as ReasoningSegment]
+          const lastReason = reasonSegs[reasonSegs.length - 1]
+          if (!lastReason || (lastReason.after_tool_call_id !== callId && (lastReason.text || lastReason.after_tool_call_id))) {
+            reasonSegs.push({ id: generateId('rseg_'), text: '', after_tool_call_id: callId })
+          }
+          return {
+            ...m,
+            tool_calls: [...existing, toolCall],
+            text_segments: textSegs,
+            reasoning_segments: reasonSegs,
+            updated_at: Date.now(),
+          }
         }),
       },
     })
