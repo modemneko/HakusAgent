@@ -1,29 +1,71 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HakusAI</title>
+    <title>HakasAI</title>
     <!--
-      Pre-React theme initialization:
-      Set 'dark' class on <html> immediately so CSS variables resolve
-      to the dark theme BEFORE React mounts. This eliminates the white flash.
-      The settings store will call applyTheme() later which may toggle the class
-      if the user chose light/system, but by then the splash has already rendered
-      with correct dark colors.
+      Pre-React theme initialization (inline, synchronous):
+      Resolve the saved theme BEFORE first paint so the <html> element gets the
+      correct `.dark` class (or not) and the critical inline <style> below paints
+      the right background/text color. This eliminates BOTH the white flash in
+      dark mode AND the "white text on white bg" invisibility bug in light mode
+      (which happened when the hardcoded class="dark" survived past applyTheme()
+      because settings.load() failed or was delayed).
+
+      Resolution order: electron.store is async and not available here, so we
+      fall back to localStorage (browser dev mode) or the system preference.
+      The settings store's applyTheme() will re-run after mount and is the
+      authoritative source — this inline script only prevents the initial flash.
     -->
+    <script>
+      (function () {
+        try {
+          var theme = 'system';
+          // 1. Try localStorage (browser dev mode / tauri localStorage mirror)
+          var raw = localStorage.getItem('hakusai-settings');
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && (parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system')) {
+              theme = parsed.theme;
+            }
+          }
+          // 2. Resolve 'system' to the OS preference
+          var resolved = theme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : theme;
+          // 3. Apply the class
+          if (resolved === 'dark') {
+            document.documentElement.classList.add('dark');
+          }
+          // NOTE: do NOT set a class for light — :root defaults are light.
+        } catch (e) {
+          // On any error, default to dark to preserve the original splash look.
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     <style>
-      /* Critical CSS: prevent white flash before framework loads */
+      /* Critical CSS: prevent flash before framework loads.
+         Colors here MUST match the resolved theme's --background / --foreground.
+         We use CSS variables + a light fallback so the page paints correctly
+         regardless of whether .dark was applied by the inline script above. */
       html, body, #root {
         margin: 0;
         padding: 0;
         height: 100%;
         overflow: hidden;
-        /* Use the dark theme background color directly.
-           This matches --background in .dark: hsl(240 5% 10%) ≈ #17171a */
-        background-color: #17171a;
-        color: #eeeef0;
+      }
+      /* Light theme base (matches :root in index.css) */
+      html {
+        background-color: hsl(210 20% 96%);
+        color: hsl(220 18% 12%);
+      }
+      /* Dark theme override (matches .dark in index.css) */
+      html.dark {
+        background-color: hsl(240 5% 10%);
+        color: hsl(220 10% 96%);
       }
     </style>
   </head>

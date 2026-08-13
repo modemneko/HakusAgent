@@ -148,9 +148,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   providersLoadingSince: null,
 
   load: async () => {
-    const loaded = await loadSettings()
+    let loaded: Partial<AppSettings> = {}
+    try {
+      loaded = await loadSettings()
+    } catch (e) {
+      // If the persistence layer (electron.store / localStorage) is
+      // unavailable or throws, we MUST still apply a theme — otherwise
+      // the hardcoded `class="dark"` from index.html survives forever
+      // and light-mode users see white-on-white text in the settings dialog.
+      console.error('[settings] loadSettings() failed, falling back to defaults:', e)
+    }
     const merged = { ...DEFAULT_SETTINGS, ...loaded } as AppSettings
     set({ ...merged, loaded: true })
+    // Always run applyTheme, even on error, so <html> reflects the resolved
+    // theme (default 'system' if loading failed) instead of staying stuck on
+    // whatever class index.html's inline script set.
     applyTheme(merged.theme)
   },
 

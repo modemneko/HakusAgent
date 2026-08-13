@@ -200,7 +200,12 @@ def _resolve_provider(explicit: Optional[str] = None) -> str:
       1. ``explicit`` — per-request override from ChatRequest.provider
          (this is what makes the TopBar "switch provider" dropdown work)
       2. ``HAKUSAI_SIDECAR_PROVIDER`` env var (set by electron launcher)
-      3. ``models.default_model`` in config.yaml (via BASE_CONFIG)
+      3. ``models.default_model`` in config.yaml — read LIVE via
+         ``hakus_config.get_config()`` so that a default-model change
+         performed via ``POST /api/config/default-model`` takes effect
+         immediately (without requiring a process restart).
+         Falls back to the module-level ``BASE_CONFIG`` if the live
+         config layer is unavailable.
       4. Fallback to "opencode" (the repo default, free models)
     """
     if explicit:
@@ -208,6 +213,17 @@ def _resolve_provider(explicit: Optional[str] = None) -> str:
     env = os.environ.get("HAKUSAI_SIDECAR_PROVIDER")
     if env:
         return env.lower()
+    try:
+        # Prefer the live config (reloaded by hakus_config.reload_config()
+        # whenever the default model is changed). This avoids the historic
+        # bug where BASE_CONFIG was frozen at process start and a provider
+        # switch didn't take effect until restart.
+        from utils.hakus_config import get_config
+        live = get_config().models.default_model
+        if live:
+            return str(live).lower()
+    except Exception:
+        pass
     try:
         from utils.config import BASE_CONFIG
         return str(BASE_CONFIG.get("DEFAULT_MODEL", "opencode")).lower()
@@ -350,6 +366,21 @@ def drop_agent(session_id: str, provider: Optional[str] = None) -> None:
         else:
             resolved = _resolve_provider(provider)
             _agent_cache.pop((session_id, resolved), None)
+
+
+def drop_all_agents() -> None:
+    """Drop every cached AgentCore.
+
+    Called when the default provider is changed via
+    ``POST /api/config/default-model`` (or via ``update_provider`` with
+    ``set_as_default: true``). Without this, paths that call
+    ``run_turn_*`` without an explicit ``provider`` (e.g. the WeChat
+    handler, the voice-call handler) would keep reusing the cached
+    ``(session_id, old_provider)`` agent instead of picking up the new
+    default.
+    """
+    with _agent_cache_lock:
+        _agent_cache.clear()
 
 
 async def _fleet_event_stream(

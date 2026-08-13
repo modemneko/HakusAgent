@@ -557,54 +557,108 @@ class HakusAIServer:
 
                 # 注册消息处理器：微信收到的消息转发给 AgentCore
                 async def _on_wechat_message(msg):
-                    """微信消息 → AgentCore → 回复（带 typing 状态），同时写入会话列表"""
-                    try:
-                        from .agent_bridge import run_turn_collect
-                        import time as _time
-                        import uuid
-                        user_id = msg.metadata.get("user_id", "")
-                        session_id = f"wechat_{user_id}"
-                        # 确保会话存在于 session_store，这样前端左侧栏能看到
-                        if not session_store.get_session(session_id):
-                            session_store.create_session(
-                                session_id,
-                                title=f"微信: {user_id}",
-                                provider="wechat",
-                            )
-                        # 存入用户消息
-                        user_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
-                        session_store.add_message(
-                            session_id, user_msg_id, role="user", content=msg.content,
+                    """微信消息 → AgentCore → 回复（带 typing 状态），同时写入会话列表
+
+                    Concurrency guard: 每个微信用户一把 asyncio.Lock。如果同一条
+                    消息被 SDK 重复投递（多 _poll_task / 重连重放 / dedup 漏网），
+                    第二个调用会在锁上排队或被丢弃，而不是再起一个完整的 agent
+                    turn + 再发一条微信回复。这样就避免了一条入站消息触发 N 条
+                    回复的循环。
+                    """
+                    user_id = msg.metadata.get("user_id", "")
+                    if not user_id:
+                        logger.warning("WeChat: dropping message with empty user_id")
+                        return
+
+                    lock = await wechat._get_user_lock(user_id)
+                    if lock.locked():
+                        # 一条消息正在处理中 — 丢弃重复投递，避免 N 个并发 turn
+                        logger.warning(
+                            f"WeChat: dropping duplicate msg for user_id={user_id} "
+                            f"(a turn is already in flight)"
                         )
-                        session_store.update_session(session_id, touch_updated=True)
-                        # 发送 typing 状态：对方正在输入…
-                        if wechat.wechat_config.typing_status:
-                            await wechat.send_typing(user_id, typing=True)
-                        # 调用 AgentCore 获取回复
-                        result = await run_turn_collect(msg.content, session_id, provider=None)
-                        reply_text = result.get("content", "") if result else ""
-                        # 存入 AI 回复
-                        if reply_text:
-                            ai_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+                        return
+
+                    async with lock:
+                        try:
+                            from .agent_bridge import run_turn_collect
+                            import uuid
+                            session_id = f"wechat_{user_id}"
+                            # 确保会话存在于 session_store，这样前端左侧栏能看到
+                            if not session_store.get_session(session_id):
+                                session_store.create_session(
+                                    session_id,
+                                    title=f"微信: {user_id}",
+                                    provider="wechat",
+                                )
+                            # 存入用户消息
+                            user_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
                             session_store.add_message(
-                                session_id, ai_msg_id, role="assistant", content=reply_text,
+                                session_id, user_msg_id, role="user", content=msg.content,
                             )
                             session_store.update_session(session_id, touch_updated=True)
-                        # 取消 typing 状态
-                        if wechat.wechat_config.typing_status:
-                            await wechat.send_typing(user_id, typing=False)
-                        if reply_text:
-                            from hakusai_core.v2.platform.base import SendMessage
-                            send_msg = SendMessage(content=reply_text, metadata={"user_id": user_id})
-                            await wechat.send_message(send_msg)
-                    except Exception as e:
-                        logger.error(f"WeChat message handler error: {e}")
-                        # 出错也要取消 typing
-                        try:
+                            # 发送 typing 状态：对方正在输入…
+                            if wechat.wechat_config.typing_status:
+                                await wechat.send_typing(user_id, typing=True)
+
+                            # Resolve the current default provider LIVE so that
+                            # a switch via /api/config/default-model takes effect
+                            # immediately for WeChat (not just after restart).
+                            wechat_provider = None
+                            try:
+                                from utils.hakus_config import get_config
+                                wechat_provider = get_config().models.default_model or None
+                            except Exception:
+                                pass
+
+                            # 调用 AgentCore 获取回复
+                            result = await run_turn_collect(
+                                msg.content, session_id, provider=wechat_provider
+                            )
+                            reply_text = result.get("content", "") if result else ""
+                            failed = bool(result and result.get("failed"))
+
+                            # 存入 AI 回复（即使失败也存一条，方便前端看到错误）
+                            if reply_text:
+                                ai_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+                                session_store.add_message(
+                                    session_id, ai_msg_id, role="assistant", content=reply_text,
+                                )
+                                session_store.update_session(session_id, touch_updated=True)
+                            # 取消 typing 状态
                             if wechat.wechat_config.typing_status:
                                 await wechat.send_typing(user_id, typing=False)
-                        except Exception:
-                            pass
+
+                            # Don't relay model-error strings to WeChat —
+                            # the user would just see "[Error: 模型调用失败:RateLimitError]"
+                            # which is meaningless to them. Send a friendly
+                            # fallback instead. (The full error is already in
+                            # the session_store and visible in the desktop UI.)
+                            if failed or not reply_text:
+                                logger.warning(
+                                    f"WeChat: agent turn failed for user_id={user_id}, "
+                                    f"sending fallback message instead of error string"
+                                )
+                                fallback = "AI 暂时不可用，请稍后重试"
+                                from hakusai_core.v2.platform.base import SendMessage
+                                send_msg = SendMessage(
+                                    content=fallback, metadata={"user_id": user_id}
+                                )
+                                await wechat.send_message(send_msg)
+                            elif reply_text:
+                                from hakusai_core.v2.platform.base import SendMessage
+                                send_msg = SendMessage(
+                                    content=reply_text, metadata={"user_id": user_id}
+                                )
+                                await wechat.send_message(send_msg)
+                        except Exception as e:
+                            logger.error(f"WeChat message handler error: {e}")
+                            # 出错也要取消 typing
+                            try:
+                                if wechat.wechat_config.typing_status:
+                                    await wechat.send_typing(user_id, typing=False)
+                            except Exception:
+                                pass
 
                 wechat.on_message(_on_wechat_message)
                 logger.info("WeChat ClawBot platform registered (disabled by default)")
@@ -811,6 +865,20 @@ class HakusAIServer:
                 logger.info("[WS] background loops stopped")
             except Exception as e:
                 logger.warning(f"[WS] background loops stop failed: {e}")
+
+            # Disconnect WeChat platform so its _poll_task is cancelled
+            # before the process exits. Without this, a restarted backend
+            # would briefly coexist with the previous process's still-running
+            # poll loop, and both would receive + handle the same inbound
+            # WeChat message → duplicate replies.
+            try:
+                wechat_plat = platform_manager.get("wechat")
+                if wechat_plat is not None and getattr(wechat_plat, "_connected", False):
+                    logger.info("[WeChat] disconnecting on shutdown...")
+                    await wechat_plat.disconnect()
+                    logger.info("[WeChat] disconnected")
+            except Exception as e:
+                logger.warning(f"[WeChat] disconnect on shutdown failed: {e}")
         
         app = FastAPI(
             title="HakusAI API",
@@ -1923,6 +1991,25 @@ class HakusAIServer:
                 await config_manager.reload()
             except Exception as e:
                 logger.warning(f"Config saved but reload failed: {e}")
+
+            # If this update also set a new default model, we MUST refresh
+            # the legacy BASE_CONFIG + cached HakusConfig singletons and
+            # drop every cached AgentCore. Otherwise code paths that call
+            # run_turn_* without an explicit provider (WeChat handler,
+            # voice-call handler) would keep using the old default until
+            # the process is restarted — the "switched to DeepSeek but
+            # still using opencode" bug.
+            if request.get("set_as_default"):
+                try:
+                    from utils.hakus_config import reload_config as _hakus_reload
+                    _hakus_reload()
+                except Exception as e:
+                    logger.warning(f"hakus_config.reload_config() failed: {e}")
+                try:
+                    from .agent_bridge import drop_all_agents
+                    drop_all_agents()
+                except Exception as e:
+                    logger.warning(f"drop_all_agents() failed: {e}")
             return {"message": "Provider config saved", "provider": provider_id}
 
         @app.post("/api/config/default-model")
@@ -1955,6 +2042,23 @@ class HakusAIServer:
                 await config_manager.reload()
             except Exception as e:
                 logger.warning(f"Default model saved but reload failed: {e}")
+
+            # Refresh the legacy BASE_CONFIG + cached HakusConfig singletons
+            # AND drop every cached AgentCore. Without this, code paths that
+            # call run_turn_* without an explicit provider (WeChat handler,
+            # voice-call handler, and any React stale-closure on the desktop
+            # client that forgets to send `provider` in the request body)
+            # would keep using the old default until the process is restarted.
+            try:
+                from utils.hakus_config import reload_config as _hakus_reload
+                _hakus_reload()
+            except Exception as e:
+                logger.warning(f"hakus_config.reload_config() failed: {e}")
+            try:
+                from .agent_bridge import drop_all_agents
+                drop_all_agents()
+            except Exception as e:
+                logger.warning(f"drop_all_agents() failed: {e}")
             return {"message": "Default model updated", "default_model": provider_id}
 
         # ========== Provider 运维操作 API ==========
