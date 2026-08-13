@@ -6,3 +6,10 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 target/
+
+# Runtime data dir created by the Python backend when it inherits CWD =
+# src-tauri/ (e.g. legacy "data/memories" relative paths). Ignored so it
+# neither gets committed nor triggers Tauri's dev file watcher into a
+# rebuild loop. The backend itself has been fixed to write to
+# ~/.hakus/data/memories/, but this stays as a safety net.
+/data/

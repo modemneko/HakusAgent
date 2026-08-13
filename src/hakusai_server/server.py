@@ -413,7 +413,21 @@ class HakusAIServer:
             
             # 初始化记忆系统
             try:
+                # IMPORTANT: resolve memory data_dir to an ABSOLUTE path under
+                # ~/.hakus/data/memories/. The previous default was the
+                # relative path "data/memories", which — when this server is
+                # spawned by Tauri's `cargo run` (CWD = src-tauri/) — would
+                # write short_term.json / long_term.json into src-tauri/data/.
+                # That dir is watched by Tauri's dev file watcher, so every
+                # memory write triggered a full app rebuild + backend respawn
+                # → infinite restart loop. Pin to an absolute user-home path
+                # so writes never land inside the source tree.
+                _hakus_root = os.path.expanduser("~/.hakus")
+                _mem_data_dir = os.path.join(_hakus_root, "data", "memories")
+                _mem_vector_dir = os.path.join(_mem_data_dir, "vectors")
                 memory_config = MemoryStorage(
+                    data_dir=_mem_data_dir,
+                    vector_db_path=_mem_vector_dir,
                     max_short_term=self.config.memory.short_term_max,
                     enable_long_term=self.config.memory.long_term_enabled,
                     auto_summary=self.config.memory.auto_summary,
