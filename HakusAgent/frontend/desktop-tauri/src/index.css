@@ -171,6 +171,17 @@
   }
 }
 
+/* Disable width transitions on panel wrappers while a resize handle
+   is being actively dragged. The 200ms ease-out transition is great
+   for open/close animations, but during a live drag it makes the
+   panel lag behind the cursor — which feels like the resize direction
+   is reversed. The ResizeHandle component sets data-resizing on
+   <html> during the drag and removes it on pointer up. */
+:root[data-resizing] [data-testid="sidebar-wrapper"],
+:root[data-resizing] [data-testid="right-panel-wrapper"] {
+  transition: none !important;
+}
+
 /* Scrollbar styles */
 ::-webkit-scrollbar {
   width: 8px;

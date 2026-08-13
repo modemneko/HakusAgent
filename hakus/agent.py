@@ -1455,6 +1455,13 @@ class AgentCore:
             "model": self._model.model_name,
             "messages": messages,
             "stream": True,
+            # Set an explicit max_tokens so the model has enough room to
+            # emit tool calls. Without this, some providers (especially
+            # "flash" variants) default to a low max_tokens, causing the
+            # response to be truncated (finish_reason="length") before
+            # any tool_calls can be emitted — the agent then sees no
+            # tool calls and ends the turn prematurely.
+            "max_tokens": 8192,
         }
         if tools:
             kwargs["tools"] = tools
@@ -2915,6 +2922,7 @@ class AgentCore:
                 timed_out = False
                 cancelled_mid_stream = False
                 cancel_reason = ""
+                stream_finish_reason = ""  # captured from last chunk
 
                 # Stream iteration. In TUI mode, _create_stream
                 # delegates to _create_stream_isolated which runs
@@ -2951,6 +2959,12 @@ class AgentCore:
                         if not chunk.choices:
                             continue
                         delta = chunk.choices[0].delta
+                        # Capture finish_reason from the stream (typically
+                        # set on the last chunk). Used after the loop to
+                        # detect truncation (finish_reason="length").
+                        _fr = getattr(chunk.choices[0], "finish_reason", None)
+                        if _fr:
+                            stream_finish_reason = _fr
                         if delta.content:
                             full_response += delta.content
                             cleaned = _strip_dsml_xml(
@@ -3040,6 +3054,33 @@ class AgentCore:
                 # 5) No tool calls → turn done. Final text is the
                 #    assistant's last response.
                 if not api_tool_calls:
+                    # ── Diagnostic: why did the turn end without tool calls?
+                    #    This helps surface two common failure modes:
+                    #    (a) finish_reason="length" → response was truncated
+                    #        by max_tokens before tool_calls could be emitted.
+                    #    (b) finish_reason="stop" with short text → the model
+                    #        chose to respond conversationally instead of
+                    #        using tools (common with "flash"/small models).
+                    if stream_finish_reason == "length":
+                        logger.warning(
+                            f"Turn ended with finish_reason='length' (truncated). "
+                            f"The model's response was cut off at max_tokens before "
+                            f"it could emit tool calls. Consider increasing max_tokens "
+                            f"or using a model with better tool-calling support. "
+                            f"Response so far ({len(full_response)} chars): "
+                            f"{full_response[:200]!r}"
+                        )
+                    elif stream_finish_reason == "stop" and len(full_response) < 500:
+                        # Short conversational response with no tool calls —
+                        # the model is likely acknowledging the request without
+                        # actually acting on it. This is a model capability issue,
+                        # not a code bug. Log it so the user can diagnose.
+                        logger.warning(
+                            f"Turn ended with finish_reason='stop' but no tool calls "
+                            f"and only {len(full_response)} chars of text. The model "
+                            f"('{self._model_type}') may lack tool-calling capability. "
+                            f"Response: {full_response[:200]!r}"
+                        )
                     # Harness: record final answer and finalize
                     if self._trajectory:
                         try:

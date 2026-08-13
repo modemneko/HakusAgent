@@ -71,8 +71,13 @@ export function ResizeHandle({
     setDragging(true)
     startXRef.current = e.clientX
     startWidthRef.current = getCurrentWidth()
+    // Mark the document as "currently resizing" so CSS can disable
+    // width transitions on panel wrappers. Without this, the 200ms
+    // transition on the wrapper makes the panel lag behind the cursor
+    // during drag, which feels like the resize direction is reversed.
+    document.documentElement.setAttribute('data-resizing', cssVar)
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-  }, [getCurrentWidth])
+  }, [getCurrentWidth, cssVar])
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging) return
@@ -111,9 +116,11 @@ export function ResizeHandle({
       }
     }
     setDragging(false)
+    // Re-enable CSS transitions on panel wrappers.
+    document.documentElement.removeAttribute('data-resizing')
   }, [collapseThreshold, getCurrentWidth, cssVar, minPx])
 
-  // Reset cursor on unmount
+  // Reset cursor on unmount + cleanup data-resizing if drag is interrupted
   useEffect(() => {
     if (dragging) {
       document.body.style.cursor = 'col-resize'
@@ -125,6 +132,10 @@ export function ResizeHandle({
     return () => {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      // Safety: if the component unmounts mid-drag (e.g. panel closed
+      // via keyboard shortcut), make sure we don't leave data-resizing
+      // stuck on <html> and freezing all panel transitions forever.
+      document.documentElement.removeAttribute('data-resizing')
     }
   }, [dragging])
 
