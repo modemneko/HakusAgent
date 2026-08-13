@@ -4,7 +4,7 @@ import { Toaster } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/layout/TopBar'
-import { BottomStatusBar } from '@/components/layout/BottomStatusBar'
+import { ResizeHandle } from '@/components/layout/ResizeHandle'
 import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { AwakenSplash } from '@/components/AwakenSplash'
@@ -179,6 +179,11 @@ function App() {
               <Sidebar />
             </div>
 
+            {/* Sidebar resize handle */}
+            {sidebarOpen && (
+              <ResizeHandle cssVar="--sidebar-width" side="left" minPx={160} maxPx={480} />
+            )}
+
             <div className="flex min-h-0 flex-1 flex-col">
               <TopBar
                 onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
@@ -187,6 +192,11 @@ function App() {
               />
               <ChatView />
             </div>
+
+            {/* Right panel resize handle */}
+            {rightPanelOpen && (
+              <ResizeHandle cssVar="--right-panel-width" side="right" minPx={240} maxPx={720} />
+            )}
 
             <div
               data-testid="right-panel-wrapper"
@@ -199,8 +209,6 @@ function App() {
               <RightPanel />
             </div>
           </div>
-
-          <BottomStatusBar />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
           <Toaster />
         </div>
