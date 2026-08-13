@@ -202,15 +202,15 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
         }}
       />
 
-      {/* ── Layer 6: Central text ────────────────────────────── */}
-      <div className="relative z-10 flex flex-col items-center gap-3">
+      {/* ── Layer 6: Central text (single row) ─────────────── */}
+      <div className="relative z-10 flex flex-row items-baseline gap-4">
         {/* AWAKENING */}
         <span
           style={{
             fontSize: '11px',
             letterSpacing: '0.35em',
             color: 'hsl(var(--muted-foreground) / 0.7)',
-            fontWeight: 300,
+            fontWeight: 400,
             textTransform: 'uppercase' as const,
             animation: 'splashTextIn 0.6s ease-out 0.8s both',
           }}
@@ -218,12 +218,12 @@ export function AwakenSplash({ exiting }: AwakenSplashProps) {
           A W A K E N I N G
         </span>
 
-        {/* HAKUS — gradient text */}
+        {/* HAKUS — gradient text (heavier weight for legibility) */}
         <span
           style={{
             fontSize: '18px',
             letterSpacing: '0.4em',
-            fontWeight: 200,
+            fontWeight: 500,
             textTransform: 'uppercase' as const,
             background: `linear-gradient(
               135deg,

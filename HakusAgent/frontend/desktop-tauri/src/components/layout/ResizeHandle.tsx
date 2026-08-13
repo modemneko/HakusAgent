@@ -9,8 +9,12 @@
  *   cssVar     — e.g. '--sidebar-width' or '--right-panel-width'
  *   side       — 'left' means panel is on the left of the handle (drag right → wider)
  *                'right' means panel is on the right of the handle (drag left → wider)
- *   minPx      — minimum width in px (default 180)
+ *   minPx      — minimum width in px when the panel is OPEN (default 180)
  *   maxPx      — maximum width in px (default 600)
+ *   collapseThreshold — if provided, dragging the panel narrower than this
+ *                triggers `onCollapse` (e.g. auto-hide the sidebar).
+ *   onCollapse — callback invoked when the collapse threshold is crossed
+ *                during an active drag.
  */
 
 import { useCallback, useRef, useEffect, useState } from 'react'
@@ -20,6 +24,8 @@ interface ResizeHandleProps {
   side: 'left' | 'right'
   minPx?: number
   maxPx?: number
+  collapseThreshold?: number
+  onCollapse?: () => void
 }
 
 export function ResizeHandle({
@@ -27,11 +33,17 @@ export function ResizeHandle({
   side,
   minPx = 180,
   maxPx = 600,
+  collapseThreshold,
+  onCollapse,
 }: ResizeHandleProps) {
   const [hovering, setHovering] = useState(false)
   const [dragging, setDragging] = useState(false)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
+  // When collapse is enabled, the visual floor during drag is the collapse
+  // threshold so the user gets feedback that they're entering the collapse
+  // zone. Without collapse, the floor is just minPx.
+  const dragFloor = collapseThreshold ?? minPx
 
   // Read the current pixel value of the CSS variable
   const getCurrentWidth = useCallback(() => {
@@ -45,11 +57,13 @@ export function ResizeHandle({
     return px
   }, [cssVar])
 
-  // Set the CSS variable to a px value
+  // Set the CSS variable to a px value (clamped to [dragFloor, maxPx]).
+  // dragFloor lets the panel visually shrink into the collapse zone when
+  // collapseThreshold is configured.
   const setWidth = useCallback((px: number) => {
-    const clamped = Math.max(minPx, Math.min(maxPx, px))
+    const clamped = Math.max(dragFloor, Math.min(maxPx, px))
     document.documentElement.style.setProperty(cssVar, `${clamped}px`)
-  }, [cssVar, minPx, maxPx])
+  }, [cssVar, dragFloor, maxPx])
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
@@ -68,12 +82,36 @@ export function ResizeHandle({
     const newWidth = side === 'left'
       ? startWidthRef.current + delta
       : startWidthRef.current - delta
+
+    // Auto-collapse: if the user dragged the panel narrower than the
+    // threshold, fire onCollapse and stop the drag. Also reset the CSS
+    // variable to minPx so the panel reopens at a sensible width later.
+    if (
+      collapseThreshold !== undefined &&
+      onCollapse &&
+      newWidth <= collapseThreshold
+    ) {
+      onCollapse()
+      document.documentElement.style.setProperty(cssVar, `${minPx}px`)
+      setDragging(false)
+      return
+    }
+
     setWidth(newWidth)
-  }, [dragging, side, setWidth])
+  }, [dragging, side, setWidth, collapseThreshold, onCollapse, cssVar, minPx])
 
   const onPointerUp = useCallback(() => {
+    // If the user released the drag below minPx (but above the collapse
+    // threshold, otherwise onCollapse would have fired already), snap the
+    // width back to minPx so the panel doesn't stay in a weird half-state.
+    if (collapseThreshold !== undefined) {
+      const currentWidth = getCurrentWidth()
+      if (currentWidth < minPx) {
+        document.documentElement.style.setProperty(cssVar, `${minPx}px`)
+      }
+    }
     setDragging(false)
-  }, [])
+  }, [collapseThreshold, getCurrentWidth, cssVar, minPx])
 
   // Reset cursor on unmount
   useEffect(() => {

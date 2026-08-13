@@ -179,9 +179,16 @@ function App() {
               <Sidebar />
             </div>
 
-            {/* Sidebar resize handle */}
+            {/* Sidebar resize handle — auto-collapses when dragged narrow */}
             {sidebarOpen && (
-              <ResizeHandle cssVar="--sidebar-width" side="left" minPx={160} maxPx={480} />
+              <ResizeHandle
+                cssVar="--sidebar-width"
+                side="left"
+                minPx={160}
+                maxPx={480}
+                collapseThreshold={120}
+                onCollapse={() => useAppStore.getState().setSidebar(false)}
+              />
             )}
 
             <div className="flex min-h-0 flex-1 flex-col">
