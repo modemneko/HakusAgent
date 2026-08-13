@@ -1,5 +1,8 @@
 name: Build & Release
 
+# Temporarily disabled — re-enable by changing `if:` to `true` when needed.
+# Trigger conditions kept as-is (tag push + manual) so existing behavior
+# is preserved once re-enabled.
 on:
   push:
     tags:
@@ -8,6 +11,8 @@ on:
 
 jobs:
   build:
+    # Disable until Action quota is replenished.
+    if: false
     strategy:
       fail-fast: false
       matrix:
