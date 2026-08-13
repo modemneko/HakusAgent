@@ -8,7 +8,7 @@ use backend::BackendState;
 use tauri::{
     Manager, WindowEvent, RunEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
 };
 use tauri_plugin_store::StoreExt;
 
@@ -56,25 +56,16 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 /// Build (or reconfigure) the system tray icon with a context menu and
 /// click handler. Idempotent — safe to call multiple times.
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    // Try to retrieve the tray icon auto-created from tauri.conf.json's
-    // `trayIcon` block (id defaults to "main" when not specified). If it
-    // isn't there, fall back to building one manually.
+    // Retrieve the tray icon auto-created from tauri.conf.json's `trayIcon`
+    // block (id defaults to "main" when not specified). If it isn't there
+    // (config block removed / auto-creation failed), just bail — we don't
+    // try to build one manually because that would require icon loading
+    // plumbing that's easy to get wrong.
     let tray = match app.tray_by_id("main") {
         Some(t) => t,
         None => {
-            // Manual fallback — build a tray from scratch with the bundled
-            // icon. This path runs if the config block is removed or the
-            // auto-created tray failed to materialize.
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or_else(|| "no default window icon available".to_string())?;
-            TrayIconBuilder::with_id("main")
-                .icon(icon)
-                .tooltip("HakusAI")
-                .build(app)?;
-            app.tray_by_id("main")
-                .ok_or_else(|| "failed to build tray icon".to_string())?
+            eprintln!("[setup] No tray icon with id 'main' found — skipping tray setup");
+            return Ok(());
         }
     };
 
@@ -176,13 +167,11 @@ pub fn run() {
         // any source — tray context menu, window menu, etc. This is more
         // robust than tray.on_menu_event which can be silently overwritten.
         .on_menu_event(|app, event| {
-            match event.id.as_ref() {
-                "tray_show" => toggle_main_window(app),
-                "tray_quit" => {
-                    kill_backend(app);
-                    app.exit(0);
-                }
-                _ => {}
+            if event.id() == "tray_show" {
+                toggle_main_window(app);
+            } else if event.id() == "tray_quit" {
+                kill_backend(app);
+                app.exit(0);
             }
         })
 
