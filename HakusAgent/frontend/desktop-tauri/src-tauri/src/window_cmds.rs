@@ -2,6 +2,24 @@
 //! No more IPC bridge needed — Tauri window API handles this natively.
 
 use tauri::{AppHandle, Manager};
+use tauri_plugin_store::StoreExt;
+
+/// Read (trayEnabled, minimizeToTray) from the persisted settings store.
+fn read_tray_settings(app: &AppHandle) -> (bool, bool) {
+    let store = match app.store("settings.json") {
+        Ok(s) => s,
+        Err(_) => return (true, false),
+    };
+    let tray_enabled = store
+        .get("trayEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let minimize_to_tray = store
+        .get("minimizeToTray")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    (tray_enabled, minimize_to_tray)
+}
 
 #[tauri::command]
 pub fn window_minimize(app: AppHandle) -> Result<bool, String> {
@@ -28,10 +46,27 @@ pub fn window_toggle_maximize(app: AppHandle) -> Result<bool, String> {
     }
 }
 
+/// Close (or hide) the main window.
+///
+/// When `trayEnabled && minimizeToTray` are both on, hides the window
+/// instead of closing it so the app keeps running in the tray. The user
+/// can re-open it via the tray icon (left-click or "显示/隐藏窗口" menu).
+///
+/// Otherwise, calls `window.close()` which fires `CloseRequested` — the
+/// `on_window_event` handler in lib.rs will let it through and kill the
+/// Python backend child process before the window actually closes.
 #[tauri::command]
 pub fn window_close(app: AppHandle) -> Result<bool, String> {
+    let (tray_enabled, minimize_to_tray) = read_tray_settings(&app);
     if let Some(window) = app.get_webview_window("main") {
-        window.close().map_err(|e| e.to_string())?;
+        if tray_enabled && minimize_to_tray {
+            window.hide().map_err(|e| e.to_string())?;
+        } else {
+            // This fires CloseRequested; the on_window_event handler will
+            // let it through (since minimizeToTray is false) and kill the
+            // backend in the process.
+            window.close().map_err(|e| e.to_string())?;
+        }
         Ok(true)
     } else {
         Err("No main window".into())
