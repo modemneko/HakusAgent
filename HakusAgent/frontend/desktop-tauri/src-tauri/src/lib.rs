@@ -7,8 +7,8 @@ mod shortcut_cmds;
 use backend::BackendState;
 use tauri::{
     Manager, WindowEvent, RunEvent,
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_store::StoreExt;
 
@@ -35,10 +35,20 @@ fn read_tray_settings(app: &tauri::AppHandle) -> (bool, bool) {
 /// so the backend doesn't linger as an orphan after the UI disappears.
 fn kill_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<BackendState>() {
-        if let Ok(mut child_lock) = state.child.lock() {
-            if let Some(child) = child_lock.take() {
-                let _ = child.kill();
-            }
+        state.kill_child();
+    }
+}
+
+/// Toggle the main window's visibility — used by tray left-click and the
+/// "显示/隐藏窗口" context menu item. If the window is visible, hide it;
+/// if hidden, show + focus it.
+fn toggle_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
         }
     }
 }
@@ -46,26 +56,41 @@ fn kill_backend(app: &tauri::AppHandle) {
 /// Build (or reconfigure) the system tray icon with a context menu and
 /// click handler. Idempotent — safe to call multiple times.
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    // Tauri's `trayIcon` config in tauri.conf.json auto-creates a tray icon
-    // with id "main" once the `tray-icon` feature is enabled. Retrieve it
-    // and attach our menu + event handlers.
+    // Try to retrieve the tray icon auto-created from tauri.conf.json's
+    // `trayIcon` block (id defaults to "main" when not specified). If it
+    // isn't there, fall back to building one manually.
     let tray = match app.tray_by_id("main") {
         Some(t) => t,
         None => {
-            // Fallback: build a tray icon manually if the config-defined one
-            // isn't present (e.g. if the config block is removed later).
-            return Ok(());
+            // Manual fallback — build a tray from scratch with the bundled
+            // icon. This path runs if the config block is removed or the
+            // auto-created tray failed to materialize.
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| "no default window icon available".to_string())?;
+            TrayIconBuilder::with_id("main")
+                .icon(icon)
+                .tooltip("HakusAI")
+                .build(app)?;
+            app.tray_by_id("main")
+                .ok_or_else(|| "failed to build tray icon".to_string())?
         }
     };
 
-    // Build the right-click context menu.
-    let show_item = MenuItem::with_id(app, "show", "显示/隐藏窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出 HakusAI", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    // Build the right-click context menu. Use a separator between the
+    // show/hide action and the quit action so the destructive option is
+    // visually distinct — this matches native Windows app conventions.
+    let show_item = MenuItem::with_id(app, "tray_show", "显示/隐藏窗口", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, "tray_quit", "退出 HakusAI", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &sep, &quit_item])?;
     tray.set_menu(Some(menu))?;
     let _ = tray.set_tooltip(Some("HakusAI"));
 
     // Left-click toggles window visibility (Windows / Linux convention).
+    // Right-click is handled automatically by the OS — it shows the menu
+    // set via set_menu() above.
     tray.on_tray_icon_event(|tray, event| {
         if let TrayIconEvent::Click {
             button: MouseButton::Left,
@@ -73,37 +98,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             ..
         } = event
         {
-            let app = tray.app_handle();
-            if let Some(window) = app.get_webview_window("main") {
-                if window.is_visible().unwrap_or(false) {
-                    let _ = window.hide();
-                } else {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-        }
-    });
-
-    // Right-click menu actions.
-    tray.on_menu_event(|app, event| {
-        match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
-            }
-            "quit" => {
-                // Kill the backend before exiting so it doesn't orphan.
-                kill_backend(app);
-                app.exit(0);
-            }
-            _ => {}
+            toggle_main_window(tray.app_handle());
         }
     });
 
@@ -156,13 +151,38 @@ pub fn run() {
                 let app = window.app_handle();
                 let (tray_enabled, minimize_to_tray) = read_tray_settings(app);
                 if tray_enabled && minimize_to_tray {
+                    // Prevent the window from actually closing — hide it
+                    // instead so the app keeps running in the tray.
                     api.prevent_close();
                     let _ = window.hide();
+                    // Make sure the tray icon is visible (it might have been
+                    // hidden if the user previously disabled the tray and
+                    // just re-enabled it).
+                    if let Some(tray) = app.tray_by_id("main") {
+                        let _ = tray.set_visible(true);
+                    }
                 } else {
                     // Actually closing — kill the backend so it doesn't
-                    // outlive the UI.
+                    // outlive the UI. The RunEvent::Exit handler below is
+                    // a backup, but killing here ensures the backend dies
+                    // even if some other window keeps the app alive.
                     kill_backend(app);
                 }
+            }
+        })
+
+        // ── Global menu event handler ───────────────────────────
+        // Registering on the app (not the tray) catches menu events from
+        // any source — tray context menu, window menu, etc. This is more
+        // robust than tray.on_menu_event which can be silently overwritten.
+        .on_menu_event(|app, event| {
+            match event.id.as_ref() {
+                "tray_show" => toggle_main_window(app),
+                "tray_quit" => {
+                    kill_backend(app);
+                    app.exit(0);
+                }
+                _ => {}
             }
         })
 
@@ -196,12 +216,24 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // Run loop — handle Exit to clean up the backend child process for any
-    // exit path we didn't catch in on_window_event (e.g. process kill, panic,
-    // Alt+F4 when minimizeToTray is on but tray is disabled).
+    // Run loop — handle Exit / ExitRequested to clean up the backend child
+    // process for any exit path we didn't catch in on_window_event (e.g.
+    // process kill, panic, Alt+F4 when minimizeToTray is on but tray is
+    // disabled, or the user clicked "退出 HakusAI" in the tray menu).
     app.run(|app_handle, event| {
-        if let RunEvent::Exit = event {
-            kill_backend(app_handle);
+        match event {
+            RunEvent::ExitRequested { .. } => {
+                // Last window is closing — kill the backend before the app
+                // exits so it doesn't linger as an orphan.
+                kill_backend(app_handle);
+            }
+            RunEvent::Exit => {
+                // Final cleanup — duplicate of the above but covers cases
+                // where Exit is triggered without ExitRequested (e.g. via
+                // app.exit(0) from the tray menu).
+                kill_backend(app_handle);
+            }
+            _ => {}
         }
     });
 }

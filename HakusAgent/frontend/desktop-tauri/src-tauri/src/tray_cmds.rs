@@ -5,7 +5,7 @@
 //! just toggle its visibility and persist the user's preference, so the
 //! setting takes effect immediately without an app restart.
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager};  // Manager needed for app.tray_by_id()
 use tauri_plugin_store::StoreExt;
 
 #[tauri::command]

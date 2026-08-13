@@ -27,6 +27,21 @@ impl BackendState {
             logs: Mutex::new(Vec::with_capacity(500)),
         }
     }
+
+    /// Kill the spawned Python backend child process if it is still running.
+    /// Idempotent — safe to call from every exit path (close button, tray quit,
+    /// Alt+F4, process kill). Used by lib.rs::kill_backend so external modules
+    /// don't need direct access to the private `child` field.
+    pub fn kill_child(&self) {
+        if let Ok(mut child_lock) = self.child.lock() {
+            if let Some(child) = child_lock.take() {
+                let _ = child.kill();
+            }
+        }
+        if let Ok(mut port_lock) = self.port.lock() {
+            *port_lock = None;
+        }
+    }
 }
 
 /// Spawn the Python backend. Called from the Tauri setup hook AND from the
@@ -184,12 +199,7 @@ pub fn backend_stop(
     _app: AppHandle,
     state: State<BackendState>,
 ) -> Result<serde_json::Value, String> {
-    let mut child_lock = state.child.lock().map_err(|e| e.to_string())?;
-    if let Some(child) = child_lock.take() {
-        let _ = child.kill();
-    }
-    let mut port_lock = state.port.lock().map_err(|e| e.to_string())?;
-    *port_lock = None;
+    state.kill_child();
     Ok(serde_json::json!({"ok": true}))
 }
 
