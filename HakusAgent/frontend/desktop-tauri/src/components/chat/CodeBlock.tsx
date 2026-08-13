@@ -16,11 +16,18 @@ export function CodeBlock({ children, className, node: _node, ...props }: CodeBl
   const [copied, setCopied] = useState(false)
 
   // 从 <code> 子元素的 className 提取语言 (e.g. "hljs language-python")
+  // children can be string | number | ReactElement | array thereof; only
+  // ReactElement has a `props.className` we care about. Cast through a
+  // minimal structural shape so TS narrows `unknown` without needing
+  // @types/react's internal ReactElement typing.
   const child = Array.isArray(children) ? children[0] : children
-  const childClassName: string =
+  type ElementWithProps = { props?: { className?: unknown } }
+  const childProps =
     child && typeof child === 'object' && 'props' in (child as object)
-      ? String((child as React.ReactElement).props?.className || '')
-      : ''
+      ? (child as ElementWithProps).props
+      : undefined
+  const childClassName: string =
+    childProps && typeof childProps.className === 'string' ? childProps.className : ''
   const langMatch = /language-([\w-]+)/.exec(childClassName)
   const lang = langMatch?.[1] || ''
 

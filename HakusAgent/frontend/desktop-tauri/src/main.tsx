@@ -45,7 +45,9 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
         onStatusChange: (_cb: (s: any) => void) => () => {},
       },
       voice: tauriVoice,
-      platform: tauriPlatform.os() as NodeJS.Platform,
+      // Tauri doesn't ship @types/node; use a literal union matching
+      // tauriBridge.platform.os() return values instead of NodeJS.Platform.
+      platform: tauriPlatform.os() as "aix" | "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32" | "unknown",
       versions: {
         electron: "tauri-v2",
         chrome: navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] || "unknown",
