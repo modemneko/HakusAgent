@@ -123,6 +123,11 @@ class TurnCompleted(AgentEvent):
     total_time: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    # DeepSeek KV cache stats — prompt_cache_hit_tokens / prompt_cache_miss_tokens
+    # accumulated across all LLM calls in this turn. 0 when the provider
+    # doesn't report cache stats (non-DeepSeek models).
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
     compressed: bool = False
 
 
@@ -318,6 +323,10 @@ class TokenUsage(AgentEvent):
     """Token 计数 — 替代 agent.py 中零散赋值 input_tokens / output_tokens.
 
     累积策略由 handler 决定 (单 turn 增量 vs 整个 session 总量).
+
+    cache_hit_tokens / cache_miss_tokens 携带 DeepSeek 的 KV cache 命中
+    统计 (usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens).
+    非 DeepSeek provider 这两个字段为 0.
     """
 
     event_type: AgentEventType = field(
@@ -325,6 +334,8 @@ class TokenUsage(AgentEvent):
     )
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
 
 
 # ============================================================

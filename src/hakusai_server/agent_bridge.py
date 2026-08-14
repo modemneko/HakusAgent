@@ -505,6 +505,7 @@ async def run_turn_stream(
     session_id: str = "default",
     provider: Optional[str] = None,
     run_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Run one AgentCore turn, yielding legacy-shape chunks.
 
@@ -527,9 +528,20 @@ async def run_turn_stream(
     agent = get_or_create_agent(session_id, provider=provider)
     op_receiver = _get_or_create_op_receiver(session_id)
 
+    # Apply per-request reasoning_effort override (DeepSeek thinking mode).
+    # None = use model default. The agent stores this on itself and the
+    # DeepSeek call sites read it via _deepseek_reasoning_kwargs().
+    # See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+    try:
+        agent.set_reasoning_effort(reasoning_effort)
+    except Exception as _re_err:
+        logger.warning(f"set_reasoning_effort failed (non-blocking): {_re_err}")
+
     accumulated = ""
     input_tokens = 0
     output_tokens = 0
+    cache_hit_tokens = 0
+    cache_miss_tokens = 0
     iterations = 0
 
     structured(
@@ -759,10 +771,17 @@ async def run_turn_stream(
             elif etype == "token_usage":
                 input_tokens += evt_dict.get("input_tokens", 0)
                 output_tokens += evt_dict.get("output_tokens", 0)
+                cache_hit_tokens += evt_dict.get("cache_hit_tokens", 0)
+                cache_miss_tokens += evt_dict.get("cache_miss_tokens", 0)
                 # Don't yield token_usage as a content chunk — it's metadata.
                 # The terminal event will include totals.
             elif etype == "turn_completed":
                 iterations = evt_dict.get("iterations", 0)
+                # Merge any cache tokens reported on the TurnCompleted event
+                # itself (the orchestrator path reports totals on
+                # TurnCompleted, not via intermediate TokenUsage events).
+                cache_hit_tokens += evt_dict.get("cache_hit_tokens", 0)
+                cache_miss_tokens += evt_dict.get("cache_miss_tokens", 0)
                 try:
                     agent._tool_executor.cleanup_temp_paths()
                 except Exception as e:
@@ -814,6 +833,8 @@ async def run_turn_stream(
                     "iterations": iterations,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "cache_hit_tokens": cache_hit_tokens,
+                    "cache_miss_tokens": cache_miss_tokens,
                     "compressed": evt_dict.get("compressed", False),
                 }
                 return
@@ -912,6 +933,8 @@ async def run_turn_collect(
     message: str,
     session_id: str = "default",
     provider: Optional[str] = None,
+    run_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a turn and return the full response as a single dict.
 
@@ -921,16 +944,25 @@ async def run_turn_collect(
     iterations = 0
     input_tokens = 0
     output_tokens = 0
+    cache_hit_tokens = 0
+    cache_miss_tokens = 0
     error: Optional[str] = None
     failed = False
 
-    async for chunk in run_turn_stream(message, session_id, provider=provider):
+    async for chunk in run_turn_stream(
+        message, session_id, provider=provider,
+        run_mode=run_mode, reasoning_effort=reasoning_effort,
+    ):
         if chunk.get("content"):
             full_content += chunk["content"]
         if chunk.get("input_tokens"):
             input_tokens += chunk["input_tokens"]
         if chunk.get("output_tokens"):
             output_tokens += chunk["output_tokens"]
+        if chunk.get("cache_hit_tokens"):
+            cache_hit_tokens += chunk["cache_hit_tokens"]
+        if chunk.get("cache_miss_tokens"):
+            cache_miss_tokens += chunk["cache_miss_tokens"]
         if chunk.get("iterations"):
             iterations = chunk["iterations"]
         if chunk.get("event_type") == "turn_failed":
@@ -945,6 +977,8 @@ async def run_turn_collect(
         "iterations": iterations,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cache_hit_tokens": cache_hit_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
         "failed": failed,
         "error": error,
     }

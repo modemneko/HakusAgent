@@ -210,11 +210,34 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     def _assemble_system_prompt(self) -> str:
-        parts = []
+        """Assemble the **static** system prompt only.
 
+        Dynamic context (current time, git state, memory) used to be
+        appended here, but that broke DeepSeek KV-cache hits because
+        the system prompt changed every second. The cache requires a
+        stable prefix — see https://api-docs.deepseek.com/zh-cn/guides/kv_cache/
+
+        Dynamic context is now emitted as a separate trailing user
+        message by ``build_messages()`` (via ``_assemble_dynamic_context()``),
+        so the system prompt + early conversation messages form a stable
+        cacheable prefix.
+        """
+        parts = []
         if self._static_system_prompt:
             parts.append(self._static_system_prompt)
+        return "\n\n---\n\n".join(parts) if parts else ""
 
+    def _assemble_dynamic_context(self) -> str:
+        """Assemble the dynamic context that changes between turns.
+
+        This used to be part of the system prompt, but it breaks DeepSeek
+        KV-cache hits because the timestamp changes every call. Now it's
+        emitted as a separate user-role message BEFORE the actual user
+        message, so the system prompt + conversation history stays stable
+        and cacheable.
+
+        Returns empty string when there's nothing dynamic to inject.
+        """
         dynamic_parts = []
         now = datetime.now()
         weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -268,10 +291,7 @@ class ContextManager:
             except Exception as e:
                 logger.warning(f"Failed to retrieve relevant memory: {e}")
 
-        if dynamic_parts:
-            parts.append("\n\n".join(dynamic_parts))
-
-        return "\n\n---\n\n".join(parts)
+        return "\n\n---\n\n".join(dynamic_parts) if dynamic_parts else ""
 
     # ------------------------------------------------------------------
     # Token estimation
@@ -716,13 +736,53 @@ class ContextManager:
     def build_messages(self) -> List[Dict[str, Any]]:
         """Return messages ready for the OpenAI Chat API.
 
-        The returned list starts with a system prompt, followed by all
-        messages in chronological order.  Messages are validated and
-        fixed before being returned to prevent BadRequestError.
+        The returned list starts with a **static** system prompt (cacheable
+        prefix), followed by all conversation messages in chronological
+        order, followed by a trailing user message carrying dynamic
+        context (current time, git state, memory).
+
+        Why the split: DeepSeek KV-cache requires a stable prefix. If
+        the timestamp lives inside the system prompt, the prefix changes
+        every second and cache hit rate drops to ~0%. By keeping the
+        system prompt static and putting dynamic context in a trailing
+        user message, the system prompt + conversation history stays
+        cacheable. See https://api-docs.deepseek.com/zh-cn/guides/kv_cache/
+
+        The trailing dynamic-context message is only added when there
+        are existing conversation messages (i.e. not the very first
+        turn) — on the first turn the user message itself is the last
+        message, so injecting a trailing context message would push
+        the user's actual question out of the "last user message" slot.
+        Instead, on the first turn the dynamic context is prepended to
+        the user's message (still cacheable for future turns because
+        the system prompt stays stable).
         """
         system_prompt = self._assemble_system_prompt()
         raw_messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         raw_messages.extend(self._messages)
+
+        # Inject dynamic context (timestamp, git, memory) as a separate
+        # message so the system prompt stays stable for KV-cache hits.
+        # If the last message is a user message, we prepend the dynamic
+        # context to it (so the model still sees "context + question"
+        # as one user turn). Otherwise we add a separate user message.
+        dynamic_ctx = self._assemble_dynamic_context()
+        if dynamic_ctx and raw_messages:
+            raw_messages = list(raw_messages)
+            last = raw_messages[-1]
+            if last.get("role") == "user":
+                raw_messages[-1] = {
+                    "role": "user",
+                    "content": f"[Context]\n{dynamic_ctx}\n\n[User Message]\n{last.get('content', '')}",
+                }
+            else:
+                # Last message isn't a user message (e.g. tool result) —
+                # add a separate user message carrying the dynamic context.
+                raw_messages.append({
+                    "role": "user",
+                    "content": f"[Context]\n{dynamic_ctx}",
+                })
+
         return self.validate_and_fix_messages(raw_messages)
 
     # ------------------------------------------------------------------

@@ -31,6 +31,13 @@ export interface ChatRequest {
    * If unset, the server falls back to config.yaml / HAKUS_MODE.
    */
   run_mode?: AgentMode
+  /**
+   * Per-request reasoning effort override (DeepSeek thinking mode).
+   * Accepts 'low' / 'high' / 'max'. If unset, the server uses the
+   * per-mode default (swift='low', deep='high', fleet='high').
+   * See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+   */
+  reasoning_effort?: 'low' | 'high' | 'max'
 }
 
 export interface ChatResponse {
@@ -337,6 +344,10 @@ export interface TurnCompletedEvent extends BaseAgentEvent {
   total_time: number
   input_tokens: number
   output_tokens: number
+  /** DeepSeek KV cache hit tokens (0 for non-DeepSeek providers). */
+  cache_hit_tokens?: number
+  /** DeepSeek KV cache miss tokens (0 for non-DeepSeek providers). */
+  cache_miss_tokens?: number
   compressed: boolean
 }
 
@@ -399,6 +410,10 @@ export interface TokenUsageEvent extends BaseAgentEvent {
   event_type: 'token_usage'
   input_tokens: number
   output_tokens: number
+  /** DeepSeek KV cache hit tokens (0 for non-DeepSeek providers). */
+  cache_hit_tokens?: number
+  /** DeepSeek KV cache miss tokens (0 for non-DeepSeek providers). */
+  cache_miss_tokens?: number
 }
 
 export interface PatchAppliedEvent extends BaseAgentEvent {
@@ -606,6 +621,10 @@ export interface ChatMessage {
   // Token usage for this turn
   input_tokens?: number
   output_tokens?: number
+  /** DeepSeek KV cache hit tokens (0 / absent for non-DeepSeek providers). */
+  cache_hit_tokens?: number
+  /** DeepSeek KV cache miss tokens (0 / absent for non-DeepSeek providers). */
+  cache_miss_tokens?: number
   // Error info if failed
   error?: string
   // Phase / activity (for orchestrator)

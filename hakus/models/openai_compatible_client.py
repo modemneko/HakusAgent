@@ -164,10 +164,20 @@ class OpenAICompatibleClient(BaseLLMClient):
                     })
 
         usage = response.usage
+        # DeepSeek KV cache stats — prompt_cache_hit_tokens / prompt_cache_miss_tokens
+        # are DeepSeek-specific fields in usage. They're absent (or 0) on other
+        # providers, so getattr with a 0 default is safe.
+        cache_hit = 0
+        cache_miss = 0
+        if usage is not None:
+            cache_hit = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
+            cache_miss = getattr(usage, "prompt_cache_miss_tokens", 0) or 0
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
+            cache_hit_tokens=cache_hit,
+            cache_miss_tokens=cache_miss,
         )

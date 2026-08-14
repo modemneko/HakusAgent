@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   AtSign,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   Clipboard,
@@ -37,13 +38,22 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { apiClient } from '@/api/client'
 import type { AgentMode, PermissionMode, ProviderInfo, TaskProgressAttachment } from '@/api/types'
-import { AGENT_MODE_ORDER, getAgentModeMeta } from '@/lib/agentModes'
+import {
+  AGENT_MODE_ORDER,
+  REASONING_EFFORTS,
+  REASONING_EFFORT_META,
+  getAgentModeMeta,
+  type ReasoningEffort,
+} from '@/lib/agentModes'
 import { cn, generateId } from '@/lib/utils'
 import type { ConversationState } from '@/lib/voiceConversation'
 import { useAppStore } from '@/store/app'
@@ -338,6 +348,9 @@ export function Composer({
   const model = useAppStore((s) => s.model)
   const agentMode = useAppStore((s) => s.agentMode)
   const setAgentMode = useAppStore((s) => s.setAgentMode)
+  const reasoningEfforts = useAppStore((s) => s.reasoningEfforts)
+  const setReasoningEffort = useAppStore((s) => s.setReasoningEffort)
+  const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
@@ -347,6 +360,7 @@ export function Composer({
   const canUseImages = isMultimodalProvider(currentProvider, modelText)
   const activeAgentMode = getAgentModeMeta(agentMode)
   const ActiveAgentIcon = AGENT_MODE_ICONS[agentMode]
+  const activeReasoningEffort = getReasoningEffort(agentMode)
   const currentProviderLabel = currentProvider?.display_name || defaultModel || "No model"
   const activePermissionMeta = PERMISSION_META[permission]
   const ActivePermissionIcon = activePermissionMeta.icon
@@ -1077,13 +1091,10 @@ export function Composer({
                   >
                     <ActiveAgentIcon className="h-3.5 w-3.5 text-primary" />
                     <span>{activeAgentMode.label}</span>
-                    <span className="rounded bg-primary/10 px-1 text-[10px] text-primary">
-                      {activeAgentMode.badge}
-                    </span>
                     <ChevronDown className="h-3 w-3 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[292px]">
+                <DropdownMenuContent align="start" side="top" className="w-[320px]">
                   <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
                     Agent mode
                   </DropdownMenuLabel>
@@ -1092,28 +1103,73 @@ export function Composer({
                     const meta = getAgentModeMeta(mode)
                     const Icon = AGENT_MODE_ICONS[mode]
                     const active = agentMode === mode
+                    const modeEffort = getReasoningEffort(mode)
                     return (
-                      <DropdownMenuItem
-                        key={mode}
-                        disabled={isStreaming && !active}
-                        onClick={() => handleAgentModeSwitch(mode)}
-                        className="items-start gap-2 py-2"
-                      >
-                        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{meta.label}</span>
-                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                              {meta.badge}
-                            </span>
+                      <DropdownMenuSub key={mode}>
+                        <DropdownMenuSubTrigger
+                          disabled={isStreaming && !active}
+                          className={cn(
+                            'items-start gap-2 py-2',
+                            active && 'bg-accent/40',
+                          )}
+                        >
+                          <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
+                          <div className="min-w-0 flex-1 text-left">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{meta.label}</span>
+                              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {meta.badge}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                              {meta.summary}
+                            </div>
+                            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
+                              <Brain className="h-2.5 w-2.5" />
+                              <span>思考: {REASONING_EFFORT_META[modeEffort].label}</span>
+                            </div>
                           </div>
-                          <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                            {meta.summary}
-                          </div>
-                          <div className="mt-1 text-[10px] text-muted-foreground/80">Best for: {meta.bestFor}</div>
-                        </div>
-                        {active && <Check className="mt-0.5 h-3.5 w-3.5 text-primary" />}
-                      </DropdownMenuItem>
+                          {active && <Check className="mt-0.5 h-3.5 w-3.5 text-primary" />}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="w-[220px]">
+                          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {meta.label} · 思考强度
+                          </DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {/* Click the mode label itself to switch to this mode */}
+                          <DropdownMenuItem
+                            disabled={isStreaming && !active}
+                            onClick={() => handleAgentModeSwitch(mode)}
+                            className="gap-2 py-1.5"
+                          >
+                            <Icon className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
+                            <span className="flex-1">使用此模式</span>
+                            {active && <Check className="h-3 w-3 text-primary" />}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {REASONING_EFFORTS.map((effort: ReasoningEffort) => {
+                            const isSelected = modeEffort === effort
+                            return (
+                              <DropdownMenuItem
+                                key={effort}
+                                onClick={() => setReasoningEffort(mode, effort)}
+                                className="items-start gap-2 py-1.5"
+                              >
+                                <Brain className={cn('mt-0.5 h-3 w-3 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium">{REASONING_EFFORT_META[effort].label}</span>
+                                  </div>
+                                  <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                                    {REASONING_EFFORT_META[effort].description}
+                                  </div>
+                                </div>
+                                {isSelected && <Check className="mt-0.5 h-3 w-3 text-primary" />}
+                              </DropdownMenuItem>
+                            )
+                          })}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
                     )
                   })}
                 </DropdownMenuContent>

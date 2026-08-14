@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { apiClient } from '@/api/client'
 import type { AgentMode } from '@/api/types'
+import { AGENT_MODE_META, type ReasoningEffort } from '@/lib/agentModes'
 
 interface ModelInfo {
   provider: string
@@ -37,6 +38,15 @@ interface AppStore {
   agentMode: AgentMode
   setAgentMode: (mode: AgentMode) => void
 
+  // Per-mode reasoning effort override (DeepSeek thinking mode).
+  // Keyed by agent mode so each mode remembers its own setting.
+  // When undefined for a mode, the mode's default from
+  // AGENT_MODE_META[mode].reasoningEffort is used.
+  reasoningEfforts: Partial<Record<AgentMode, ReasoningEffort>>
+  setReasoningEffort: (mode: AgentMode, effort: ReasoningEffort) => void
+  /** Get the effective reasoning effort for a mode (override or default). */
+  getReasoningEffort: (mode: AgentMode) => ReasoningEffort
+
   // Settings dialog
   settingsOpen: boolean
   setSettingsOpen: (open: boolean) => void
@@ -57,6 +67,7 @@ const SIDEBAR_KEY = 'hakusai:sidebar-open'
 const RIGHT_PANEL_KEY = 'hakusai:right-panel-open'
 const RUN_MODE_KEY = 'hakusai:run-mode'
 const AGENT_MODE_KEY = 'hakusai:agent-mode'
+const REASONING_EFFORTS_KEY = 'hakusai:reasoning-efforts'
 
 function readSidebarOpen(): boolean {
   if (typeof window === 'undefined') return true
@@ -136,6 +147,36 @@ function writeAgentMode(mode: AgentMode) {
   }
 }
 
+function readReasoningEfforts(): Partial<Record<AgentMode, ReasoningEffort>> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(REASONING_EFFORTS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    // Validate keys and values
+    const valid: Partial<Record<AgentMode, ReasoningEffort>> = {}
+    for (const k of ['swift', 'deep', 'fleet'] as AgentMode[]) {
+      const v = parsed[k]
+      if (v === 'low' || v === 'high' || v === 'max') {
+        valid[k] = v
+      }
+    }
+    return valid
+  } catch {
+    return {}
+  }
+}
+
+function writeReasoningEfforts(efforts: Partial<Record<AgentMode, ReasoningEffort>>) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(REASONING_EFFORTS_KEY, JSON.stringify(efforts))
+  } catch {
+    /* ignore */
+  }
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   sidebarOpen: readSidebarOpen(),
   toggleSidebar: () => {
@@ -171,6 +212,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setAgentMode: (mode) => {
     writeAgentMode(mode)
     set({ agentMode: mode })
+  },
+
+  reasoningEfforts: readReasoningEfforts(),
+  setReasoningEffort: (mode, effort) => {
+    const next = { ...get().reasoningEfforts, [mode]: effort }
+    writeReasoningEfforts(next)
+    set({ reasoningEfforts: next })
+  },
+  getReasoningEffort: (mode) => {
+    const override = get().reasoningEfforts[mode]
+    return override ?? AGENT_MODE_META[mode].reasoningEffort
   },
 
   settingsOpen: false,

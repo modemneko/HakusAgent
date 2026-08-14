@@ -612,7 +612,17 @@ class AgentCore:
         self._recovery_manager = recovery_manager
         self._last_snapshot_iteration = 0
         self._snapshot_interval = 5  # Save snapshot every 5 iterations
-        
+
+        # ── DeepSeek thinking-mode / reasoning_effort ──────────────────
+        # Per-turn reasoning effort. ``None`` = don't send reasoning_effort
+        # (model default, which is "high" for deepseek-v4). When set to
+        # "low" / "high" / "max", the value is forwarded to DeepSeek's
+        # chat.completions.create(reasoning_effort=...) AND
+        # extra_body={"thinking": {"type": "enabled"}} is sent to opt into
+        # thinking mode (required by DeepSeek's OpenAI-compat endpoint).
+        # See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+        self._reasoning_effort: Optional[str] = None
+
         self._init_model()
         # P1 Enhancement integration (CodexMemories, GuardianAI, RolloutRecorder, etc.)
         self._p1: Optional[Any] = None  # type: P1Enhancements | None
@@ -634,6 +644,61 @@ class AgentCore:
         except Exception as e:
             logger.error(f"Failed to init LLM client: {e}")
             raise RuntimeError("All LLM client initializations failed") from e
+
+    # ── DeepSeek thinking-mode / reasoning_effort ──────────────────
+    def set_reasoning_effort(self, effort: Optional[str]) -> None:
+        """Set the reasoning effort for subsequent DeepSeek calls.
+
+        Accepts ``"low"`` / ``"high"`` / ``"max"`` / ``None``.
+        ``None`` clears the override and lets the model use its default
+        (which is ``"high"`` for deepseek-v4-*).
+
+        Per the DeepSeek thinking-mode guide, when ``reasoning_effort``
+        is set we also send ``extra_body={"thinking": {"type": "enabled"}}``
+        because the OpenAI-compat endpoint requires opting into thinking
+        mode explicitly. See:
+        https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+
+        Non-DeepSeek providers ignore this setting — the value is only
+        forwarded when ``self._llm_client.provider == LLMProvider.DEEPSEEK``.
+        """
+        if effort is not None and effort not in ("low", "high", "max"):
+            logger.warning(f"Invalid reasoning_effort '{effort}', ignoring. Valid: low/high/max/None")
+            return
+        self._reasoning_effort = effort
+
+    def _is_deepseek(self) -> bool:
+        """True if the active LLM client is a DeepSeek provider."""
+        try:
+            from .models.base_client import LLMProvider
+            return (
+                self._llm_client is not None
+                and self._llm_client.provider == LLMProvider.DEEPSEEK
+            )
+        except Exception:
+            return False
+
+    def _deepseek_reasoning_kwargs(self) -> Dict[str, Any]:
+        """Build kwargs to merge into chat.completions.create() for DeepSeek.
+
+        Returns ``{}`` when the active provider isn't DeepSeek or when
+        no reasoning_effort override is set. Otherwise returns:
+            {
+                "reasoning_effort": <effort>,
+                "extra_body": {"thinking": {"type": "enabled"}},
+            }
+
+        Merging this into the existing kwargs dict is safe —
+        ``reasoning_effort`` is a top-level OpenAI SDK param, and
+        ``extra_body`` is the standard escape hatch for provider-specific
+        fields.
+        """
+        if not self._is_deepseek() or not self._reasoning_effort:
+            return {}
+        return {
+            "reasoning_effort": self._reasoning_effort,
+            "extra_body": {"thinking": {"type": "enabled"}},
+        }
 
     def enable_p1_enhancements(
         self,
@@ -1068,6 +1133,7 @@ class AgentCore:
                 model=_model_name,
                 messages=messages,
                 tools=tools or None,
+                **self._deepseek_reasoning_kwargs(),
             ),
             timeout=timeout,
         )
@@ -1195,6 +1261,11 @@ class AgentCore:
         oa_client = getattr(model, "client", None)
         if oa_client is None and hasattr(model, "get_openai_client"):
             oa_client = model.get_openai_client()
+        # Capture DeepSeek reasoning kwargs BEFORE entering the thread —
+        # _deepseek_reasoning_kwargs() reads self._reasoning_effort which
+        # is set on the main thread; capturing here avoids cross-thread
+        # attribute reads.
+        _ds_reasoning_kwargs = self._deepseek_reasoning_kwargs()
 
         def _run_in_fresh_loop() -> Tuple[str, List[Dict[str, Any]]]:
             """Synchronous function that creates its own event loop."""
@@ -1204,6 +1275,7 @@ class AgentCore:
                         model=model_name,
                         messages=messages,
                         tools=tools or None,
+                        **_ds_reasoning_kwargs,
                     ),
                     timeout=timeout,
                 )
@@ -1330,6 +1402,10 @@ class AgentCore:
 
         model = self._model
         model_name = model.model_name
+        # Capture DeepSeek reasoning kwargs on the main thread — the
+        # streaming thread has its own event loop and shouldn't reach
+        # back into self._reasoning_effort.
+        _ds_reasoning_kwargs = self._deepseek_reasoning_kwargs()
 
         data_queue: _threading_queue.Queue = _threading_queue.Queue()
         notify = asyncio.Event()
@@ -1352,6 +1428,9 @@ class AgentCore:
                 }
                 if tools:
                     kwargs["tools"] = tools
+                # Apply DeepSeek reasoning_effort + thinking extra_body.
+                # These are no-ops for non-DeepSeek providers (empty dict).
+                kwargs.update(_ds_reasoning_kwargs)
 
                 # Try with stream_options first (for token counting).
                 stream = None
@@ -1465,6 +1544,9 @@ class AgentCore:
         }
         if tools:
             kwargs["tools"] = tools
+        # Apply DeepSeek reasoning_effort + thinking extra_body.
+        # No-op for non-DeepSeek providers (returns empty dict).
+        kwargs.update(self._deepseek_reasoning_kwargs())
 
         if include_usage:
             try:
@@ -2094,19 +2176,28 @@ class AgentCore:
                     slot["arguments"] += tc_delta.function.arguments
 
     @staticmethod
-    def _extract_usage(chunk: Any) -> Tuple[int, int]:
-        """Extract ``prompt_tokens`` / ``completion_tokens`` from a chunk.
+    def _extract_usage(chunk: Any) -> Tuple[int, int, int, int]:
+        """Extract token usage from a streaming chunk.
 
-        Returns ``(input_tokens, output_tokens)``. Either may be 0 if
-        the chunk doesn't carry usage info — most mid-stream chunks
-        don't, and only the terminal usage-only chunk is guaranteed.
+        Returns ``(input_tokens, output_tokens, cache_hit_tokens,
+        cache_miss_tokens)``. Any field may be 0 — most mid-stream
+        chunks don't carry usage info, and only the terminal usage-only
+        chunk is guaranteed.
+
+        ``cache_hit_tokens`` / ``cache_miss_tokens`` come from
+        DeepSeek's ``usage.prompt_cache_hit_tokens`` /
+        ``prompt_cache_miss_tokens`` fields (see
+        https://api-docs.deepseek.com/zh-cn/guides/kv_cache/).
+        Non-DeepSeek providers don't report these, so they stay 0.
         """
         u = getattr(chunk, "usage", None)
         if u is None:
-            return 0, 0
+            return 0, 0, 0, 0
         return (
             getattr(u, "prompt_tokens", 0) or 0,
             getattr(u, "completion_tokens", 0) or 0,
+            getattr(u, "prompt_cache_hit_tokens", 0) or 0,
+            getattr(u, "prompt_cache_miss_tokens", 0) or 0,
         )
 
     @staticmethod
@@ -2222,6 +2313,8 @@ class AgentCore:
         turn_completed = False
         input_tokens_total = 0
         output_tokens_total = 0
+        cache_hit_tokens_total = 0
+        cache_miss_tokens_total = 0
         compressed_flag = False
         iterations_total = 0
 
@@ -2245,6 +2338,8 @@ class AgentCore:
                         if isinstance(resume_event, TokenUsage):
                             input_tokens_total += resume_event.input_tokens
                             output_tokens_total += resume_event.output_tokens
+                            cache_hit_tokens_total += getattr(resume_event, "cache_hit_tokens", 0)
+                            cache_miss_tokens_total += getattr(resume_event, "cache_miss_tokens", 0)
                         if isinstance(resume_event, TurnCompleted):
                             self._last_response = AgentResponse(
                                 content=resume_event.content,
@@ -2289,6 +2384,8 @@ class AgentCore:
                     if isinstance(resume_event, TokenUsage):
                         input_tokens_total += resume_event.input_tokens
                         output_tokens_total += resume_event.output_tokens
+                        cache_hit_tokens_total += getattr(resume_event, "cache_hit_tokens", 0)
+                        cache_miss_tokens_total += getattr(resume_event, "cache_miss_tokens", 0)
                     if isinstance(resume_event, TurnCompleted):
                         self._last_response = AgentResponse(
                             content=resume_event.content,
@@ -2309,11 +2406,15 @@ class AgentCore:
                 if isinstance(orch_event, TokenUsage):
                     input_tokens_total += orch_event.input_tokens
                     output_tokens_total += orch_event.output_tokens
+                    cache_hit_tokens_total += getattr(orch_event, "cache_hit_tokens", 0)
+                    cache_miss_tokens_total += getattr(orch_event, "cache_miss_tokens", 0)
                 # Track terminal events from orchestrator
                 if isinstance(orch_event, TurnCompleted):
                     turn_completed = True
                     iterations_total = orch_event.iterations
                     compressed_flag = orch_event.compressed
+                    cache_hit_tokens_total += getattr(orch_event, "cache_hit_tokens", 0)
+                    cache_miss_tokens_total += getattr(orch_event, "cache_miss_tokens", 0)
                     # Capture last_response for downstream consumers
                     self._last_response = AgentResponse(
                         content=orch_event.content,
@@ -2405,6 +2506,8 @@ class AgentCore:
                         elif isinstance(ev, TokenUsage):
                             input_tokens_total += ev.input_tokens
                             output_tokens_total += ev.output_tokens
+                            cache_hit_tokens_total += getattr(ev, "cache_hit_tokens", 0)
+                            cache_miss_tokens_total += getattr(ev, "cache_miss_tokens", 0)
                         elif isinstance(ev, ToolCallFinished):
                             all_tool_results.append(
                                 ToolCallResult(
@@ -2419,6 +2522,8 @@ class AgentCore:
                             turn_completed = True
                             input_tokens_total += ev.input_tokens
                             output_tokens_total += ev.output_tokens
+                            cache_hit_tokens_total += getattr(ev, "cache_hit_tokens", 0)
+                            cache_miss_tokens_total += getattr(ev, "cache_miss_tokens", 0)
                             iterations_total = ev.iterations
                             compressed_flag = ev.compressed
                         yield ev
@@ -2510,6 +2615,8 @@ class AgentCore:
                 total_time=elapsed,
                 input_tokens=input_tokens_total,
                 output_tokens=output_tokens_total,
+                cache_hit_tokens=cache_hit_tokens_total,
+                cache_miss_tokens=cache_miss_tokens_total,
                 compressed=compressed_flag,
             )
         except asyncio.CancelledError:
@@ -2772,6 +2879,8 @@ class AgentCore:
 
         in_tok_total = 0
         out_tok_total = 0
+        cache_hit_total = 0
+        cache_miss_total = 0
         all_tool_results: List[ToolCallResult] = []
         final_text = ""
 
@@ -2839,6 +2948,8 @@ class AgentCore:
                             total_time=0.0,
                             input_tokens=in_tok_total,
                             output_tokens=out_tok_total,
+                            cache_hit_tokens=cache_hit_total,
+                            cache_miss_tokens=cache_miss_total,
                         )
                         self._last_response = AgentResponse(
                             content=summary,
@@ -2939,10 +3050,12 @@ class AgentCore:
                             cancelled_mid_stream = True
                             cancel_reason = interrupt_reason
                             break
-                        in_t, out_t = self._extract_usage(chunk)
+                        in_t, out_t, cache_hit_t, cache_miss_t = self._extract_usage(chunk)
                         if in_t or out_t:
                             in_tok_total += in_t
                             out_tok_total += out_t
+                            cache_hit_total += cache_hit_t
+                            cache_miss_total += cache_miss_t
                             # Calibrate token estimation with actual API usage
                             if in_t:
                                 try:
@@ -2955,7 +3068,12 @@ class AgentCore:
                                 _dbg.log_token_usage(
                                     in_t, out_t, in_tok_total, out_tok_total,
                                 )
-                            yield TokenUsage(input_tokens=in_t, output_tokens=out_t)
+                            yield TokenUsage(
+                                input_tokens=in_t,
+                                output_tokens=out_t,
+                                cache_hit_tokens=cache_hit_t,
+                                cache_miss_tokens=cache_miss_t,
+                            )
                         if not chunk.choices:
                             continue
                         delta = chunk.choices[0].delta
@@ -3108,6 +3226,8 @@ class AgentCore:
                         total_time=0.0,
                         input_tokens=in_tok_total,
                         output_tokens=out_tok_total,
+                        cache_hit_tokens=cache_hit_total,
+                        cache_miss_tokens=cache_miss_total,
                     )
                     self._last_response = AgentResponse(
                         content=full_response,
@@ -3204,6 +3324,8 @@ class AgentCore:
                         total_time=0.0,
                         input_tokens=in_tok_total,
                         output_tokens=out_tok_total,
+                        cache_hit_tokens=cache_hit_total,
+                        cache_miss_tokens=cache_miss_total,
                     )
                     self._last_response = AgentResponse(
                         content=summary,
@@ -3450,6 +3572,8 @@ class AgentCore:
                 total_time=0.0,
                 input_tokens=in_tok_total,
                 output_tokens=out_tok_total,
+                cache_hit_tokens=cache_hit_total,
+                cache_miss_tokens=cache_miss_total,
             )
             self._last_response = AgentResponse(
                 content=final_text,
@@ -3596,6 +3720,8 @@ class AgentCore:
 
         in_tok_total = 0
         out_tok_total = 0
+        cache_hit_total = 0
+        cache_miss_total = 0
         all_tool_results: List[ToolCallResult] = []
         final_text = ""
 
@@ -3656,6 +3782,8 @@ class AgentCore:
                         total_time=0.0,
                         input_tokens=in_tok_total,
                         output_tokens=out_tok_total,
+                        cache_hit_tokens=cache_hit_total,
+                        cache_miss_tokens=cache_miss_total,
                     )
                     self._last_response = AgentResponse(
                         content=response,
@@ -3844,6 +3972,8 @@ class AgentCore:
                 total_time=0.0,
                 input_tokens=in_tok_total,
                 output_tokens=out_tok_total,
+                cache_hit_tokens=cache_hit_total,
+                cache_miss_tokens=cache_miss_total,
             )
         except asyncio.CancelledError:
             yield CancelledEvent(

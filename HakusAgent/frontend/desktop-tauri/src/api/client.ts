@@ -802,6 +802,7 @@ export class HakusAIClient {
     signal?: AbortSignal,
     provider?: string,
     runMode?: AgentMode,
+    reasoningEffort?: 'low' | 'high' | 'max',
   ): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
       method: 'POST',
@@ -815,6 +816,7 @@ export class HakusAIClient {
         stream: true,
         ...(provider ? { provider } : {}),
         ...(runMode ? { run_mode: runMode } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       } satisfies ChatRequest),
       signal,
     })

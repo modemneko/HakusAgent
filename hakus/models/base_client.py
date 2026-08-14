@@ -44,6 +44,11 @@ class LLMResponse:
     finish_reason: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    # DeepSeek KV cache stats — populated by OpenAI-compatible clients when
+    # the provider returns prompt_cache_hit_tokens / prompt_cache_miss_tokens
+    # in usage. 0 for providers that don't report cache stats.
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
 
 
 @dataclass

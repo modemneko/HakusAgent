@@ -183,6 +183,7 @@ export function ChatView() {
   const settings = useSettingsStore()
   const connState = useConnectionStore((s) => s.state)
   const agentMode = useAppStore((s) => s.agentMode)
+  const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
   const connCheck = useConnectionStore((s) => s.check)
 
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null)
@@ -298,6 +299,7 @@ export function ChatView() {
           ctrl.signal,
           settings.defaultModel,
           agentMode,
+          getReasoningEffort(agentMode),
         )
         updateMessage(sessionId, assistantMsgId, { streaming: false })
         void persistMessage(sessionId, assistantMsgId)
@@ -322,7 +324,7 @@ export function ChatView() {
         setTimeout(runNextQueued, 0)
       }
     },
-    [addMessage, agentMode, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued],
+    [addMessage, agentMode, getReasoningEffort, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued],
   )
 
   useEffect(() => {
@@ -532,6 +534,8 @@ export function ChatView() {
         updateMessage(sessionId, messageId, {
           input_tokens: event.input_tokens,
           output_tokens: event.output_tokens,
+          cache_hit_tokens: (event as any).cache_hit_tokens ?? 0,
+          cache_miss_tokens: (event as any).cache_miss_tokens ?? 0,
         })
         break
       case 'turn_completed':
@@ -540,6 +544,8 @@ export function ChatView() {
           content: event.content || useSessionStore.getState().messages[sessionId]?.find((m) => m.id === messageId)?.content || '',
           input_tokens: event.input_tokens,
           output_tokens: event.output_tokens,
+          cache_hit_tokens: (event as any).cache_hit_tokens ?? 0,
+          cache_miss_tokens: (event as any).cache_miss_tokens ?? 0,
         })
         notifyVoice('complete')
         voiceConversationRef.current?.endAgentTurn()

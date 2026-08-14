@@ -107,6 +107,10 @@ class ChatRequest(BaseModel):
     provider: Optional[str] = None
     # Per-request run mode override: "swift", "deep", or "fleet".
     run_mode: Optional[str] = None
+    # Per-request reasoning effort override (DeepSeek thinking mode).
+    # Accepts "low" / "high" / "max" / None. None = model default.
+    # See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+    reasoning_effort: Optional[str] = None
 
     @field_validator("run_mode")
     @classmethod
@@ -117,6 +121,18 @@ class ChatRequest(BaseModel):
         if normalized not in RUN_MODES or normalized != value.strip().lower():
             allowed = ", ".join(RUN_MODES)
             raise ValueError(f"run_mode must be one of: {allowed}")
+        return normalized
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in ("low", "high", "max"):
+            raise ValueError(
+                "reasoning_effort must be one of: low, high, max"
+            )
         return normalized
 
 
@@ -1397,6 +1413,7 @@ class HakusAIServer:
                             request.message, request.session_id,
                             provider=request.provider,
                             run_mode=getattr(request, "run_mode", None),
+                            reasoning_effort=getattr(request, "reasoning_effort", None),
                         ):
                             # 从 chunk 中提取事件类型, 更新 metrics
                             etype = chunk.get("event_type", "")
@@ -1499,6 +1516,8 @@ class HakusAIServer:
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
                         provider=request.provider,
+                        run_mode=getattr(request, "run_mode", None),
+                        reasoning_effort=getattr(request, "reasoning_effort", None),
                     )
                     return {
                         "success": not result.get("failed", False),
@@ -1508,6 +1527,8 @@ class HakusAIServer:
                             "iterations": result.get("iterations", 0),
                             "input_tokens": result.get("input_tokens", 0),
                             "output_tokens": result.get("output_tokens", 0),
+                            "cache_hit_tokens": result.get("cache_hit_tokens", 0),
+                            "cache_miss_tokens": result.get("cache_miss_tokens", 0),
                         },
                         "error": result.get("error"),
                     }

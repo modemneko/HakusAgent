@@ -235,6 +235,17 @@ export const MessageBubble = memo(function MessageBubble({
             {(message.input_tokens || message.output_tokens) && (
               <span className="text-muted-foreground/70">
                 · {message.input_tokens || 0}↑ {message.output_tokens || 0}↓
+                {(() => {
+                  // Cache hit rate — only show when cache stats are present
+                  // (DeepSeek providers). Hit rate = hit / (hit + miss).
+                  // Display as plain percentage number, no label.
+                  const hit = message.cache_hit_tokens ?? 0
+                  const miss = message.cache_miss_tokens ?? 0
+                  const total = hit + miss
+                  if (total <= 0) return null
+                  const pct = Math.round((hit / total) * 100)
+                  return <> {pct}%</>
+                })()}
               </span>
             )}
             <Button
