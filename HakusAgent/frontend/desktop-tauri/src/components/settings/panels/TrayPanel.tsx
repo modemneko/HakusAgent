@@ -45,7 +45,7 @@ function SwitchRow({
         'flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors',
         disabled
           ? 'opacity-50'
-          : 'hover:border-violet-500/30 hover:bg-accent/30',
+          : 'hover:border-primary/30 hover:bg-accent/30',
       )}
     >
       <div className="flex items-start gap-3">
@@ -258,17 +258,6 @@ export function TrayPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <LayoutGrid className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">托盘与快捷键</div>
-          <p className="text-[11px] text-muted-foreground">
-            系统托盘图标 + 全局唤起窗口的快捷键。
-          </p>
-        </div>
-      </div>
 
       <Separator />
 
@@ -347,7 +336,7 @@ export function TrayPanel() {
               }}
               className={cn(
                 'flex-1 font-mono text-sm',
-                recording && 'border-violet-500/60 bg-violet-500/5',
+                recording && 'border-primary/60 bg-primary/5',
                 validationError && 'border-amber-500/60',
               )}
               readOnly={recording}
@@ -381,7 +370,7 @@ export function TrayPanel() {
           </div>
 
           {recording && (
-            <p className="mt-2 text-[11px] text-violet-500">
+            <p className="mt-2 text-[11px] text-primary">
               按下你想要的组合键 (Escape 取消录制)。建议至少包含一个修饰键 (Ctrl/Cmd/Shift/Alt)。
             </p>
           )}

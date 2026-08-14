@@ -96,3 +96,29 @@ export const voice = {
     invoke("voice_start_celia", { options }),
   stopCelia: () => invoke("voice_stop_celia"),
 };
+
+// ── Dialog (folder picker for project creation) ───────────────────
+/**
+ * Open the native OS folder picker and return the selected path, or
+ * null if the user cancelled.
+ *
+ * Uses dynamic import so the dialog plugin is only loaded when the
+ * user actually clicks "新建项目" — this keeps the initial bundle
+ * smaller and means web-mode (non-Tauri) doesn't crash on import.
+ */
+export async function pickFolder(): Promise<string | null> {
+  if (typeof __TAURI_INTERNALS__ === "undefined") return null;
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "选择项目文件夹",
+    });
+    if (typeof selected !== "string" || !selected) return null;
+    return selected;
+  } catch (e) {
+    console.warn("[tauriBridge] folder picker failed:", e);
+    return null;
+  }
+}

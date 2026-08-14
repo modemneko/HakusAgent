@@ -11,6 +11,7 @@ import {
   Code2,
   FileText,
   FolderOpen,
+  FolderPlus,
   Image as ImageIcon,
   Layers,
   ListChecks,
@@ -18,6 +19,7 @@ import {
   Mic,
   Paperclip,
   PhoneCall,
+  Search,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -46,6 +48,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { apiClient } from '@/api/client'
+import { pickFolder } from '@/api/tauriBridge'
 import type { AgentMode, PermissionMode, ProviderInfo, TaskProgressAttachment } from '@/api/types'
 import {
   AGENT_MODE_ORDER,
@@ -57,8 +60,10 @@ import {
 import { cn, generateId } from '@/lib/utils'
 import type { ConversationState } from '@/lib/voiceConversation'
 import { useAppStore } from '@/store/app'
+import { useProjectsStore } from '@/store/projects'
 import { useSettingsStore } from '@/store/settings'
 import { useToast } from '@/components/ui/toast'
+import { ProviderLogo } from '@/components/ui/provider-logo'
 
 interface Attachment {
   id: string
@@ -351,6 +356,15 @@ export function Composer({
   const reasoningEfforts = useAppStore((s) => s.reasoningEfforts)
   const setReasoningEffort = useAppStore((s) => s.setReasoningEffort)
   const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
+
+  // Projects store — Codex-style project picker
+  const projects = useProjectsStore((s) => s.projects)
+  const activeProject = useProjectsStore((s) => s.activeProject)
+  const activeProjectId = useProjectsStore((s) => s.activeProjectId)
+  const setActiveProject = useProjectsStore((s) => s.setActive)
+  const createProject = useProjectsStore((s) => s.create)
+  const [projectSearch, setProjectSearch] = useState('')
+  const [creatingProject, setCreatingProject] = useState(false)
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
@@ -814,7 +828,7 @@ export function Composer({
                       onClick={() => insertMention(item)}
                       className={cn(
                         'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
-                        index === mentionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/55',
+                        index === mentionIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
                       )}
                     >
                       <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -977,10 +991,10 @@ export function Composer({
             <svg viewBox="0 0 640 24" preserveAspectRatio="none" focusable="false">
               <defs>
                 <linearGradient id="wave-gradient" x1="0" x2="1">
-                  <stop offset="0" stopColor="#a78bfa" stopOpacity="0" />
-                  <stop offset=".2" stopColor="#a78bfa" />
+                  <stop offset="0" stopColor="#60a5fa" stopOpacity="0" />
+                  <stop offset=".2" stopColor="#60a5fa" />
                   <stop offset=".55" stopColor="#60a5fa" />
-                  <stop offset=".8" stopColor="#818cf8" />
+                  <stop offset=".8" stopColor="#60a5fa" />
                   <stop offset="1" stopColor="#60a5fa" stopOpacity="0" />
                 </linearGradient>
               </defs>
@@ -1027,9 +1041,114 @@ export function Composer({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
+                    disabled={isStreaming}
+                    className={cn(
+                      'inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      isStreaming && 'cursor-not-allowed opacity-60',
+                    )}
+                    title={activeProject ? activeProject.path : '不在项目中工作'}
+                  >
+                    <FolderOpen className={cn('h-3.5 w-3.5 shrink-0', activeProject ? 'text-primary' : 'text-muted-foreground')} />
+                    <span className="truncate">{activeProject ? activeProject.name : '不在项目中工作'}</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top" className="w-[300px] p-1.5">
+                  {/* Search box */}
+                  <div className="mb-1 flex items-center gap-1.5 rounded-lg bg-foreground/[0.04] px-2 py-1.5">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      placeholder="搜索项目..."
+                      className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+                      autoFocus
+                    />
+                  </div>
+                  {/* Project list (filtered) */}
+                  <div className="max-h-[260px] overflow-y-auto">
+                    {projects.length === 0 && (
+                      <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                        暂无项目，点击下方「新建项目」
+                      </div>
+                    )}
+                    {projects
+                      .filter((p) => {
+                        const q = projectSearch.trim().toLowerCase()
+                        if (!q) return true
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          p.path.toLowerCase().includes(q)
+                        )
+                      })
+                      .map((p) => {
+                        const isActive = activeProjectId === p.id
+                        return (
+                          <DropdownMenuItem
+                            key={p.id}
+                            onClick={() => setActiveProject(p.id)}
+                            className="gap-2 py-2"
+                          >
+                            <FolderOpen className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium">{p.name}</div>
+                              <div className="truncate text-[10px] text-muted-foreground">{p.path}</div>
+                            </div>
+                            {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                          </DropdownMenuItem>
+                        )
+                      })}
+                  </div>
+                  <DropdownMenuSeparator />
+                  {/* New project — opens folder picker */}
+                  <DropdownMenuItem
+                    onClick={async () => {
+                      if (creatingProject) return
+                      setCreatingProject(true)
+                      try {
+                        const folder = await pickFolder()
+                        if (!folder) return
+                        const name = folder.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
+                        const created = await createProject({ name, path: folder })
+                        setActiveProject(created.id)
+                        toast.success(`已添加项目：${created.name}`)
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : String(e)
+                        toast.error(`新建项目失败：${msg}`)
+                      } finally {
+                        setCreatingProject(false)
+                      }
+                    }}
+                    disabled={creatingProject}
+                    className="gap-2 py-2"
+                  >
+                    {creatingProject ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                    ) : (
+                      <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
+                    )}
+                    <span className="text-sm font-medium">新建项目</span>
+                  </DropdownMenuItem>
+                  {/* Not working in a project */}
+                  <DropdownMenuItem
+                    onClick={() => setActiveProject(null)}
+                    className="gap-2 py-2"
+                  >
+                    <X className={cn('h-4 w-4 shrink-0', !activeProjectId ? 'text-primary' : 'text-muted-foreground')} />
+                    <span className="flex-1 text-sm">不在项目中工作</span>
+                    {!activeProjectId && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
                     disabled={providersLoading || switchingProvider || isStreaming}
                     className={cn(
-                      'inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-accent/55',
+                      'inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
                     )}
                     title="Choose model"
@@ -1037,17 +1156,13 @@ export function Composer({
                     {providersLoading || switchingProvider ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                     ) : (
-                      <Bot className="h-3.5 w-3.5 text-primary" />
+                      <ProviderLogo providerId={currentProvider?.id || defaultModel || ''} size={14} />
                     )}
                     <span className="truncate">{currentProviderLabel}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" className="w-[260px]">
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Model
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
                   {providers.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
@@ -1059,14 +1174,7 @@ export function Composer({
                       onClick={() => handleProviderSwitch(provider.id)}
                       className="gap-2 py-2"
                     >
-                      <span
-                        className={cn(
-                          'h-1.5 w-1.5 shrink-0 rounded-full',
-                          provider.has_api_key || provider.id === 'ollama'
-                            ? 'bg-emerald-500'
-                            : 'bg-muted-foreground/40',
-                        )}
-                      />
+                      <ProviderLogo providerId={provider.id} size={16} className="shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm">{provider.display_name}</div>
                         <div className="truncate text-[10px] text-muted-foreground">
@@ -1084,21 +1192,17 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-accent/55',
+                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={activeAgentMode.summary}
                   >
                     <ActiveAgentIcon className="h-3.5 w-3.5 text-primary" />
                     <span>{activeAgentMode.label}</span>
-                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[320px]">
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Agent mode
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
+                <DropdownMenuContent align="start" side="top" className="w-[280px]">
                   {AGENT_MODE_ORDER.map((mode) => {
                     const meta = getAgentModeMeta(mode)
                     const Icon = AGENT_MODE_ICONS[mode]
@@ -1121,9 +1225,6 @@ export function Composer({
                                 {meta.badge}
                               </span>
                             </div>
-                            <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                              {meta.summary}
-                            </div>
                             <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
                               <Brain className="h-2.5 w-2.5" />
                               <span>思考: {REASONING_EFFORT_META[modeEffort].label}</span>
@@ -1132,10 +1233,6 @@ export function Composer({
                           {active && <Check className="mt-0.5 h-3.5 w-3.5 text-primary" />}
                         </DropdownMenuSubTrigger>
                         <DropdownMenuSubContent className="w-[220px]">
-                          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            {meta.label} · 思考强度
-                          </DropdownMenuLabel>
-                          <DropdownMenuSeparator />
                           {/* Click the mode label itself to switch to this mode */}
                           <DropdownMenuItem
                             disabled={isStreaming && !active}
@@ -1181,7 +1278,7 @@ export function Composer({
                     type="button"
                     disabled={permissionLoading}
                     className={cn(
-                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-accent/55',
+                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
                       permissionLoading && 'cursor-not-allowed opacity-60',
                     )}
                     title="Permission mode"
@@ -1192,14 +1289,10 @@ export function Composer({
                       <ActivePermissionIcon className={cn('h-3.5 w-3.5', activePermissionMeta.tone)} />
                     )}
                     <span>{activePermissionMeta.label}</span>
-                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[236px]">
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Permission
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
+                <DropdownMenuContent align="start" side="top" className="w-[200px]">
                   {availablePermissions.map((mode) => {
                     const meta = PERMISSION_META[mode]
                     const Icon = meta.icon
@@ -1211,11 +1304,8 @@ export function Composer({
                         className="gap-2 py-2"
                       >
                         <Icon className={cn('h-4 w-4', meta.tone)} />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium">{meta.label}</div>
-                          <div className="text-[10px] text-muted-foreground">{meta.hint}</div>
-                        </div>
-                        {active && <Check className="h-3.5 w-3.5 text-primary" />}
+                        <span className="flex-1 text-sm font-medium">{meta.label}</span>
+                        {active && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
                       </DropdownMenuItem>
                     )
                   })}
@@ -1241,7 +1331,7 @@ export function Composer({
                       variant={conversationState !== 'idle' ? 'destructive' : 'outline'}
                       className={cn(
                         'h-8 w-8 rounded-xl',
-                        conversationState === 'connecting' && 'bg-violet-500 text-white hover:bg-violet-600',
+                        conversationState === 'connecting' && 'bg-primary text-white hover:bg-primary/90',
                         conversationState === 'listening' && 'bg-emerald-500 text-white hover:bg-emerald-600',
                         conversationState === 'speaking' && 'bg-blue-500 text-white hover:bg-blue-600',
                         (conversationState === 'transcribing' || conversationState === 'thinking') &&

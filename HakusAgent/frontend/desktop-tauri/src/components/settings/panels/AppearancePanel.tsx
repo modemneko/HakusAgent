@@ -19,15 +19,6 @@ export function AppearancePanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <Palette className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">外观</div>
-          <p className="text-[11px] text-muted-foreground">主题与字体大小。</p>
-        </div>
-      </div>
 
       <Separator />
 
@@ -44,8 +35,8 @@ export function AppearancePanel() {
                 className={cn(
                   'flex flex-col items-center gap-2 rounded-xl border p-4 transition-all duration-200',
                   active
-                    ? 'border-violet-500/50 bg-violet-500/10 text-violet-500'
-                    : 'border-border bg-card/40 hover:border-violet-500/30 hover:bg-accent/30',
+                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-border bg-card/40 hover:border-primary/30 hover:bg-accent/30',
                 )}
               >
                 <Icon className="h-5 w-5" />
@@ -73,7 +64,7 @@ export function AppearancePanel() {
           step={1}
           value={settings.fontSize}
           onChange={(e) => settings.update({ fontSize: Number(e.target.value) })}
-          className="w-full accent-violet-500"
+          className="w-full accent-blue-500"
         />
         <div className="flex justify-between text-[10px] text-muted-foreground">
           <span>12px</span>

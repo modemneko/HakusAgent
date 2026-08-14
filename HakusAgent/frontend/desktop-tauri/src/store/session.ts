@@ -687,8 +687,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       }
     } catch (e: any) {
       console.error('[session] loadFromServer failed:', e)
+      // Keep `loaded: false` so the App.tsx init effect can retry once
+      // connState recovers. Previously this set `loaded: true`, which
+      // permanently blocked retries and left the user with an empty UI
+      // whenever the first load happened to race with backend startup.
       set({
-        loaded: true,
+        loaded: false,
         loadError: e instanceof Error ? e : new Error(String(e?.message || e)),
       })
     }

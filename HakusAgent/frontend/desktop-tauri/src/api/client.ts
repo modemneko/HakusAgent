@@ -59,6 +59,10 @@ import type {
   GitStatusResponse,
   GitDiffResponse,
   LogsResponse,
+  Project,
+  ProjectsListResponse,
+  ProjectCreateBody,
+  ProjectUpdateBody,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -803,6 +807,7 @@ export class HakusAIClient {
     provider?: string,
     runMode?: AgentMode,
     reasoningEffort?: 'low' | 'high' | 'max',
+    projectId?: string,
   ): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
       method: 'POST',
@@ -817,6 +822,7 @@ export class HakusAIClient {
         ...(provider ? { provider } : {}),
         ...(runMode ? { run_mode: runMode } : {}),
         ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        ...(projectId ? { project_id: projectId } : {}),
       } satisfies ChatRequest),
       signal,
     })
@@ -1326,6 +1332,60 @@ export class HakusAIClient {
 
   terminalWsUrl(): string {
     return `${this.wsBaseUrl}/ws/terminal`
+  }
+
+  // ============ Projects (Codex-style project picker) ============
+
+  async listProjects(): Promise<Project[]> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/projects`, {}, 8000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/projects`, 'List projects failed')
+    }
+    const data = (await res.json()) as ProjectsListResponse
+    return data.projects || []
+  }
+
+  async createProject(body: ProjectCreateBody): Promise<Project> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/projects`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      8000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/projects`, 'Create project failed')
+    }
+    return res.json()
+  }
+
+  async updateProject(projectId: string, body: ProjectUpdateBody): Promise<Project> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      8000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/projects/${projectId}`, 'Update project failed')
+    }
+    return res.json()
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}`,
+      { method: 'DELETE' },
+      8000,
+    )
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/projects/${projectId}`, 'Delete project failed')
+    }
   }
 }
 

@@ -34,6 +34,7 @@ import {
 import { useSettingsStore } from '@/store/settings'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
+import { ProviderLogo } from '@/components/ui/provider-logo'
 import { cn } from '@/lib/utils'
 import type {
   ProviderInfo, ProviderMeta, ProviderModel, ProviderKeyEntry,
@@ -410,19 +411,11 @@ export function ModelPanel() {
                       className={cn(
                         'group flex w-full items-center gap-2.5 rounded-lg border border-transparent px-3 py-2 text-left transition-all duration-200',
                         active
-                          ? 'border-violet-500/40 bg-violet-500/10'
+                          ? 'border-primary/40 bg-primary/10'
                           : 'hover:border-border hover:bg-accent/60',
                       )}
                     >
-                      <span
-                        className={cn(
-                          'h-1.5 w-1.5 shrink-0 rounded-full',
-                          p.has_api_key || p.id === 'ollama'
-                            ? 'bg-emerald-500'
-                            : 'bg-muted-foreground/40',
-                        )}
-                        title={p.has_api_key ? '已配置 API Key' : '未配置 API Key'}
-                      />
+                      <ProviderLogo providerId={p.id} size={18} className="shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[13px] font-medium">{p.display_name}</div>
                         <div className="truncate text-[10px] text-muted-foreground">
@@ -432,7 +425,7 @@ export function ModelPanel() {
                       {p.is_default && (
                         <Badge
                           variant="outline"
-                          className="border-violet-500/40 bg-violet-500/15 px-1.5 py-0 text-[9px] text-violet-500"
+                          className="border-primary/40 bg-primary/15 px-1.5 py-0 text-[9px] text-primary"
                         >
                           默认
                         </Badge>
@@ -457,14 +450,12 @@ export function ModelPanel() {
           <>
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-                  <Bot className="h-4 w-4" />
-                </div>
+                <ProviderLogo providerId={selected.id} size={28} />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">{selected.display_name}</span>
                     {selected.is_default && (
-                      <Badge variant="outline" className="border-violet-500/40 text-[10px] text-violet-500">
+                      <Badge variant="outline" className="border-primary/40 text-[10px] text-primary">
                         当前默认
                       </Badge>
                     )}
@@ -628,7 +619,7 @@ export function ModelPanel() {
                 onClick={() => setSetAsDefault((v) => !v)}
                 className={cn(
                   'flex h-5 w-9 items-center rounded-full border-2 border-transparent transition-colors',
-                  setAsDefault ? 'bg-violet-500' : 'bg-input',
+                  setAsDefault ? 'bg-primary' : 'bg-input',
                 )}
                 role="switch"
                 aria-checked={setAsDefault}
@@ -687,7 +678,7 @@ export function ModelPanel() {
                   <button
                     key={m.id}
                     onClick={() => handlePickModel(m)}
-                    className="flex w-full items-center justify-between rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors hover:border-violet-500/40 hover:bg-violet-500/10"
+                    className="flex w-full items-center justify-between rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-mono text-[12px]">{m.id}</div>
@@ -744,7 +735,7 @@ export function ModelPanel() {
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[12px]">{k.masked_key}</span>
                         {k.is_primary && (
-                          <Badge variant="outline" className="border-violet-500/40 text-[9px] text-violet-500">
+                          <Badge variant="outline" className="border-primary/40 text-[9px] text-primary">
                             主 Key
                           </Badge>
                         )}

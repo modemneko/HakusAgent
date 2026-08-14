@@ -64,7 +64,7 @@ export function BackendOutdatedBanner({ message, backendVersion, onRetry }: Prop
               href="https://github.com/modemneko/HakusAgent/actions"
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-1 inline-flex items-center gap-0.5 text-violet-500 hover:underline"
+              className="ml-1 inline-flex items-center gap-0.5 text-primary hover:underline"
             >
               <Download className="inline h-3 w-3" />
               github.com/modemneko/HakusAgent/actions

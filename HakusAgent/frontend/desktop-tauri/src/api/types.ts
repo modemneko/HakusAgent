@@ -38,6 +38,14 @@ export interface ChatRequest {
    * See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
    */
   reasoning_effort?: 'low' | 'high' | 'max'
+  /**
+   * Per-request project override. If set to a registered project id,
+   * the agent's working_dir is set to that project's folder — so all
+   * file/shell tools operate inside the project without the user
+   * having to spell out absolute paths. None / "none" / unknown id
+   * falls back to the default workspace.
+   */
+  project_id?: string
 }
 
 export interface ChatResponse {
@@ -87,6 +95,10 @@ export interface BackendVersionInfo {
  * 这里也要同步 bump，否则客户端不会提示用户升级。
  *
  * 历史:
+ *   v10 (0.10.0): + Project management (/api/projects CRUD) +
+ *                 ChatRequest.project_id — agent can be told which
+ *                 folder to work in without the user spelling out
+ *                 absolute paths every turn.
  *   v8 (0.8.0): + Codex review panel: /api/git/status, /api/git/diff,
  *               /api/git/stage + /ws/terminal
  *   v7 (0.7.0): + /api/question/answer + ask_user 工具交互式提问
@@ -97,7 +109,7 @@ export interface BackendVersionInfo {
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_BACKEND_API_VERSION_INT = 8
+export const EXPECTED_BACKEND_API_VERSION_INT = 10
 
 export interface AppConfig {
   version: string
@@ -490,6 +502,8 @@ export interface WSOutgoingMessage {
   content?: string
   session_id?: string
   provider?: string
+  /** Per-message project override — same semantics as ChatRequest.project_id. */
+  project_id?: string
 }
 
 // ========== Phase 5: Metrics (服务端 /api/metrics 响应) ==========
@@ -935,4 +949,42 @@ export interface GitDiffResponse {
   truncated: boolean
   /** Working directory used. */
   workdir: string
+}
+
+// =====================================================================
+// Projects — Codex-style "work on a project" feature
+// =====================================================================
+
+/**
+ * A registered project. The user picks a folder via the Tauri folder
+ * dialog, we POST it to /api/projects, and the server stores it in
+ * ~/.hakus/projects.json. Subsequent chat turns send the project_id
+ * so the agent runs with that folder as its working_dir.
+ */
+export interface Project {
+  id: string
+  name: string
+  /** Absolute filesystem path to the project folder. */
+  path: string
+  /** Pinned projects float to the top of the picker. */
+  pinned: boolean
+  /** Unix ms when the project was registered. */
+  created_at: number
+  /** Unix ms when the project was last used in a chat turn. */
+  last_used_at: number
+}
+
+export interface ProjectsListResponse {
+  projects: Project[]
+}
+
+export interface ProjectCreateBody {
+  name: string
+  path: string
+  pinned?: boolean
+}
+
+export interface ProjectUpdateBody {
+  name?: string
+  pinned?: boolean
 }

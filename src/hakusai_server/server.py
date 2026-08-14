@@ -54,8 +54,11 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.9.0"
-SIDECAR_API_VERSION_INT = 9  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.10.0"
+SIDECAR_API_VERSION_INT = 10  # 整数版本，便于客户端比较
+# v0.10.0: + Project management (/api/projects CRUD) + ChatRequest.project_id
+#          so the agent can be told which folder to work in without the
+#          user having to spell out absolute paths every turn.
 # v0.9.0: + P5 observability: Prometheus /metrics endpoint + structlog
 #         + MetricsMiddleware (HTTP latency histograms)
 #         + Enhanced /api/metrics with Prometheus snapshot + Guardian stats
@@ -111,6 +114,12 @@ class ChatRequest(BaseModel):
     # Accepts "low" / "high" / "max" / None. None = model default.
     # See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
     reasoning_effort: Optional[str] = None
+    # Per-request project override. If set to a registered project id,
+    # the agent's working_dir is set to that project's folder — so all
+    # file/shell tools operate inside the project without the user
+    # having to spell out absolute paths. None / "none" / unknown id
+    # falls back to the default workspace (sidecar's repo root).
+    project_id: Optional[str] = None
 
     @field_validator("run_mode")
     @classmethod
@@ -1317,9 +1326,14 @@ class HakusAIServer:
                     logger.info(f"Chat (AgentCore): {request.message[:80]} provider={request.provider or 'default'}")
                     # Phase 5: 非 streaming 也计 turn
                     self._inc_metric("total_turns", provider=request.provider or "default")
+                    # Resolve active project (if any) — same as streaming path.
+                    from . import projects as _projects
+                    working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
                         provider=request.provider,
+                        run_mode=getattr(request, "run_mode", None),
+                        working_dir=working_dir,
                     )
                     if result.get("failed"):
                         self._inc_metric("total_errors", provider=request.provider or "default")
@@ -1408,12 +1422,17 @@ class HakusAIServer:
                     # Phase 5: 计 turn + 跟踪 LLM/checkpoint 事件
                     self._inc_metric("total_turns", provider=request.provider or "default")
                     turn_failed = False
+                    # Resolve the active project's folder (if any) so the
+                    # agent's file/shell tools operate inside it.
+                    from . import projects as _projects
+                    working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
                     try:
                         async for chunk in agentcore_run_turn_stream(
                             request.message, request.session_id,
                             provider=request.provider,
                             run_mode=getattr(request, "run_mode", None),
                             reasoning_effort=getattr(request, "reasoning_effort", None),
+                            working_dir=working_dir,
                         ):
                             # 从 chunk 中提取事件类型, 更新 metrics
                             etype = chunk.get("event_type", "")
@@ -1513,11 +1532,14 @@ class HakusAIServer:
                         "success": False,
                     }
                 try:
+                    from . import projects as _projects
+                    msg_working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
                     result = await agentcore_run_turn_collect(
                         request.message, request.session_id,
                         provider=request.provider,
                         run_mode=getattr(request, "run_mode", None),
                         reasoning_effort=getattr(request, "reasoning_effort", None),
+                        working_dir=msg_working_dir,
                     )
                     return {
                         "success": not result.get("failed", False),
@@ -2395,6 +2417,64 @@ class HakusAIServer:
                 logger.warning(f"Character saved but reload failed: {e}")
             return {"message": "Character updated"}
 
+        # ========== 项目管理 API (Codex-style) ==========
+        # A project = a named folder on disk. The desktop client lets the
+        # user pick a folder (Tauri dialog), POSTs it here to register,
+        # and then sends project_id with every chat request so the agent
+        # runs with that folder as its working_dir.
+
+        @app.get("/api/projects")
+        async def list_projects_endpoint():
+            """List all registered projects, sorted by pinned then last_used_at."""
+            from . import projects as _projects
+            return {"projects": _projects.list_projects()}
+
+        @app.post("/api/projects")
+        async def create_project_endpoint(request: dict):
+            """Register a new project.
+
+            Body: {"name": "...", "path": "/abs/path/to/folder", "pinned"?: bool}
+            The folder must already exist on disk — the Tauri folder picker
+            only returns existing folders, and we don't silently create one
+            here so users can't accidentally register "/" or similar.
+            """
+            from . import projects as _projects
+            name = (request.get("name") or "").strip()
+            path = (request.get("path") or "").strip()
+            pinned = bool(request.get("pinned", False))
+            if not path:
+                raise HTTPException(status_code=400, detail="path is required")
+            try:
+                return _projects.create_project(name, path, pinned=pinned)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        @app.patch("/api/projects/{project_id}")
+        async def update_project_endpoint(project_id: str, request: dict):
+            """Rename and/or pin/unpin a project.
+
+            Body: {"name"?: "...", "pinned"?: bool}
+            """
+            from . import projects as _projects
+            if "name" in request:
+                updated = _projects.rename_project(project_id, request["name"])
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="project not found")
+            if "pinned" in request:
+                updated = _projects.set_pinned(project_id, bool(request["pinned"]))
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="project not found")
+            return _projects.get_project(project_id) or {}
+
+        @app.delete("/api/projects/{project_id}")
+        async def delete_project_endpoint(project_id: str):
+            """Remove a project from the registry. Does NOT touch the folder on disk."""
+            from . import projects as _projects
+            ok = _projects.delete_project(project_id)
+            if not ok:
+                raise HTTPException(status_code=404, detail="project not found")
+            return {"deleted": True}
+
         # ========== 记忆系统扩展 API ==========
 
         @app.get("/api/memory/details")
@@ -3021,7 +3101,15 @@ class HakusAIServer:
                                 # Phase 5: WS 路径也计 turn + 跟踪 LLM/checkpoint 事件
                                 self._inc_metric("total_turns", provider=ws_provider or "default")
                                 ws_turn_failed = False
-                                async for chunk in agentcore_run_turn_stream(content, session_id, provider=ws_provider):
+                                # Resolve active project (if any) — same as SSE path.
+                                from . import projects as _projects
+                                ws_project_id = data.get("project_id")
+                                ws_working_dir = _projects.resolve_working_dir(ws_project_id)
+                                async for chunk in agentcore_run_turn_stream(
+                                    content, session_id,
+                                    provider=ws_provider,
+                                    working_dir=ws_working_dir,
+                                ):
                                     etype = chunk.get("event_type", "")
                                     if etype == "token_usage":
                                         self._inc_metric("llm_calls", provider=ws_provider or "default")

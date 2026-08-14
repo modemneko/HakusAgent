@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ProviderLogo } from '@/components/ui/provider-logo'
 import { useSessionStore } from '@/store/session'
 import { useConnectionStore } from '@/store/connection'
 import { useSettingsStore } from '@/store/settings'
@@ -204,8 +205,11 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
         <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight">
           {activeSession?.title || characterName}
         </span>
-        <span className="max-w-full truncate text-[10px] text-muted-foreground/80">
-          {currentModelLabel}
+        <span className="flex max-w-full items-center gap-1 truncate text-[10px] text-muted-foreground/80">
+          {currentProvider && (
+            <ProviderLogo providerId={currentProvider.id} size={11} />
+          )}
+          <span className="truncate">{currentModelLabel}</span>
         </span>
       </div>
 

@@ -25,6 +25,8 @@
     "store:allow-save",
     "updater:default",
     "global-shortcut:default",
-    "process:default"
+    "process:default",
+    "dialog:default",
+    "dialog:allow-open"
   ]
 }

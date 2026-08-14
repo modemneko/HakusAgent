@@ -179,15 +179,6 @@ export function CharacterPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <User className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">角色人格设定</div>
-          <p className="text-[11px] text-muted-foreground">定义 AI 助手的名字、性格、开场白等。</p>
-        </div>
-      </div>
 
       <Separator />
 

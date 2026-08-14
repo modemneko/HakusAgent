@@ -69,7 +69,7 @@ type ServerStatus = McpServerInfo['status']
 
 const STATUS_META: Record<ServerStatus, { label: string; tone: string; icon: typeof Activity }> = {
   stopped: { label: '已停止', tone: 'text-muted-foreground bg-muted', icon: Square },
-  starting: { label: '启动中', tone: 'text-violet-500 bg-violet-500/15', icon: Loader2 },
+  starting: { label: '启动中', tone: 'text-primary bg-primary/15', icon: Loader2 },
   running: { label: '运行中', tone: 'text-emerald-500 bg-emerald-500/15', icon: CheckCircle2 },
   failed: { label: '失败', tone: 'text-rose-500 bg-rose-500/15', icon: XCircle },
   disabled: { label: '已禁用', tone: 'text-amber-500 bg-amber-500/15', icon: Power },
@@ -352,15 +352,6 @@ export function McpPanel() {
   if (outdatedError) {
     return (
       <div className="space-y-5">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-            <Plug className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold">MCP 服务器</div>
-            <p className="text-[11px] text-muted-foreground">外部 MCP server 接入与工具调用</p>
-          </div>
-        </div>
         <Separator />
         <BackendOutdatedBanner
           message={outdatedError.message}
@@ -375,17 +366,6 @@ export function McpPanel() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-            <Plug className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold">MCP 服务器</div>
-            <p className="text-[11px] text-muted-foreground">
-              外部 MCP server 接入与工具调用（stdio 传输）
-            </p>
-          </div>
-        </div>
         <Button
           variant="outline"
           size="sm"
@@ -655,7 +635,7 @@ function ServerCard({
     busyAction === `delete-${server.name}`
 
   return (
-    <div className="rounded-xl border border-border bg-card/40 transition-colors hover:border-violet-500/30">
+    <div className="rounded-xl border border-border bg-card/40 transition-colors hover:border-primary/30">
       {/* Header row */}
       <div className="flex items-center gap-3 p-3">
         <button
@@ -689,7 +669,7 @@ function ServerCard({
               {statusMeta.label}
             </span>
             {server.tool_count > 0 && isRunning && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-500">
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">
                 <Wrench className="h-2.5 w-2.5" /> {server.tool_count} 工具
               </span>
             )}
@@ -875,7 +855,7 @@ function GlobalToggleRow({
   onChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors hover:border-violet-500/30 hover:bg-accent/30">
+    <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors hover:border-primary/30 hover:bg-accent/30">
       <div className="flex-1 pr-4">
         <Label htmlFor={id} className="text-sm font-medium">
           {title}
@@ -909,7 +889,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Plug className="h-4 w-4 text-violet-500" />
+            <Plug className="h-4 w-4 text-primary" />
             {mode === 'create' ? '添加 MCP Server' : `编辑 ${initial.name}`}
           </DialogTitle>
           <DialogDescription>
@@ -1016,7 +996,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
               onChange={(e) => update('env', e.target.value)}
               placeholder={'API_KEY=sk-xxx\nNODE_ENV=production'}
               rows={3}
-              className="flex w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500"
+              className="flex w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
             />
             <p className="text-[10px] text-muted-foreground">
               {mode === 'edit' && (

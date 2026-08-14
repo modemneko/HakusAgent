@@ -61,15 +61,6 @@ export function ConnectionPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <Server className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">连接</div>
-          <p className="text-[11px] text-muted-foreground">HakusAI 后端服务地址与超时配置。</p>
-        </div>
-      </div>
 
       <Separator />
 

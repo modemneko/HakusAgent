@@ -83,10 +83,10 @@ const STATUS_LABEL: Record<UpdaterStatus, string> = {
 
 const STATUS_COLOR: Record<UpdaterStatus, string> = {
   idle: 'text-muted-foreground',
-  checking: 'text-violet-500',
+  checking: 'text-primary',
   available: 'text-amber-500',
   'not-available': 'text-emerald-500',
-  downloading: 'text-violet-500',
+  downloading: 'text-primary',
   downloaded: 'text-emerald-500',
   installed: 'text-emerald-500',
   error: 'text-rose-500',
@@ -253,17 +253,6 @@ export function AboutPanel() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <Sparkles className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">关于与更新</div>
-          <p className="text-[11px] text-muted-foreground">
-            版本信息 + 自动更新（从 GitHub Release 拉取）
-          </p>
-        </div>
-      </div>
 
       <Separator />
 
@@ -364,7 +353,7 @@ export function AboutPanel() {
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-full bg-violet-500 transition-all duration-300"
+                  className="h-full bg-primary transition-all duration-300"
                   style={{ width: `${Math.round(state.progress * 100)}%` }}
                 />
               </div>
@@ -495,7 +484,7 @@ function ToggleRow({
         'flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors',
         disabled
           ? 'opacity-50'
-          : 'hover:border-violet-500/30 hover:bg-accent/30',
+          : 'hover:border-primary/30 hover:bg-accent/30',
       )}
     >
       <div className="flex-1 pr-4">

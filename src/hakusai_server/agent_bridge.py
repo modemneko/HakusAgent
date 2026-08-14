@@ -279,21 +279,36 @@ def _make_async_confirm_callback():
     return _cb
 
 
-def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
-    """Return a cached AgentCore for the (session_id, provider) pair,
-    or create a new one.
+def get_or_create_agent(
+    session_id: str,
+    provider: Optional[str] = None,
+    working_dir: Optional[str] = None,
+) -> Any:
+    """Return a cached AgentCore for the (session_id, provider, working_dir)
+    tuple, or create a new one.
 
     Creation is lazy and fault-tolerant: if hakus/ can't be imported
     (missing dep), or if the LLM client factory fails (bad API key),
     we raise — the caller (server.py) catches and surfaces the error
     via /health's ``degraded`` state.
 
-    The cache key is ``(session_id, provider)`` so that switching
-    provider mid-session (via TopBar dropdown) creates a fresh agent
-    bound to the new provider, instead of silently reusing the old one.
+    The cache key is ``(session_id, provider, working_dir)`` so that:
+      - switching provider mid-session (TopBar dropdown) creates a fresh agent
+      - switching project mid-session (Composer project picker) creates a fresh
+        agent bound to the new project's folder
+    Both of these are intentional — reusing the old agent would silently
+    ignore the user's selection.
     """
     resolved_provider = _resolve_provider(provider)
-    cache_key = (session_id, resolved_provider)
+    # Normalize working_dir: None / "" / non-existent path → _REPO_ROOT.
+    # projects.resolve_working_dir() already returns a realpath'd value
+    # when coming from the project picker, but we double-check here so
+    # a stale projects.json entry pointing at a deleted folder doesn't
+    # crash AgentCore.__init__.
+    resolved_working_dir = (
+        working_dir if working_dir and os.path.isdir(working_dir) else _REPO_ROOT
+    )
+    cache_key = (session_id, resolved_provider, resolved_working_dir)
     if cache_key in _agent_cache:
         return _agent_cache[cache_key]
 
@@ -303,14 +318,17 @@ def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
             from hakus.agent import AgentCore
             from hakus.permission import PermissionMode
 
-            logger.info(f"Creating AgentCore for session={session_id} provider={resolved_provider}")
+            logger.info(
+                f"Creating AgentCore for session={session_id} "
+                f"provider={resolved_provider} working_dir={resolved_working_dir}"
+            )
 
             agent = AgentCore(
                 model_type=resolved_provider,
                 permission_mode=PermissionMode.ASK,
                 confirm_callback=_make_confirm_callback(),
                 session_id=session_id,
-                working_dir=_REPO_ROOT,
+                working_dir=resolved_working_dir,
                 # Sidecar runs headless — no Textual event loop. The
                 # async confirm callback path is used because run_turn
                 # is async. The sync callback would also work (it's
@@ -319,7 +337,9 @@ def get_or_create_agent(session_id: str, provider: Optional[str] = None) -> Any:
                 # identical regardless of which code path runs.
             )
             try:
-                agent.set_system_prompt(_SIDECAR_SYSTEM_PROMPT.format(working_dir=_REPO_ROOT))
+                agent.set_system_prompt(
+                    _SIDECAR_SYSTEM_PROMPT.format(working_dir=resolved_working_dir)
+                )
             except Exception as e:
                 logger.warning(f"Could not set sidecar system prompt: {e}")
             # Install async callback too — AgentCore uses it when
@@ -506,6 +526,7 @@ async def run_turn_stream(
     provider: Optional[str] = None,
     run_mode: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    working_dir: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Run one AgentCore turn, yielding legacy-shape chunks.
 
@@ -522,10 +543,15 @@ async def run_turn_stream(
     ``provider`` is a per-request override — if set (e.g. "opencode"),
     a fresh AgentCore bound to that provider is used. If None, falls
     back to config.yaml's models.default_model.
+
+    ``working_dir`` is a per-request override for the agent's working
+    directory. If set to an existing directory, a fresh AgentCore bound
+    to that folder is used (so all file/shell tools operate inside it).
+    If None or non-existent, falls back to the sidecar's repo root.
     """
     from hakus.protocol.serialization import serialize_event
 
-    agent = get_or_create_agent(session_id, provider=provider)
+    agent = get_or_create_agent(session_id, provider=provider, working_dir=working_dir)
     op_receiver = _get_or_create_op_receiver(session_id)
 
     # Apply per-request reasoning_effort override (DeepSeek thinking mode).
@@ -935,6 +961,7 @@ async def run_turn_collect(
     provider: Optional[str] = None,
     run_mode: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    working_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a turn and return the full response as a single dict.
 
@@ -950,8 +977,11 @@ async def run_turn_collect(
     failed = False
 
     async for chunk in run_turn_stream(
-        message, session_id, provider=provider,
-        run_mode=run_mode, reasoning_effort=reasoning_effort,
+        message, session_id,
+        provider=provider,
+        run_mode=run_mode,
+        reasoning_effort=reasoning_effort,
+        working_dir=working_dir,
     ):
         if chunk.get("content"):
             full_content += chunk["content"]

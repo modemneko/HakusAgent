@@ -118,15 +118,6 @@ export function ToolsPanel() {
         />
       )}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-            <Shield className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold">工具与权限</div>
-            <p className="text-[11px] text-muted-foreground">控制 AI 可调用的工具与权限策略。</p>
-          </div>
-        </div>
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           刷新
@@ -147,7 +138,7 @@ export function ToolsPanel() {
             {tools.map((t) => (
               <div
                 key={t.id}
-                className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-violet-500/30"
+                className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-primary/30"
               >
                 <div className="min-w-0 flex-1 pr-3">
                   <div className="flex items-center gap-2">
@@ -201,8 +192,8 @@ export function ToolsPanel() {
                   className={cn(
                     'group relative flex flex-col items-start gap-1 rounded-xl border p-4 text-left transition-all duration-200',
                     active
-                      ? cn(meta.tone, 'ring-1 ring-violet-500/50')
-                      : 'border-border bg-card/40 hover:border-violet-500/30 hover:bg-accent/30',
+                      ? cn(meta.tone, 'ring-1 ring-primary/50')
+                      : 'border-border bg-card/40 hover:border-primary/30 hover:bg-accent/30',
                   )}
                 >
                   <div className="flex w-full items-center justify-between">

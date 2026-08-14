@@ -4,6 +4,7 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
+import { useProjectsStore } from '@/store/projects'
 import { apiClient, HakusAIError } from '@/api/client'
 import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
@@ -185,6 +186,7 @@ export function ChatView() {
   const agentMode = useAppStore((s) => s.agentMode)
   const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
   const connCheck = useConnectionStore((s) => s.check)
+  const activeProject = useProjectsStore((s) => s.activeProject)
 
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null)
   const [composerDraft, setComposerDraft] = useState<string | undefined>(undefined)
@@ -300,6 +302,7 @@ export function ChatView() {
           settings.defaultModel,
           agentMode,
           getReasoningEffort(agentMode),
+          activeProject?.id,
         )
         updateMessage(sessionId, assistantMsgId, { streaming: false })
         void persistMessage(sessionId, assistantMsgId)
@@ -714,7 +717,7 @@ export function ChatView() {
               'flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium',
               conversationState === 'listening' && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
               conversationState === 'speaking' && 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
-              conversationState === 'connecting' && 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+              conversationState === 'connecting' && 'bg-primary/15 text-primary',
               (conversationState === 'transcribing' || conversationState === 'thinking') &&
                 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
             )}
@@ -769,22 +772,24 @@ export function ChatView() {
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-base font-semibold">What would you like to do?</p>
+              <p className="text-base font-semibold">
+                要在 {activeProject ? activeProject.name : '当前目录'} 内开发什么?
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Code, write, inspect data, or talk through an idea.
+                构建新功能、审查代码、探索代码库，或修复问题。
               </p>
             </div>
             <div className="flex max-w-md flex-wrap items-center justify-center gap-2">
               {[
-                "Write a Python script",
-                "Explain this project architecture",
-                "Improve my code plan",
-                "Summarize recent changes",
+                '构建新功能、应用或工具',
+                '审查代码并提出修改建议',
+                '探索并理解代码工具',
+                '修复问题和失败',
               ].map((prompt) => (
                 <button
                   key={prompt}
                   onClick={() => setComposerDraft(prompt)}
-                  className="rounded-full border border-border/60 bg-card/60 px-3 py-1.5 text-xs text-foreground/90 backdrop-blur-xl transition-colors hover:border-primary/40 hover:bg-primary/10"
+                  className="rounded-full border border-border/60 bg-card/60 px-3 py-1.5 text-xs text-foreground/90 backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
                 >
                   {prompt}
                 </button>

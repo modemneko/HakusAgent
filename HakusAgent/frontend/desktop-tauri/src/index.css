@@ -74,7 +74,7 @@
     --diff-removed: 4 64% 52%;
     --diff-added-bg: 137 38% 95%;
     --diff-removed-bg: 4 64% 96%;
-    --skill: 270 40% 55%;
+    --skill: 211 100% 50%;
 
     /* Layout tokens */
     --titlebar-height: 3rem;
@@ -352,8 +352,8 @@
     border-color: transparent;
     background:
       linear-gradient(hsl(var(--card) / .96), hsl(var(--card) / .96)) padding-box,
-      linear-gradient(115deg, hsl(270 100% 79%), hsl(215 100% 78%), hsl(270 100% 79%)) border-box;
-    box-shadow: 0 0 0 1px hsl(250 100% 78% / .28), 0 0 18px hsl(255 100% 70% / .24), 0 8px 28px hsl(240 80% 55% / .16);
+      linear-gradient(115deg, hsl(211 100% 70%), hsl(215 100% 78%), hsl(211 100% 70%)) border-box;
+    box-shadow: 0 0 0 1px hsl(211 100% 60% / .28), 0 0 18px hsl(211 100% 55% / .24), 0 8px 28px hsl(211 80% 50% / .16);
   }
 }
 
@@ -455,7 +455,7 @@
 .hljs-built_in,
 .hljs-title.class_,
 .hljs-class .hljs-title {
-  color: #d2a8ff;
+  color: #93c5fd;
 }
 .hljs-variable,
 .hljs-template-variable,

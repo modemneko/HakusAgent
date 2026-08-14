@@ -133,15 +133,6 @@ export function WeChatPanel() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500/15 text-green-500">
-          <MessageSquare className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">微信 ClawBot</div>
-          <p className="text-[11px] text-muted-foreground">扫码连接微信，AI 自动回复聊天消息</p>
-        </div>
-      </div>
 
       <Separator />
 

@@ -13,6 +13,7 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
 import { useConnectionStore } from '@/store/connection'
+import { useProjectsStore } from '@/store/projects'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -36,6 +37,7 @@ function App() {
   const loadSettings = useSettingsStore((s) => s.load)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
+  const loadProjects = useProjectsStore((s) => s.load)
 
   // ── Dismiss splash: respects MIN_SPLASH_MS so animation plays fully ──
   const tryDismissSplash = useCallback(() => {
@@ -73,46 +75,96 @@ function App() {
       } catch { /* ignore */ }
     })()
 
-    // 2. Poll health every 300ms, up to 5s
+    // 2. Poll health every 300ms for the first ~5s (fast detection when
+    //    backend is already up). If still not connected after that, fall
+    //    back to slow polling every 2s — keeps retrying until backend is
+    //    ready, so a slow-booting backend will be picked up automatically.
     let attempts = 0
-    const timer = setInterval(() => {
+    let slowTimer: ReturnType<typeof setInterval> | undefined
+    const fastTimer = setInterval(() => {
       const { state } = useConnectionStore.getState()
-      if (state === 'connected' || ++attempts >= 17) {
-        clearInterval(timer)
+      if (state === 'connected') {
+        clearInterval(fastTimer)
+        return
+      }
+      if (++attempts >= 17) {
+        clearInterval(fastTimer)
+        // Slow polling: keep probing until connected (no give-up)
+        slowTimer = setInterval(() => {
+          const { state: s } = useConnectionStore.getState()
+          if (s === 'connected') {
+            clearInterval(slowTimer!)
+            slowTimer = undefined
+            return
+          }
+          checkBackend()
+        }, 2000)
         return
       }
       checkBackend()
     }, 300)
     checkBackend() // immediate first check
 
-    return () => { unlisten?.(); clearInterval(timer) }
+    return () => {
+      unlisten?.()
+      clearInterval(fastTimer)
+      if (slowTimer) clearInterval(slowTimer)
+    }
   }, [checkBackend])
 
-  // ── When connected or errored → dismiss splash ─────────────────────
+  // ── When connected → dismiss splash ────────────────────────────────
+  // NOTE: We intentionally do NOT dismiss on connState === 'error'.
+  // On a cold start the first few /health probes fail because the backend
+  // hasn't bound its port yet; dismissing the splash on 'error' would let
+  // loadSessions() run against a dead backend and silently leave the user
+  // with an empty UI (the bug we're fixing).
+  //
+  // We also removed the previous 6s fallback that dismissed the splash
+  // unconditionally — that was the ROOT CAUSE of the "first launch shows
+  // no data, refresh fixes it" bug: the 6s timer fired while the backend
+  // was still starting, the splash dismissed, the user saw an empty UI,
+  // and the init effect couldn't run because connState wasn't 'connected'
+  // yet. The slow poll (every 2s, no give-up) will eventually connect,
+  // and THEN the splash dismisses + data loads in the same tick.
   useEffect(() => {
     if (!IS_TAURI) return
-    if (connState === 'connected' || connState === 'error') {
+    if (connState === 'connected') {
       tryDismissSplash()
     }
   }, [connState, IS_TAURI, tryDismissSplash])
 
-  // ── Fallback: if splash still showing after 6s, dismiss anyway ─────
+  // ── Safety: if backend truly fails after 60s, dismiss splash anyway ─
+  // This only fires if the backend hasn't connected after a full minute
+  // (Python crashed, antivirus blocked it, etc.). The user will see the
+  // main UI with a "not connected" state and can open settings to debug.
+  // 60s is generous — normal cold start is <15s even on slow Windows.
   useEffect(() => {
     if (!IS_TAURI) return
     const t = setTimeout(() => {
       if (showSplash) tryDismissSplash()
-    }, 6000)
+    }, 60000)
     return () => clearTimeout(t)
   }, [IS_TAURI, showSplash, tryDismissSplash])
 
-  // ── Initialize sessions after app is ready ─────────────────────────
+  // ── Initialize sessions AFTER backend is connected ─────────────────
+  // Depends on both `appReady` (UI is visible) and `connState === 'connected'`
+  // (backend is actually ready to serve /api/sessions). Without the
+  // connState gate, a cold-start where the backend takes >5s to boot
+  // would cause loadSessions() to fire against a dead backend, fail
+  // silently, and leave the user with an empty UI until they manually
+  // refresh — which is exactly the bug we're fixing.
   useEffect(() => {
     if (!appReady) return
+    if (connState !== 'connected') return
+    // If sessions are already loaded (e.g. transient connState flicker),
+    // don't re-run — that would wipe in-memory state and re-fetch.
+    if (useSessionStore.getState().loaded) return
     let cancelled = false
     ;(async () => {
       await loadSettings()
       if (cancelled) return
       void migrateSessions().catch((e) => console.warn('session migrate failed:', e))
+      void loadProjects().catch((e) => console.warn('projects load failed:', e))
       await loadSessions()
       if (cancelled) return
       const st = useSessionStore.getState()
@@ -123,7 +175,7 @@ function App() {
       }
     })()
     return () => { cancelled = true }
-  }, [appReady, loadSessions, loadSettings, migrateSessions])
+  }, [appReady, connState, loadSessions, loadSettings, loadProjects, migrateSessions])
 
   // ── Listen for "new chat" from Tauri tray ─────────────────────────
   useEffect(() => {

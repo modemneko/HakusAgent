@@ -81,15 +81,6 @@ export function MemoryPanel() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-            <Brain className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold">记忆系统</div>
-            <p className="text-[11px] text-muted-foreground">短期上下文与长期向量化记忆。</p>
-          </div>
-        </div>
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           刷新
@@ -237,7 +228,7 @@ function StatCard({
         ? 'text-muted-foreground'
         : 'text-foreground'
   return (
-    <div className="rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-violet-500/30">
+    <div className="rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-primary/30">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Icon className="h-3 w-3" />
         {label}

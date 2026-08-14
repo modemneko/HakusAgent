@@ -227,15 +227,6 @@ export function AdvancedPanel() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-            <SettingsIcon className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold">高级</div>
-            <p className="text-[11px] text-muted-foreground">诊断信息、配置导入导出、Backend 控制。</p>
-          </div>
-        </div>
         <Button variant="ghost" size="sm" onClick={refreshDiag} disabled={loadingDiag}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loadingDiag ? 'animate-spin' : ''}`} />
           刷新诊断
@@ -583,7 +574,7 @@ function DiagCard({
     muted: 'text-muted-foreground',
   }[tone]
   return (
-    <div className="rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-violet-500/30">
+    <div className="rounded-xl border border-border bg-card/40 p-3 transition-colors hover:border-primary/30">
       <div className="mb-1 text-[11px] text-muted-foreground">{label}</div>
       <div className={cn('truncate text-sm font-semibold', toneClass)} title={value}>
         {value}

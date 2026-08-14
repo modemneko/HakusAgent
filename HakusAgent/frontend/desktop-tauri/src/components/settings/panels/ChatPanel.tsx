@@ -25,7 +25,7 @@ function SwitchRow({
   onChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors hover:border-violet-500/30 hover:bg-accent/30">
+    <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors hover:border-primary/30 hover:bg-accent/30">
       <div className="flex items-start gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <Icon className="h-4 w-4" />
@@ -47,15 +47,6 @@ export function ChatPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
-          <MessageSquare className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">对话行为</div>
-          <p className="text-[11px] text-muted-foreground">控制消息发送与显示的细节。</p>
-        </div>
-      </div>
 
       <Separator />
 

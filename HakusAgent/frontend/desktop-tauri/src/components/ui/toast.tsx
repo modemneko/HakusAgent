@@ -62,7 +62,7 @@ const ICONS: Record<ToastVariant, typeof CheckCircle2> = {
 const VARIANT_STYLES: Record<ToastVariant, string> = {
   success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-500',
   error: 'border-red-500/40 bg-red-500/10 text-red-500',
-  info: 'border-violet-500/40 bg-violet-500/10 text-violet-500',
+  info: 'border-primary/40 bg-primary/10 text-primary',
 }
 
 /** Single toast entry — animates itself out. */
