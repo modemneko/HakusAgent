@@ -8,6 +8,11 @@
 
 use std::sync::Mutex;
 use std::process::{Command as StdCommand, Stdio};
+// HashSet/VecDeque are only used by the Unix branch of kill_process_tree
+// (pgrep BFS walk). On Windows we use `taskkill /T` which is atomic, so
+// the collections are unused there — gate the import to avoid an
+// unused-import warning when compiling on Windows.
+#[cfg(not(target_os = "windows"))]
 use std::collections::{HashSet, VecDeque};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
