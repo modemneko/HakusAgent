@@ -109,14 +109,13 @@ export const MessageBubble = memo(function MessageBubble({
 
       {/* Message body */}
       <div className={cn('flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
-        {/* Reasoning (collapsible Think block) — shown above the text bubble */}
+        {/* Reasoning (inline, no bubble) — shown above the text bubble.
+            Just muted text with a Brain icon; click to expand into full thinking. */}
         {showReasoningBlock && (
-          <div className="w-full overflow-hidden rounded-lg border border-amber-500/20 bg-amber-500/[0.03]">
-            <ReasoningLogItem
-              reasoning={reasoningText || ''}
-              isStreaming={isStreamingCursor && !segmentText?.trim()}
-            />
-          </div>
+          <ReasoningLogItem
+            reasoning={reasoningText || ''}
+            isStreaming={isStreamingCursor && !segmentText?.trim()}
+          />
         )}
 
         {/* Content bubble — subtle edges for assistant (article-like flow),

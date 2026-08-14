@@ -374,15 +374,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         [sessionId]: list.map((m) => {
           if (m.id !== messageId) return m
           const next = { ...m, ...patch, updated_at: Date.now() }
-          // If patch overwrites content/reasoning wholesale (e.g. turn_completed
-          // delivers the final assembled string from the server), collapse the
-          // segment arrays into a single segment so the renderer doesn't show
-          // stale multi-segment text alongside the new content.
+          // When turn_completed delivers the final assembled string, KEEP the
+          // existing segment structure if we already built one during streaming
+          // — collapsing to a single segment destroys the interleaving between
+          // text bubbles and tool-call cards, making all tool calls pile up at
+          // the end of the message. Only collapse if we never had segments
+          // (e.g. legacy hydration that only set flat `content`).
           if (patch.content !== undefined) {
-            next.text_segments = [{ id: generateId('seg_'), text: patch.content }]
+            const existingSegs = m.text_segments || []
+            const hasMultiSegs = existingSegs.length > 1
+              || (existingSegs.length === 1 && existingSegs[0].after_tool_call_id)
+            if (!hasMultiSegs) {
+              next.text_segments = [{ id: generateId('seg_'), text: patch.content }]
+            }
+            // else: preserve existing text_segments — the streaming-time
+            // appendTextToMessage already kept `content` in sync, so the
+            // server's value should match anyway.
           }
           if (patch.reasoning !== undefined) {
-            next.reasoning_segments = [{ id: generateId('rseg_'), text: patch.reasoning }]
+            const existingRSegs = m.reasoning_segments || []
+            const hasMultiRSegs = existingRSegs.length > 1
+              || (existingRSegs.length === 1 && existingRSegs[0].after_tool_call_id)
+            if (!hasMultiRSegs) {
+              next.reasoning_segments = [{ id: generateId('rseg_'), text: patch.reasoning }]
+            }
           }
           return next
         }),

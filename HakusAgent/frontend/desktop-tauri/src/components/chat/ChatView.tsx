@@ -80,7 +80,9 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
       continue
     }
 
-    // Assistant message — expand into segments + tool calls
+    // Assistant message — expand into segments + tool calls, paired by
+    // after_tool_call_id so text bubbles interleave correctly with tool-call
+    // cards even when tool calls finish out of start order.
     const textSegs: TextSegment[] =
       msg.text_segments && msg.text_segments.length > 0
         ? msg.text_segments
@@ -88,35 +90,70 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
     const reasonSegs = msg.reasoning_segments && msg.reasoning_segments.length > 0
       ? msg.reasoning_segments
       : []
-    // Tool calls sorted by start time so the visual order matches execution
+    // Tool calls sorted by start time so the visual order matches execution.
     const toolCalls = [...(msg.tool_calls || [])].sort(
       (a, b) => (a.started_at || 0) - (b.started_at || 0),
     )
 
-    const len = Math.max(textSegs.length, toolCalls.length)
-    for (let i = 0; i < len; i++) {
-      if (i < textSegs.length) {
-        const seg = textSegs[i]
-        const reasoning = reasonSegs[i]?.text || ''
-        const isLast = i === textSegs.length - 1
-        // Skip totally-empty non-last segments (no text + no reasoning) so we
-        // don't render a blank bubble between two tool calls. The last segment
-        // is always emitted so the streaming cursor has a home.
-        const isEmpty = !seg.text?.trim() && !reasoning?.trim()
-        if (!isEmpty || isLast) {
-          items.push({
-            kind: 'message',
-            message: msg,
-            segmentIndex: i,
-            totalSegments: textSegs.length,
-            reasoning,
-            isStreamingCursor: isLast && !!msg.streaming,
-          })
-        }
+    // Build a lookup: call_id → segment index, so we can find which text
+    // segment follows a given tool call.
+    const segByAfterCall = new Map<string, number>()
+    textSegs.forEach((seg, idx) => {
+      if (seg.after_tool_call_id) segByAfterCall.set(seg.after_tool_call_id, idx)
+    })
+
+    // Segment 0 (no after_tool_call_id) is the pre-tool-call text.
+    const preIdx = textSegs.findIndex((s) => !s.after_tool_call_id)
+    const emitSegment = (idx: number, isStreamingCursor: boolean) => {
+      const seg = textSegs[idx]
+      const reasoning = reasonSegs[idx]?.text || ''
+      const isLast = idx === textSegs.length - 1
+      const isEmpty = !seg.text?.trim() && !reasoning?.trim()
+      // Skip totally-empty non-last segments (no text + no reasoning) so we
+      // don't render a blank bubble between two tool calls. The last segment
+      // is always emitted so the streaming cursor has a home.
+      if (!isEmpty || isLast) {
+        items.push({
+          kind: 'message',
+          message: msg,
+          segmentIndex: idx,
+          totalSegments: textSegs.length,
+          reasoning,
+          isStreamingCursor,
+        })
       }
-      if (i < toolCalls.length) {
-        items.push({ kind: 'tool_call', toolCall: toolCalls[i] })
+    }
+
+    // Emit pre-tool-call text (segment 0, or whichever seg has no after_tool_call_id).
+    if (preIdx >= 0) {
+      emitSegment(preIdx, !!msg.streaming && preIdx === textSegs.length - 1)
+    }
+
+    // Walk tool calls in execution order. After each tool call, emit the
+    // segment that follows it (if any), so the interleaving matches the
+    // model's actual output order: text → tool → text → tool → text.
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i]
+      items.push({ kind: 'tool_call', toolCall: tc })
+      const afterIdx = segByAfterCall.get(tc.call_id)
+      if (afterIdx !== undefined) {
+        emitSegment(afterIdx, !!msg.streaming && afterIdx === textSegs.length - 1)
       }
+    }
+
+    // Edge case: streaming cursor when no tool calls yet and the single
+    // segment is the last one — emitSegment above already handled it via
+    // preIdx. If there are zero segments at all (shouldn't happen but
+    // guard), emit a final streaming bubble.
+    if (preIdx < 0 && toolCalls.length === 0 && textSegs.length === 0) {
+      items.push({
+        kind: 'message',
+        message: msg,
+        segmentIndex: 0,
+        totalSegments: 0,
+        reasoning: '',
+        isStreamingCursor: !!msg.streaming,
+      })
     }
   }
   return items

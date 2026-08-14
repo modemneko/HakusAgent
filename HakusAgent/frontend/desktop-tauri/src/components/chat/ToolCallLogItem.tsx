@@ -323,28 +323,153 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
   )
 
   if (standalone) {
+    // Compact inline card. The whole header row is clickable to expand/collapse,
+    // and the collapsed state is a single tight line (~28px) so multiple
+    // finished tool calls don't eat vertical space between text bubbles.
     return (
       <div
         className={cn(
-          'group flex w-full gap-2 rounded-lg border px-3 py-2.5 text-xs transition-colors',
+          'group w-full rounded-md text-xs transition-colors',
           success
-            ? 'border-border/70 bg-card/95 hover:border-border'
-            : 'border-destructive/40 bg-destructive/5',
+            ? 'bg-muted/40 hover:bg-muted/60'
+            : 'bg-destructive/5 hover:bg-destructive/10',
         )}
       >
-        <span
+        <div
+          role="button"
+          tabIndex={hasDetails ? 0 : -1}
+          onClick={() => hasDetails && setExpanded(!expanded)}
+          onKeyDown={(e) => {
+            if (hasDetails && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              setExpanded(!expanded)
+            }
+          }}
           className={cn(
-            'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
-            success ? 'bg-primary/15 text-primary' : 'bg-destructive/15 text-destructive',
+            'flex w-full items-center gap-1.5 px-2.5 py-1 text-left',
+            hasDetails ? 'cursor-pointer' : 'cursor-default',
           )}
         >
-          {toolIcon(toolCall.name)}
-        </span>
-        <div className="min-w-0 flex-1">
-          {header}
-          {preview}
-          {details}
+          <span
+            className={cn(
+              'flex h-4 w-4 shrink-0 items-center justify-center',
+              success ? 'text-primary' : 'text-destructive',
+            )}
+          >
+            {toolIcon(toolCall.name)}
+          </span>
+          <span className={cn('shrink-0 font-medium', success ? 'text-primary' : 'text-destructive')}>
+            {summary.title}
+          </span>
+          {summary.detail && (
+            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">
+              {summary.detail}
+            </span>
+          )}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {toolCall.duration !== undefined && toolCall.duration > 0 && (
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {toolCall.duration.toFixed(2)}s
+              </span>
+            )}
+            {success ? (
+              <Check className="h-3 w-3 text-emerald-500" />
+            ) : (
+              <X className="h-3 w-3 text-destructive" />
+            )}
+            {hasDetails && (
+              <ChevronRight
+                className={cn(
+                  'h-3 w-3 text-muted-foreground transition-transform',
+                  expanded && 'rotate-90',
+                )}
+              />
+            )}
+          </span>
         </div>
+        {expanded && hasDetails && (
+          <div className="space-y-2 px-2.5 pb-2.5 pt-0">
+            {Object.keys(args).length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={handleCopyArgs}
+                  className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                  title="复制参数"
+                >
+                  {copiedArgs ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                  {copiedArgs ? '已复制' : '复制'}
+                </button>
+                <pre className="max-h-[180px] overflow-auto rounded-md bg-muted/40 p-2 text-[10px] text-foreground/80">
+                  {JSON.stringify(args, null, 2)}
+                </pre>
+              </div>
+            )}
+            {toolCall.result && (
+              <div className="relative">
+                <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
+                  {resultTooLong && (
+                    <button
+                      onClick={handleOpenFullResult}
+                      className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                      title="查看完整日志"
+                    >
+                      <ExternalLink className="h-2.5 w-2.5" />
+                      完整日志
+                    </button>
+                  )}
+                  <button
+                    onClick={handleCopyResult}
+                    className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                    title="复制结果"
+                  >
+                    {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                    {copiedResult ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <pre
+                  className={cn(
+                    'max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
+                    success ? 'bg-muted/40 text-foreground/90' : 'bg-destructive/10 text-destructive',
+                  )}
+                >
+                  {showFullResult
+                    ? toolCall.result
+                    : truncate(toolCall.result, RESULT_DISPLAY_CHARS)}
+                </pre>
+              </div>
+            )}
+            {resultTooLong && (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <span>结果过长 ({resultLength} 字符)</span>
+                <button
+                  onClick={() => setShowFullResult(!showFullResult)}
+                  className="text-primary hover:underline"
+                >
+                  {showFullResult ? '收起' : `展开全部`}
+                </button>
+                <button onClick={handleCopyResult} className="text-primary hover:underline">
+                  复制完整结果
+                </button>
+                <button
+                  onClick={() => setExpanded(false)}
+                  className="ml-auto inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                  折叠
+                </button>
+              </div>
+            )}
+            {!resultTooLong && (
+              <button
+                onClick={() => setExpanded(false)}
+                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                <ChevronDown className="h-3 w-3" />
+                折叠
+              </button>
+            )}
+          </div>
+        )}
       </div>
     )
   }
