@@ -114,7 +114,7 @@ export const MessageBubble = memo(function MessageBubble({
         {showReasoningBlock && (
           <ReasoningLogItem
             reasoning={reasoningText || ''}
-            isStreaming={isStreamingCursor && !segmentText?.trim()}
+            isStreaming={isStreamingCursor}
           />
         )}
 

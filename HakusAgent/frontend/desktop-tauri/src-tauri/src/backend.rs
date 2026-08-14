@@ -7,10 +7,90 @@
 //! so it's already running by the time the frontend loads.
 
 use std::sync::Mutex;
+use std::process::{Command as StdCommand, Stdio};
+use std::collections::{HashSet, VecDeque};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 
 const DEFAULT_BACKEND_PORT: u16 = 48081;
+
+/// Kill a process and all its descendants. Cross-platform.
+///
+/// **Why this exists**: `CommandChild::kill()` from tauri-plugin-shell only
+/// kills the direct child process. On Unix, `kill(pid, SIGKILL)` reparents
+/// orphaned grandchildren to PID 1; on Windows, `TerminateProcess(handle)`
+/// likewise leaves descendants alive. The Python backend spawns many
+/// descendants we must clean up: uvicorn workers, Browser Use's Chromium
+/// (which itself spawns GPU/sandbox processes), MCP server subprocesses,
+/// and subprocess tools. Without tree-kill, these leak as orphans after
+/// the user closes the app, consuming memory and ports until reboot.
+///
+/// - **Windows**: `taskkill /PID <pid> /T /F` walks the tree atomically.
+/// - **Unix**: BFS-walk the tree via `pgrep -P`, then `kill -9` descendants
+///   deepest-first so they can't spawn new grandchildren during the sweep.
+///
+/// All errors are silently ignored — we're best-effort killing on exit.
+fn kill_process_tree(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // /T = kill child processes recursively, /F = force (no graceful shutdown)
+        let _ = StdCommand::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Walk the descendant tree breadth-first. pgrep -P <pid> lists direct
+        // children; we recurse so grandchildren (e.g. python → uvicorn →
+        // chromium) are caught too.
+        let mut all_pids: Vec<u32> = Vec::new();
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        queue.push_back(pid);
+        seen.insert(pid);
+        while let Some(p) = queue.pop_front() {
+            if let Ok(out) = StdCommand::new("pgrep")
+                .args(["-P", &p.to_string()])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .output()
+            {
+                let s = String::from_utf8_lossy(&out.stdout);
+                for line in s.lines() {
+                    if let Ok(child_pid) = line.trim().parse::<u32>() {
+                        if child_pid > 0 && seen.insert(child_pid) {
+                            all_pids.push(child_pid);
+                            queue.push_back(child_pid);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Kill descendants deepest-first (last-discovered = deepest in BFS
+        // order is not strictly guaranteed, but reverse-of-discovery is a
+        // good heuristic for "grandchildren before children"). Then kill
+        // the root.
+        for &dpid in all_pids.iter().rev() {
+            let _ = StdCommand::new("kill")
+                .args(["-9", &dpid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let _ = StdCommand::new("kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
 
 /// State holding the running backend process handle.
 pub struct BackendState {
@@ -28,13 +108,28 @@ impl BackendState {
         }
     }
 
-    /// Kill the spawned Python backend child process if it is still running.
-    /// Idempotent — safe to call from every exit path (close button, tray quit,
-    /// Alt+F4, process kill). Used by lib.rs::kill_backend so external modules
-    /// don't need direct access to the private `child` field.
+    /// Kill the spawned Python backend child process **and its entire
+    /// process tree** if it is still running.
+    ///
+    /// Idempotent — safe to call from every exit path (close button, tray
+    /// quit, Alt+F4, process kill). Used by lib.rs::kill_backend so external
+    /// modules don't need direct access to the private `child` field.
+    ///
+    /// Order matters: we kill the descendant tree FIRST (so grandchildren
+    /// can't escape by spawning new children during the kill sweep), then
+    /// call `child.kill()` as a final safety net for the root process. The
+    /// `take()` ensures a second call is a no-op.
     pub fn kill_child(&self) {
         if let Ok(mut child_lock) = self.child.lock() {
             if let Some(child) = child_lock.take() {
+                let pid = child.pid();
+                // Kill the whole tree first — descendants (Chromium,
+                // uvicorn workers, MCP servers) would survive child.kill().
+                if pid > 0 {
+                    kill_process_tree(pid);
+                }
+                // Final safety net for the root process itself. No-op if
+                // kill_process_tree already reaped it.
                 let _ = child.kill();
             }
         }

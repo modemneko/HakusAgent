@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Brain, Copy, CheckCheck } from 'lucide-react'
 import { cn, copyToClipboard } from '@/lib/utils'
 
@@ -8,29 +8,65 @@ interface ReasoningLogItemProps {
 }
 
 const PREVIEW_LINES = 20
+const STREAM_PREVIEW_HEIGHT = 220
 
 /**
  * Inline thinking/reasoning block.
  *
- * No bubble, no border, no background — just a small muted line with a Brain
- * icon. Collapsed state is a single tight row showing the first line of the
- * reasoning (or a "正在思考…" placeholder while streaming with no content yet).
- * Click to expand into the full reasoning text. Designed to sit ABOVE the text
- * bubble inside MessageBubble without competing for visual weight.
+ * Behavior:
+ *  - Streaming with no content yet → collapsed "思考中 正在分析…" header.
+ *  - Streaming with content → auto-expanded, live-streaming text in a
+ *    scrollable box (auto-scrolls to bottom as new deltas arrive).
+ *  - Streaming ends → auto-collapses back to a "思考" header (content
+ *    preserved inside the fold; click to re-expand).
+ *  - User clicks during/after streaming are honoured — the auto-expand
+ *    only fires on the streaming→has-content transition, and the
+ *    auto-collapse only fires on the streaming→done transition.
  */
 export function ReasoningLogItem({ reasoning, isStreaming }: ReasoningLogItemProps) {
   const [expanded, setExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  // Track previous streaming state so we only auto-act on transitions,
+  // not on every reasoning delta (which would override user clicks).
+  const prevStreamingRef = useRef<boolean | undefined>(undefined)
+  const streamingHadContentRef = useRef(false)
+  const scrollRef = useRef<HTMLPreElement | null>(null)
+
   const trimmed = reasoning.trim()
   const hasReasoning = trimmed.length > 0
   const lines = useMemo(() => trimmed.split('\n').filter(Boolean), [trimmed])
   const firstLine = lines[0] || trimmed
-  const isExpandable = lines.length > 1 || (isStreaming && hasReasoning)
+  const isExpandable = lines.length > 1 || (isStreaming && hasReasoning) || (!isStreaming && hasReasoning)
 
   const visibleLines = showAll ? lines : lines.slice(0, PREVIEW_LINES)
   const hasOverflow = lines.length > PREVIEW_LINES
+
+  // Auto-expand/collapse logic — only on state transitions:
+  //  1) streaming just started producing content → expand
+  //  2) streaming just ended → collapse
+  useEffect(() => {
+    const prev = prevStreamingRef.current
+    // Case 1: streaming now has content (transition from "no content" to "has content")
+    if (isStreaming && hasReasoning && !streamingHadContentRef.current) {
+      streamingHadContentRef.current = true
+      setExpanded(true)
+    }
+    // Case 2: streaming just ended (transition from true → false)
+    if (prev === true && !isStreaming) {
+      setExpanded(false)
+      streamingHadContentRef.current = false
+    }
+    prevStreamingRef.current = isStreaming
+  }, [isStreaming, hasReasoning])
+
+  // Auto-scroll to bottom while streaming so the latest text is visible
+  useEffect(() => {
+    if (expanded && isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [expanded, isStreaming, reasoning])
 
   const handleCopy = async () => {
     if (await copyToClipboard(trimmed)) {
@@ -97,11 +133,18 @@ export function ReasoningLogItem({ reasoning, isStreaming }: ReasoningLogItemPro
               {copied ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
               {copied ? '已复制' : '复制'}
             </button>
-            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-[11px] text-muted-foreground">
-              {visibleLines.join('\n')}
+            <pre
+              ref={scrollRef}
+              className={cn(
+                'overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-[11px] text-muted-foreground',
+                isStreaming ? 'streaming-reasoning-scroll' : 'max-h-[320px]',
+              )}
+              style={isStreaming ? { maxHeight: `${STREAM_PREVIEW_HEIGHT}px` } : undefined}
+            >
+              {isStreaming ? trimmed : visibleLines.join('\n')}
             </pre>
           </div>
-          {hasOverflow && (
+          {hasOverflow && !isStreaming && (
             <button
               onClick={() => setShowAll(!showAll)}
               className="flex items-center gap-1 text-[10px] text-primary hover:underline"
