@@ -54,8 +54,14 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.10.0"
-SIDECAR_API_VERSION_INT = 10  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.11.0"
+SIDECAR_API_VERSION_INT = 11  # 整数版本，便于客户端比较
+# v0.11.0: + Fleet CTDE v2 — Planner + parallel Workers (sub_dir-scoped)
+#          + Reviewer gate + counterfactual expert re-run
+#          (/api/fleet/runs/{run_id} GET, /api/fleet/runs/{run_id}/experts/
+#          {expert_id}/rerun POST). Rich orchestrator_phase_changed +
+#          task_progress events over SSE so the frontend can render the
+#          expert roster and reviewer outcome live.
 # v0.10.0: + Project management (/api/projects CRUD) + ChatRequest.project_id
 #          so the agent can be told which folder to work in without the
 #          user having to spell out absolute paths every turn.
@@ -2474,6 +2480,56 @@ class HakusAIServer:
             if not ok:
                 raise HTTPException(status_code=404, detail="project not found")
             return {"deleted": True}
+
+        # ========== Fleet CTDE v2 — expert roster + counterfactual rerun ==========
+        #
+        # These endpoints let the frontend inspect a finished or in-flight
+        # Fleet run and counterfactually re-run a single expert (keeping
+        # all other expert outputs unchanged). The orchestrator lives in
+        # agent_bridge._FLEET_RUNS keyed by run_id.
+
+        @app.get("/api/fleet/runs/{run_id}")
+        async def get_fleet_run_endpoint(run_id: str):
+            """Return the current expert roster + reviewer outcome for a fleet run."""
+            from .agent_bridge import _get_fleet_run
+            entry = _get_fleet_run(run_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"fleet run {run_id} not found or expired")
+            fleet = entry["fleet"]
+            return {
+                "run_id": run_id,
+                "session_id": entry.get("session_id", ""),
+                "workspace_dir": entry.get("workspace_dir", ""),
+                "experts": [s.to_dict() for s in fleet.all_expert_statuses()],
+                "expert_specs": [s.to_dict() for s in fleet.expert_specs],
+            }
+
+        @app.post("/api/fleet/runs/{run_id}/experts/{expert_id}/rerun")
+        async def rerun_fleet_expert_endpoint(run_id: str, expert_id: str, request: dict):
+            """Counterfactually re-run a single expert in a finished fleet run.
+
+            Body (all optional):
+                fix_hint: str  — extra instruction appended to the expert's task
+
+            Returns the updated expert status + the new full roster.
+            """
+            from .agent_bridge import _get_fleet_run
+            entry = _get_fleet_run(run_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"fleet run {run_id} not found or expired")
+            fleet = entry["fleet"]
+            fix_hint = (request or {}).get("fix_hint")
+            try:
+                status = await fleet.rerun_expert(expert_id, fix_hint=fix_hint)
+            except ValueError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"rerun failed: {e}")
+            return {
+                "run_id": run_id,
+                "expert": status.to_dict(),
+                "experts": [s.to_dict() for s in fleet.all_expert_statuses()],
+            }
 
         # ========== 记忆系统扩展 API ==========
 

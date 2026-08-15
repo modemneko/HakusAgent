@@ -15,7 +15,7 @@ interface ModelInfo {
 
 export type RunMode = 'local' | 'worktree' | 'cloud'
 export type { AgentMode }
-export type RightPanelTab = 'review' | 'terminal' | 'preview' | 'logs'
+export type RightPanelTab = 'review' | 'terminal' | 'preview' | 'logs' | 'fleet'
 
 interface AppStore {
   // Sidebar

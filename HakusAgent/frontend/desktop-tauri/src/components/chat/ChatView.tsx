@@ -549,6 +549,20 @@ export function ChatView() {
           output_tokens: event.output_tokens,
           cache_hit_tokens: (event as any).cache_hit_tokens ?? 0,
           cache_miss_tokens: (event as any).cache_miss_tokens ?? 0,
+          // Fleet CTDE v2 — persist the full expert roster + reviewer
+          // outcome so the right-panel FleetTab can render and trigger
+          // counterfactual re-runs after the stream ends.
+          fleet_run: (event as any).fleet_result
+            ? {
+                run_id: (event as any).fleet_result.run_id || '',
+                success: (event as any).fleet_result.success ?? false,
+                expert_count: (event as any).fleet_result.expert_count || 0,
+                completed: (event as any).fleet_result.completed || 0,
+                failed: (event as any).fleet_result.failed || 0,
+                reviewer_approved: (event as any).fleet_result.reviewer_approved ?? null,
+                experts: (event as any).fleet_result.experts || [],
+              }
+            : undefined,
         })
         notifyVoice('complete')
         voiceConversationRef.current?.endAgentTurn()
@@ -608,6 +622,54 @@ export function ChatView() {
         const tasks = prev?.tasks ? [...prev.tasks] : []
         if (p.current_task && !tasks.includes(p.current_task)) {
           tasks.push(p.current_task)
+        }
+        // Fleet CTDE v2 — when phase starts with "workers_" or is
+        // "review_completed", this is a fleet expert roster update.
+        // We also persist the latest expert list on the message so the
+        // right-panel FleetTab can render it.
+        const isFleet = p.phase === 'workers_pending'
+          || p.phase?.startsWith('workers_')
+          || p.phase === 'review_completed'
+        if (isFleet) {
+          // Merge this expert into the message's fleet_run.experts list
+          const prevFleet = useSessionStore.getState().messages[sessionId]?.find((m) => m.id === messageId)?.fleet_run
+          const expertId = p.current_task
+          // Parse "role @ sub_dir" from detail if available
+          const detailMatch = (p.detail || '').match(/^(.+?)\s+@\s+(.+)$/)
+          const role = detailMatch ? detailMatch[1] : 'expert'
+          const subDir = detailMatch ? detailMatch[2].replace(/^<root>$/, '') : ''
+          const status = p.phase === 'workers_pending' ? 'pending'
+            : p.phase === 'workers_running' ? 'running'
+            : p.phase === 'workers_completed' ? 'completed'
+            : p.phase === 'workers_failed' ? 'failed'
+            : p.phase === 'workers_timeout' ? 'timeout'
+            : 'pending'
+          const prevExperts = prevFleet?.experts || []
+          const existingIdx = prevExperts.findIndex((e) => e.id === expertId)
+          const newExpert = {
+            id: expertId,
+            role,
+            sub_dir: subDir,
+            status,
+            elapsed: 0,
+            output_preview: '',
+            error: null,
+            rerun_count: 0,
+          }
+          const nextExperts = existingIdx >= 0
+            ? prevExperts.map((e, i) => i === existingIdx ? { ...e, ...newExpert, rerun_count: e.rerun_count } : e)
+            : [...prevExperts, newExpert]
+          updateMessage(sessionId, messageId, {
+            fleet_run: {
+              run_id: prevFleet?.run_id || '',
+              success: prevFleet?.success ?? false,
+              expert_count: prevFleet?.expert_count || p.total,
+              completed: prevFleet?.completed || 0,
+              failed: prevFleet?.failed || 0,
+              reviewer_approved: prevFleet?.reviewer_approved ?? null,
+              experts: nextExperts,
+            },
+          })
         }
         updateMessage(sessionId, messageId, {
           task_progress: {

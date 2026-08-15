@@ -1,12 +1,14 @@
-import { GitCompareArrows, TerminalSquare, Eye, ScrollText } from 'lucide-react'
+import { GitCompareArrows, TerminalSquare, Eye, ScrollText, Ship } from 'lucide-react'
 import { useAppStore, type RightPanelTab } from '@/store/app'
 import { cn } from '@/lib/utils'
 import { DiffReview } from './DiffReview'
 import { TerminalPanel } from './TerminalPanel'
 import { LogsPanel } from './LogsPanel'
+import { FleetTab } from './FleetTab'
 
 const TABS: { id: RightPanelTab; label: string; icon: typeof GitCompareArrows }[] = [
   { id: 'review', label: '审阅', icon: GitCompareArrows },
+  { id: 'fleet', label: '协作', icon: Ship },
   { id: 'terminal', label: '终端', icon: TerminalSquare },
   { id: 'preview', label: '预览', icon: Eye },
   { id: 'logs', label: '日志', icon: ScrollText },
@@ -44,6 +46,7 @@ export function RightPanel() {
       {/* Content */}
       <div className="min-h-0 flex-1">
         {tab === 'review' && <DiffReview />}
+        {tab === 'fleet' && <FleetTab />}
         {tab === 'terminal' && <TerminalPanel />}
         {tab === 'preview' && (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">

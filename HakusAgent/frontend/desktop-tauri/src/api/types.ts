@@ -95,6 +95,11 @@ export interface BackendVersionInfo {
  * 这里也要同步 bump，否则客户端不会提示用户升级。
  *
  * 历史:
+ *   v11 (0.11.0): + Fleet CTDE v2 — Planner + parallel Workers (sub_dir)
+ *                 + Reviewer gate + counterfactual expert re-run
+ *                 (/api/fleet/runs/{run_id} GET, /api/fleet/runs/{run_id}/
+ *                 experts/{expert_id}/rerun POST). Rich orchestrator_phase
+ *                 events + fleet_result on turn_completed.
  *   v10 (0.10.0): + Project management (/api/projects CRUD) +
  *                 ChatRequest.project_id — agent can be told which
  *                 folder to work in without the user spelling out
@@ -109,7 +114,7 @@ export interface BackendVersionInfo {
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_BACKEND_API_VERSION_INT = 10
+export const EXPECTED_BACKEND_API_VERSION_INT = 11
 
 export interface AppConfig {
   version: string
@@ -361,6 +366,17 @@ export interface TurnCompletedEvent extends BaseAgentEvent {
   /** DeepSeek KV cache miss tokens (0 for non-DeepSeek providers). */
   cache_miss_tokens?: number
   compressed: boolean
+  /** Fleet CTDE v2 — expert roster + reviewer outcome. Present when the
+   * turn was a fleet run; absent otherwise. */
+  fleet_result?: {
+    success: boolean
+    expert_count: number
+    completed: number
+    failed: number
+    reviewer_approved: boolean | null
+    experts: FleetExpert[]
+    run_id: string
+  }
 }
 
 export interface TurnFailedEvent extends BaseAgentEvent {
@@ -608,6 +624,42 @@ export interface TaskProgressAttachment {
   tasks?: string[]
 }
 
+// ========== Fleet CTDE v2 — expert roster + reviewer outcome ==========
+
+/**
+ * One expert's status in a fleet run. Mirrors
+ * `hakus.fleet.ExpertRunStatus.to_dict()` on the backend.
+ */
+export interface FleetExpert {
+  id: string
+  role: string
+  /** Sub-directory of the workspace this expert was bound to. Empty = root. */
+  sub_dir: string
+  /** "pending" | "running" | "completed" | "failed" | "timeout" */
+  status: string
+  elapsed: number
+  output_preview: string
+  error: string | null
+  /** How many times this expert has been counterfactually re-run. */
+  rerun_count: number
+}
+
+/**
+ * The full fleet run payload, attached to the assistant ChatMessage when
+ * agentMode === 'fleet'. Surfaced via the `fleet_result` field on the
+ * `turn_completed` event from the SSE stream.
+ */
+export interface FleetRunAttachment {
+  run_id: string
+  success: boolean
+  expert_count: number
+  completed: number
+  failed: number
+  /** Reviewer gate outcome (null if reviewer hasn't run yet). */
+  reviewer_approved: boolean | null
+  experts: FleetExpert[]
+}
+
 export interface ChatMessage {
   id: string
   session_id: string
@@ -648,6 +700,10 @@ export interface ChatMessage {
   question?: QuestionAttachment
   // Live task progress / TODO list surfaced during agent execution
   task_progress?: TaskProgressAttachment
+  // Fleet CTDE v2 — expert roster + reviewer outcome. Present on
+  // assistant messages produced by a fleet run. Drives the right-panel
+  // "fleet" tab and the per-expert counterfactual re-run button.
+  fleet_run?: FleetRunAttachment
 }
 
 export interface ChatSession {

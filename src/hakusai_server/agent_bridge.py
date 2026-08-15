@@ -153,6 +153,51 @@ _agent_cache_lock = threading.Lock()
 _session_op_receivers: Dict[str, asyncio.Queue] = {}
 _session_op_lock = threading.Lock()
 
+# Fleet run registry — keeps recent FleetOrchestrator instances alive so
+# the frontend can request counterfactual re-runs of individual experts
+# without re-running the whole fleet. Keyed by run_id (a short uuid hex).
+# Entries are evicted after _FLEET_RUN_TTL seconds or when the registry
+# grows past _FLEET_RUN_MAX (LRU).
+_FLEET_RUNS: Dict[str, Dict[str, Any]] = {}
+_FLEET_RUN_TTL = 3600  # 1 hour
+_FLEET_RUN_MAX = 50
+_fleet_runs_lock = threading.Lock()
+
+
+def _register_fleet_run(run_id: str, fleet: Any, session_id: str, workspace_dir: str) -> None:
+    """Remember a FleetOrchestrator so /api/fleet/.../rerun can address it."""
+    import time
+    with _fleet_runs_lock:
+        # Evict expired
+        now = time.time()
+        expired = [k for k, v in _FLEET_RUNS.items() if now - v.get("_ts", 0) > _FLEET_RUN_TTL]
+        for k in expired:
+            del _FLEET_RUNS[k]
+        # LRU trim
+        if len(_FLEET_RUNS) >= _FLEET_RUN_MAX:
+            oldest = sorted(_FLEET_RUNS.items(), key=lambda kv: kv[1].get("_ts", 0))[:len(_FLEET_RUNS) - _FLEET_RUN_MAX + 1]
+            for k, _ in oldest:
+                del _FLEET_RUNS[k]
+        _FLEET_RUNS[run_id] = {
+            "fleet": fleet,
+            "session_id": session_id,
+            "workspace_dir": workspace_dir,
+            "_ts": now,
+        }
+
+
+def _get_fleet_run(run_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a registered fleet run, or None if missing/expired."""
+    import time
+    with _fleet_runs_lock:
+        v = _FLEET_RUNS.get(run_id)
+        if v is None:
+            return None
+        if time.time() - v.get("_ts", 0) > _FLEET_RUN_TTL:
+            del _FLEET_RUNS[run_id]
+            return None
+        return v
+
 
 def _get_or_create_op_receiver(session_id: str) -> asyncio.Queue:
     """Return the per-session op queue, creating it if necessary."""
@@ -407,111 +452,110 @@ async def _fleet_event_stream(
     agent: Any,
     message: str,
     workspace_dir: str,
+    session_id: str = "",
 ) -> AsyncIterator[Any]:
-    """Fleet 模式事件流适配器.
+    """Fleet 模式事件流适配器 — CTDE v2.
 
-    把 FleetOrchestrator.run() 适配成 AsyncIterator[AgentEvent]，
-    这样 SSE 流处理逻辑可以统一处理 Swift/Deep/Fleet 三种模式。
+    Bridges ``FleetOrchestrator.run_with_events()`` to the legacy
+    AgentEvent-based stream consumed by ``run_turn_stream``.
 
-    yield 的事件:
-      - TextDelta: 进度更新 + 最终汇总
-      - TurnCompleted: Fleet 完成信号
+    Yields real AgentEvent instances (TextDelta, OrchestratorPhaseChanged,
+    TaskProgressEvent, TurnCompleted, etc.) constructed from the dict
+    events emitted by ``run_with_events``.
+
+    The fleet run is registered in ``_FLEET_RUNS`` so the frontend can
+    later request counterfactual re-runs of individual experts via
+    ``POST /api/fleet/runs/{run_id}/experts/{expert_id}/rerun``.
     """
-    import asyncio as _asyncio
+    import uuid
 
     from hakus.fleet import FleetOrchestrator
-    from hakus.fleet.scheduler import TaskStatus
-    from hakus.protocol.events import Cancelled, TextDelta, TurnCompleted, TurnFailed
+    from hakus.protocol.events import (
+        Cancelled,
+        OrchestratorPhaseChanged,
+        TaskProgressEvent as _TaskProgressEvent,
+        TextDelta,
+        TurnCompleted,
+        TurnFailed,
+    )
 
     fleet = FleetOrchestrator(
         root_agent=agent,
         workspace_dir=workspace_dir,
         concurrency=int(os.environ.get("HAKUS_FLEET_CONCURRENCY", "10")),
     )
+    run_id = f"fleet_{uuid.uuid4().hex[:12]}"
+    _register_fleet_run(run_id, fleet, session_id, workspace_dir)
 
-    # 进度队列：ParallelScheduler 回调 → 事件流
-    progress_queue: _asyncio.Queue = _asyncio.Queue()
-
-    def _on_progress(task: Any) -> None:
-        icons = {
-            TaskStatus.RUNNING: "▶",
-            TaskStatus.COMPLETED: "✓",
-            TaskStatus.FAILED: "✗",
-            TaskStatus.TIMEOUT: "⏱",
-        }
-        icon = icons.get(task.status, "?")
-        if task.status == TaskStatus.RUNNING:
-            text = f"{icon} {task.id} ({task.role}) 启动...\n"
-        elif task.status == TaskStatus.COMPLETED:
-            text = f"{icon} {task.id} ({task.role}) 完成 ({task.elapsed:.1f}s)\n"
-        elif task.status == TaskStatus.FAILED:
-            text = f"{icon} {task.id} ({task.role}) 失败: {task.error}\n"
-        elif task.status == TaskStatus.TIMEOUT:
-            text = f"{icon} {task.id} ({task.role}) 超时\n"
-        else:
-            return
-        try:
-            progress_queue.put_nowait(text)
-        except Exception:
-            pass
-
-    fleet._scheduler.on_progress(_on_progress)
-
-    # 发送启动消息
-    yield TextDelta(text="🚢 Fleet 模式启动，正在分析任务...\n\n")
-
-    # 后台运行 Fleet
-    fleet_task = _asyncio.create_task(fleet.run(message))
-
-    # 从队列读取进度，直到 Fleet 完成
-    while not fleet_task.done():
-        if getattr(agent, "_cancelled", False):
-            fleet.cancel()
-            fleet_task.cancel()
-            yield Cancelled(reason="user_interrupted", partial_content="Fleet cancelled by user")
-            return
-        try:
-            progress = await _asyncio.wait_for(progress_queue.get(), timeout=0.5)
-            yield TextDelta(text=progress)
-        except _asyncio.TimeoutError:
-            pass
-        except Exception:
-            pass
-
-    # 获取最终结果
     try:
-        result = await fleet_task
-    except _asyncio.CancelledError:
+        async for evt in fleet.run_with_events(message, run_id=run_id):
+            if getattr(agent, "_cancelled", False) or fleet._cancelled:
+                yield Cancelled(
+                    reason="user_interrupted",
+                    partial_content="Fleet cancelled by user",
+                )
+                return
+
+            etype = evt.get("event_type")
+
+            if etype == "text_delta":
+                yield TextDelta(text=evt.get("text", ""))
+
+            elif etype == "orchestrator_phase_changed":
+                yield OrchestratorPhaseChanged(
+                    from_phase=evt.get("from_phase", "idle"),
+                    to_phase=evt.get("to_phase", "idle"),
+                    phase=evt.get("phase", evt.get("to_phase", "idle")),
+                    detail=evt.get("detail", ""),
+                )
+
+            elif etype == "task_progress":
+                yield _TaskProgressEvent(
+                    completed=evt.get("completed", 0),
+                    total=evt.get("total", 0),
+                    current_task=evt.get("current_task", ""),
+                    phase=evt.get("phase", ""),
+                    detail=evt.get("detail", ""),
+                )
+
+            elif etype == "cancelled":
+                yield Cancelled(
+                    reason=evt.get("reason", "user_interrupted"),
+                    partial_content=evt.get("partial_content", ""),
+                )
+                return
+
+            elif etype == "turn_completed":
+                # Stash the fleet_result payload on the TurnCompleted via
+                # the legacy chunk's extra fields. The serializer in
+                # run_turn_stream will pass through any extra dict keys.
+                yield TurnCompleted(
+                    content=evt.get("content", ""),
+                    total_time=evt.get("total_time", 0.0),
+                    output_tokens=evt.get("output_tokens", 0),
+                )
+                # Side-channel: attach fleet_result to the agent so the
+                # caller can include it in the final chunk. We use a
+                # private attribute to avoid touching the AgentEvent
+                # dataclass shape.
+                setattr(agent, "_last_fleet_result", evt.get("fleet_result"))
+
+            else:
+                # Unknown event types: pass through as a TextDelta if
+                # they carry text, else skip silently.
+                text = evt.get("text") or evt.get("detail")
+                if text:
+                    yield TextDelta(text=str(text))
+
+    except asyncio.CancelledError:
         fleet.cancel()
-        yield Cancelled(reason="user_interrupted", partial_content="Fleet cancelled by user")
-        return
+        yield Cancelled(
+            reason="user_interrupted",
+            partial_content="Fleet cancelled by user",
+        )
     except Exception as e:
         yield TextDelta(text=f"\n❌ Fleet 执行出错: {e}\n")
         yield TurnFailed(code="fleet_error", error=str(e))
-        return
-
-    # 发送汇总
-    summary_header = (
-        f"\n📊 Fleet 完成: {result.completed}/{result.expert_count} 专家成功, "
-        f"耗时 {result.elapsed:.1f}s\n\n"
-    )
-    yield TextDelta(text=summary_header)
-    yield TextDelta(text=result.summary)
-
-    if result.success:
-        yield TurnCompleted(
-            content=result.summary,
-            total_time=result.elapsed,
-            output_tokens=result.tokens_estimate,
-        )
-    else:
-        yield TurnFailed(
-            code="fleet_incomplete",
-            error=(
-                f"Fleet incomplete: {result.completed}/{result.expert_count} "
-                f"experts completed, {result.failed} failed, {result.timeout} timed out"
-            ),
-        )
 
 
 # Legacy chunk shape:
@@ -670,10 +714,12 @@ async def run_turn_stream(
 
     try:
         if use_fleet:
-            # Fleet mode: Commander 动态拆解 + N 专家全局并行
+            # Fleet mode: CTDE v2 — Planner + parallel Workers + Reviewer
             agent_context = getattr(agent, "_context", None)
             workspace_dir = getattr(agent_context, "working_dir", None) or _REPO_ROOT
-            event_source = _fleet_event_stream(agent, message, workspace_dir)
+            event_source = _fleet_event_stream(
+                agent, message, workspace_dir, session_id=session_id
+            )
         elif use_orchestrator:
             # Orchestrator mode: multi-agent pipeline (Plan→Develop→Test→Fix)
             from hakus.orchestrator import Orchestrator, OrchestratorConfig
@@ -801,6 +847,35 @@ async def run_turn_stream(
                 cache_miss_tokens += evt_dict.get("cache_miss_tokens", 0)
                 # Don't yield token_usage as a content chunk — it's metadata.
                 # The terminal event will include totals.
+            elif etype == "orchestrator_phase_changed":
+                # Fleet CTDE v2 — pass phase changes through to the frontend
+                # so it can render the planner→workers→reviewer progression.
+                yield {
+                    "content": "",
+                    "emotion": None,
+                    "actions": [],
+                    "done": False,
+                    "event_type": etype,
+                    "from_phase": evt_dict.get("from_phase", ""),
+                    "to_phase": evt_dict.get("to_phase", ""),
+                    "phase": evt_dict.get("phase", evt_dict.get("to_phase", "")),
+                    "detail": evt_dict.get("detail", ""),
+                }
+            elif etype == "task_progress":
+                # Fleet CTDE v2 — expert roster update. Pass through so
+                # the frontend can update its expert list panel.
+                yield {
+                    "content": "",
+                    "emotion": None,
+                    "actions": [],
+                    "done": False,
+                    "event_type": etype,
+                    "completed": evt_dict.get("completed", 0),
+                    "total": evt_dict.get("total", 0),
+                    "current_task": evt_dict.get("current_task", ""),
+                    "phase": evt_dict.get("phase", ""),
+                    "detail": evt_dict.get("detail", ""),
+                }
             elif etype == "turn_completed":
                 iterations = evt_dict.get("iterations", 0)
                 # Merge any cache tokens reported on the TurnCompleted event
@@ -862,7 +937,17 @@ async def run_turn_stream(
                     "cache_hit_tokens": cache_hit_tokens,
                     "cache_miss_tokens": cache_miss_tokens,
                     "compressed": evt_dict.get("compressed", False),
+                    # Fleet CTDE v2 — attach fleet_result so the frontend
+                    # can render the expert roster + reviewer outcome in
+                    # the right panel. Absent for non-fleet turns.
+                    "fleet_result": getattr(agent, "_last_fleet_result", None),
                 }
+                # Clear the side-channel so it doesn't leak to the next turn
+                if hasattr(agent, "_last_fleet_result"):
+                    try:
+                        delattr(agent, "_last_fleet_result")
+                    except Exception:
+                        pass
                 return
             elif etype == "turn_failed":
                 try:
