@@ -363,8 +363,10 @@ export function Composer({
   const activeProjectId = useProjectsStore((s) => s.activeProjectId)
   const setActiveProject = useProjectsStore((s) => s.setActive)
   const createProject = useProjectsStore((s) => s.create)
+  const removeProject = useProjectsStore((s) => s.remove)
   const [projectSearch, setProjectSearch] = useState('')
   const [creatingProject, setCreatingProject] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
@@ -1037,7 +1039,14 @@ export function Composer({
                 <TooltipContent>@ 上下文</TooltipContent>
               </Tooltip>
 
-              <DropdownMenu>
+              <DropdownMenu
+                onOpenChange={(open) => {
+                  // Reset the "删除?" confirm state whenever the
+                  // dropdown closes, so the next time the user opens
+                  // it they don't see a stale confirm button.
+                  if (!open) setConfirmDeleteId(null)
+                }}
+              >
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -1084,19 +1093,85 @@ export function Composer({
                       })
                       .map((p) => {
                         const isActive = activeProjectId === p.id
+                        const isConfirming = confirmDeleteId === p.id
                         return (
-                          <DropdownMenuItem
+                          <div
                             key={p.id}
-                            onClick={() => setActiveProject(p.id)}
-                            className="gap-2 py-2"
+                            // Use a div instead of DropdownMenuItem so we can
+                            // host a nested delete button with its own click
+                            // handler without the menu item stealing the click.
+                            // We replicate the DropdownMenuItem styles so the
+                            // row looks identical to the other menu rows.
+                            role="menuitem"
+                            tabIndex={-1}
+                            onClick={() => {
+                              if (isConfirming) return
+                              setActiveProject(p.id)
+                            }}
+                            className={cn(
+                              'group relative flex cursor-pointer items-center gap-2 rounded-lg py-2 pl-2 pr-8 text-sm outline-none transition-colors hover:bg-foreground/[0.06] focus:bg-foreground/[0.06]',
+                              isActive && 'bg-foreground/[0.04]',
+                            )}
                           >
                             <FolderOpen className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{p.name}</div>
                               <div className="truncate text-[10px] text-muted-foreground">{p.path}</div>
                             </div>
-                            {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                          </DropdownMenuItem>
+                            {isActive && !isConfirming && (
+                              <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
+                            )}
+                            {/* Delete (X) button.
+                                - Hidden by default; appears on row hover OR
+                                  when active (so the user can see it next to
+                                  the checkmark, matching the request).
+                                - Two-step confirm: first click shows "确定?"，
+                                  second click actually deletes. Prevents
+                                  accidental removal of a pinned project.
+                                - The folder on disk is NOT touched — only
+                                  the registry entry is removed. */}
+                            {isConfirming ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void removeProject(p.id)
+                                  setConfirmDeleteId(null)
+                                  toast.success(`已移除项目：${p.name}`)
+                                }}
+                                title="再次点击以确认删除"
+                                className="absolute right-1.5 inline-flex h-6 items-center rounded-md bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/20"
+                              >
+                                删除?
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmDeleteId(p.id)
+                                  // Auto-cancel the confirm state after 3s
+                                  // so the user doesn't end up with a
+                                  // lingering "删除?" button if they
+                                  // change their mind.
+                                  setTimeout(() => {
+                                    setConfirmDeleteId((cur) => (cur === p.id ? null : cur))
+                                  }, 3000)
+                                }}
+                                title="移除项目（不会删除文件夹）"
+                                className={cn(
+                                  'absolute right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive',
+                                  // Always show on hover; only show on active
+                                  // row when not currently confirming.
+                                  isActive
+                                    ? 'opacity-60'
+                                    : 'opacity-0 group-hover:opacity-60',
+                                )}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
                         )
                       })}
                   </div>

@@ -302,7 +302,11 @@ export function ChatView() {
           settings.defaultModel,
           agentMode,
           getReasoningEffort(agentMode),
-          activeProject?.id,
+          // Read from store at send time, not from closure — otherwise
+          // switching projects via the Composer picker doesn't take
+          // effect until runSend is recreated (which never happens
+          // because activeProject isn't in the useCallback deps).
+          useProjectsStore.getState().activeProject?.id,
         )
         updateMessage(sessionId, assistantMsgId, { streaming: false })
         void persistMessage(sessionId, assistantMsgId)
