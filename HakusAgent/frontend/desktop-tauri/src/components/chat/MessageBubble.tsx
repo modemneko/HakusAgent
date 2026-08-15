@@ -85,6 +85,11 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div
+      // data-role + data-message-id let the parent ChatView find user
+      // messages via querySelectorAll and scrollIntoView them — used by
+      // the up/down navigation buttons next to the chat scroll area.
+      data-role={message.role}
+      data-message-id={message.id}
       className={cn(
         'group flex gap-3 px-5 animate-fade-in',
         verticalGap,

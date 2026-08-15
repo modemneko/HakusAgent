@@ -10,6 +10,7 @@ import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskP
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
 import { Composer, type QueuedComposerMessage } from './Composer'
+import { ChatNavButtons } from './ChatNavButtons'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { cn, generateId } from '@/lib/utils'
@@ -830,8 +831,18 @@ export function ChatView() {
         </div>
       )}
 
-      {/* Messages */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      {/* Messages — wrapped in a relative container so the floating
+          nav buttons (ChatNavButtons) can anchor to its top-right
+          corner. The buttons live OUTSIDE the scroll div so they
+          don't scroll with the content. */}
+      <div className="relative min-h-0 flex-1">
+        <ChatNavButtons
+          scrollRef={scrollRef}
+          // Re-evaluate button visibility whenever the message count
+          // or the last message id changes (new content arrived).
+          messagesKey={`${activeMessages.length}#${activeMessages[activeMessages.length - 1]?.id ?? ''}`}
+        />
+        <div ref={scrollRef} className="h-full overflow-y-auto">
         {activeMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
@@ -886,6 +897,7 @@ export function ChatView() {
             <div ref={messagesEndRef} className="h-4" />
           </div>
         )}
+        </div>
       </div>
 
       {/* Composer */}
