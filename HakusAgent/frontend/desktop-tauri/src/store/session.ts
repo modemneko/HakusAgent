@@ -317,6 +317,28 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const target = list[idx]
     if (target.role !== 'user') return null
 
+    // Abort any in-flight SSE stream BEFORE removing messages.
+    // Without this, the stream's finally-block in ChatView keeps
+    // appending tokens to a message id that's no longer in the store
+    // (updateMessage becomes a silent no-op), so the UI shows the
+    // rewind happened but the AI "keeps talking" in the background
+    // until the server-side turn finishes on its own.
+    //
+    // This mirrors clearMessages() — same pattern, same reason.
+    const abort = get().streamingAbort
+    if (abort) {
+      abort.abort()
+    }
+    // Reset streaming state immediately so the UI is interactive
+    // again. The runSend finally-block will also call setStreaming(false)
+    // when the AbortError lands, but that's async — we don't want to
+    // leave the user blocked between rewind-click and abort-resolution.
+    set({
+      isStreaming: false,
+      streamingAbort: null,
+      streamingLogId: { ...get().streamingLogId, [sessionId]: null },
+    })
+
     const kept = list.slice(0, idx)
     const removed = list.slice(idx)
     const prevMessages = get().messages

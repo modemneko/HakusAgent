@@ -722,7 +722,12 @@ export function ChatView() {
   }
 
   const handleRewind = async (messageId: string) => {
-    if (!activeId || isStreaming) return
+    // NOTE: do NOT guard with `isStreaming` here. The user's intent when
+    // clicking "撤回此轮" while AI is streaming is "stop this response
+    // AND remove it". rewindToMessage() in the store now aborts the
+    // active SSE stream and resets streaming state before removing
+    // messages — so rewinding while streaming is a supported operation.
+    if (!activeId) return
     try {
       const text = await rewindToMessage(activeId, messageId)
       if (text !== null) {
