@@ -128,6 +128,10 @@ class ReadFile(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, path: str, offset: int = 1, limit: int = 500,
                       show_line_numbers: bool = True, **kwargs) -> str:
@@ -205,6 +209,10 @@ class WriteFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, content: str, **kwargs) -> str:
         try:
@@ -243,6 +251,10 @@ class EditFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, old_str: str, new_str: str,
                       dry_run: bool = False, replace_all: bool = False,
@@ -378,6 +390,10 @@ class MultiEditFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, edits: List[Dict[str, str]], **kwargs) -> str:
         try:
@@ -434,6 +450,10 @@ class MoveFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, source: str, destination: str, **kwargs) -> str:
         try:
@@ -472,6 +492,10 @@ class CopyFile(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, source: str, destination: str, **kwargs) -> str:
         try:
@@ -510,6 +534,10 @@ class DeleteFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, **kwargs) -> str:
         try:
@@ -554,6 +582,10 @@ class FileStat(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, path: str, **kwargs) -> str:
         try:
@@ -623,6 +655,10 @@ class ReadMultipleFiles(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, paths: List[str], max_lines_per_file: int = 500, **kwargs) -> str:
         try:
@@ -682,6 +718,10 @@ class CreateDirectory(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, **kwargs) -> str:
         try:
@@ -712,6 +752,10 @@ class AppendFile(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = []
 
     async def execute(self, path: str, content: str, **kwargs) -> str:
         try:

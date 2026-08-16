@@ -17,10 +17,19 @@ Backward-compat:
     both snake_case and PascalCase tool names resolve correctly.
     Only the canonical name's schema is sent to the model; aliases
     are lookup-only to avoid duplicate schemas.
+
+DeepSeek-Harness-inspired additions:
+  - `list_by_category(cat)` / `list_by_tag(tag)` for the mode whitelist.
+  - `unregister(name)` so plugins can be hot-swapped at runtime.
+  - `get_categories()` to derive the /api/tools endpoint from the
+    live registry instead of a hardcoded list.
+  - `disabled_categories` set: respects `tools.disabled` from
+    ~/.hakus/config.yaml at the registry level (was previously
+    write-only — the toggle wrote to config but nothing read it).
 """
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from utils.logger import get_logger
 
@@ -113,6 +122,12 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: Dict[str, Tool] = {}
         self._lazy_loaders: Dict[str, Callable[[], Tool]] = {}
+        # Categories explicitly disabled via ~/.hakus/config.yaml's
+        # `tools.disabled` list. Mode whitelists are intersected with
+        # this — a tool is only available if (a) its mode allows it AND
+        # (b) its category isn't disabled. Read by the sidecar via
+        # `set_disabled_categories()` after parsing config.yaml.
+        self._disabled_categories: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Registration
@@ -171,6 +186,39 @@ class ToolRegistry:
             except Exception as e:
                 logger.warning(f"Failed to register builtin tool {tool_cls.__name__}: {e}")
 
+    def unregister(self, name: str) -> bool:
+        """Remove a tool from the registry by canonical name.
+
+        Returns True if a tool was actually removed, False if no such
+        tool was registered. Does NOT remove aliases — those are static.
+        Used for hot-swapping plugins at runtime (e.g. when an MCP
+        server disconnects, we unregister its wrapped tools).
+        """
+        if name in self._tools:
+            del self._tools[name]
+            return True
+        if name in self._lazy_loaders:
+            del self._lazy_loaders[name]
+            return True
+        return False
+
+    def set_disabled_categories(self, categories: Set[str]) -> None:
+        """Mark entire categories as disabled.
+
+        Tools in disabled categories are still in the registry (so they
+        can be re-enabled by clearing the set), but `list_tools()` and
+        `get_schemas()` will skip them. This is how `tools.disabled`
+        from ~/.hakus/config.yaml finally takes effect at the agent level.
+        """
+        self._disabled_categories = set(categories)
+
+    def is_disabled(self, name: str) -> bool:
+        """Check if a tool is disabled by category."""
+        tool = self.get(name)
+        if not tool:
+            return True  # unknown tool → treated as disabled (safer)
+        return tool.category in self._disabled_categories
+
     # ------------------------------------------------------------------
     # Lookup
     # ------------------------------------------------------------------
@@ -209,8 +257,71 @@ class ToolRegistry:
             return self.get(canonical)
         return None
 
-    def list_tools(self) -> List[str]:
-        return sorted(set(list(self._tools.keys()) + list(self._lazy_loaders.keys())))
+    def list_tools(self, include_disabled: bool = False) -> List[str]:
+        """List canonical tool names.
+
+        By default, skips tools whose category is in
+        `disabled_categories`. Pass `include_disabled=True` to get the
+        full list (e.g. for the Settings panel to show what *would* be
+        active if the category were re-enabled).
+        """
+        names = sorted(set(list(self._tools.keys()) + list(self._lazy_loaders.keys())))
+        if include_disabled:
+            return names
+        return [n for n in names if not self.is_disabled(n)]
+
+    def list_by_category(self, category: str, include_disabled: bool = False) -> List[str]:
+        """Return canonical tool names in the given category."""
+        out: List[str] = []
+        for name in sorted(set(list(self._tools.keys()) + list(self._lazy_loaders.keys()))):
+            tool = self.get(name)
+            if not tool:
+                continue
+            if tool.category != category:
+                continue
+            if not include_disabled and self.is_disabled(name):
+                continue
+            out.append(name)
+        return out
+
+    def list_by_tag(self, tag: str, include_disabled: bool = False) -> List[str]:
+        """Return canonical tool names that have the given tag."""
+        out: List[str] = []
+        for name in sorted(set(list(self._tools.keys()) + list(self._lazy_loaders.keys()))):
+            tool = self.get(name)
+            if not tool:
+                continue
+            if tag not in getattr(tool, "tags", []):
+                continue
+            if not include_disabled and self.is_disabled(name):
+                continue
+            out.append(name)
+        return out
+
+    def get_categories(self) -> Dict[str, Dict]:
+        """Return a dict of category → metadata.
+
+        Each value is ``{"tools": [name, ...], "dangerous": bool,
+        "disabled": bool}``. Used by the /api/tools endpoint so the
+        Settings panel sees a live view of the registry instead of a
+        hardcoded list.
+        """
+        out: Dict[str, Dict] = {}
+        for name in sorted(set(list(self._tools.keys()) + list(self._lazy_loaders.keys()))):
+            tool = self.get(name)
+            if not tool:
+                continue
+            cat = tool.category
+            if cat not in out:
+                out[cat] = {
+                    "tools": [],
+                    "dangerous": False,
+                    "disabled": cat in self._disabled_categories,
+                }
+            out[cat]["tools"].append(name)
+            if tool.is_dangerous:
+                out[cat]["dangerous"] = True
+        return out
 
     # ------------------------------------------------------------------
     # Schema generation
@@ -219,14 +330,15 @@ class ToolRegistry:
     def get_schemas(self, names: Optional[List[str]] = None) -> List[Dict]:
         """Generate OpenAI function-calling schemas for the given tools.
 
-        If `names` is None, returns all tools. Tools that fail to
-        serialize are skipped (with a warning), not raised.
+        If `names` is None, returns all tools (minus those disabled by
+        category). Tools that fail to serialize are skipped (with a
+        warning), not raised.
 
         Duplicate schemas are suppressed: if a name resolves via alias
         to a tool that was already serialized, the alias is skipped.
         """
         if names is None:
-            names = self.list_tools()
+            names = self.list_tools()  # already excludes disabled
         schemas: List[Dict] = []
         seen_names: set = set()
         for name in names:
@@ -237,6 +349,12 @@ class ToolRegistry:
             seen_names.add(canonical)
             tool = self.get(name)
             if not tool:
+                continue
+            # Skip tools disabled by category even if explicitly listed.
+            # This is the safety net for mode whitelists: if a mode
+            # whitelist is computed before config.yaml's disabled set
+            # is applied, the schemas still respect the user's choice.
+            if tool.category in self._disabled_categories:
                 continue
             try:
                 schemas.append(tool.to_openai_schema())

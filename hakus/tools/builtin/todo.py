@@ -126,6 +126,10 @@ class TodoWrite(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "plan"
+    tags: list = []
 
     async def execute(self, todos: List[Dict[str, Any]], **kwargs) -> str:
         try:

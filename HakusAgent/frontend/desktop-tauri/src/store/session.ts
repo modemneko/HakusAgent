@@ -348,20 +348,37 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       messages: { ...prevMessages, [sessionId]: kept },
     })
 
-    // Sync deletions to server in parallel. Some messages (e.g. a still-
-    // streaming assistant placeholder) may not have been persisted yet, so a
-    // 404 from the backend means "already gone" and should not fail the rewind.
-    const results = await Promise.allSettled(
-      removed.map((m) => apiClient.deleteMessage(sessionId, m.id)),
-    )
-    const hardErrors = results
-      .map((r, i) => ({ r, m: removed[i] }))
-      .filter(({ r }) => r.status === 'rejected')
-      .filter(({ r }) => !isNotFoundError((r as PromiseRejectedResult).reason))
-    if (hardErrors.length > 0) {
-      // Rollback only for real server errors (network / 5xx), not 404s.
-      set({ messages: prevMessages })
-      throw hardErrors[0].r
+    // v0.12.0+: use the backend's atomic rewind endpoint so the
+    // session log stays consistent with the message store. This
+    // deletes the target message + all subsequent ones AND truncates
+    // the JSONL log to the corresponding turn boundary. Falls back
+    // to the old client-side delete-loop if the backend is older
+    // (404 = endpoint doesn't exist yet) or returns a hard error.
+    try {
+      await apiClient.rewindSessionToMessage(sessionId, messageId)
+    } catch (e: any) {
+      // 404 = old backend without the /rewind endpoint — fall back
+      // to the client-side delete-loop. Same for connection errors
+      // (the optimistic UI is already correct; we just don't get
+      // log truncation).
+      const status = e?.status ?? e?.statusCode
+      if (status === 404 || status === 405) {
+        const results = await Promise.allSettled(
+          removed.map((m) => apiClient.deleteMessage(sessionId, m.id)),
+        )
+        const hardErrors = results
+          .map((r, i) => ({ r, m: removed[i] }))
+          .filter(({ r }) => r.status === 'rejected')
+          .filter(({ r }) => !isNotFoundError((r as PromiseRejectedResult).reason))
+        if (hardErrors.length > 0) {
+          set({ messages: prevMessages })
+          throw hardErrors[0].r
+        }
+      } else {
+        // Hard error (network / 5xx) — rollback the optimistic update.
+        set({ messages: prevMessages })
+        throw e
+      }
     }
 
     return target.content || null

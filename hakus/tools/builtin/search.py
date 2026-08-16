@@ -40,6 +40,10 @@ class Glob(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "search"
+    tags: list = ['read-only']
 
     async def execute(self, pattern: str, path: str = ".", **kwargs) -> str:
         try:
@@ -146,6 +150,10 @@ class Grep(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "search"
+    tags: list = ['read-only']
 
     async def execute(
         self,

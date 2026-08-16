@@ -123,6 +123,16 @@ class Tool(ABC):
       - is_dangerous (bool): True if the tool can mutate state or access
         the network. The PermissionManager uses this to decide whether
         to require user confirmation. Default False.
+      - category (str): first-class tool category. Used by ToolRegistry
+        to filter tools by mode whitelist and to derive the /api/tools
+        endpoint. Default "general". Standard categories: "filesystem",
+        "shell", "search", "vcs", "web", "browser", "task", "plan",
+        "interactive", "general".
+      - tags (List[str]): optional fine-grained labels. Default [].
+        Used for ad-hoc grouping (e.g. ["read-only"], ["mcp:linear"]).
+      - version (str): tool version, for plugin compatibility checks.
+        Default "1.0.0".
+      - author (str): optional author attribution. Default "".
     """
 
     name: str = ""
@@ -130,6 +140,14 @@ class Tool(ABC):
     parameters_schema: Dict[str, Any] = {}
     is_concurrency_safe: bool = True
     is_dangerous: bool = False
+    # First-class category (promoted from ToolMetadata so the mode
+    # whitelist and /api/tools endpoint can read it without instantiating
+    # the tool). Existing tools that don't override this fall back to
+    # "general" — which means "available in all modes".
+    category: str = "general"
+    tags: List[str] = []
+    version: str = "1.0.0"
+    author: str = ""
 
     @abstractmethod
     async def execute(self, **kwargs) -> str:
@@ -153,8 +171,9 @@ class Tool(ABC):
         return ToolMetadata(
             name=self.name,
             description=self.description,
-            category="general",
+            category=self.category,
             parameters_schema=self.parameters_schema,
+            tags=list(self.tags),
         )
 
     def to_openai_schema(self) -> Dict[str, Any]:

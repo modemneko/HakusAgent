@@ -55,6 +55,7 @@ import {
   REASONING_EFFORTS,
   REASONING_EFFORT_META,
   getAgentModeMeta,
+  getModeToolSummary,
   type ReasoningEffort,
 } from '@/lib/agentModes'
 import { cn, generateId } from '@/lib/utils'
@@ -1303,6 +1304,9 @@ export function Composer({
                             <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
                               <Brain className="h-2.5 w-2.5" />
                               <span>思考: {REASONING_EFFORT_META[modeEffort].label}</span>
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-muted-foreground/60">
+                              {getModeToolSummary(mode)}
                             </div>
                           </div>
                           {active && <Check className="mt-0.5 h-3.5 w-3.5 text-primary" />}

@@ -123,6 +123,10 @@ class WebSearch(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "web"
+    tags: list = []
 
     async def execute(self, query: str, k: int = 5, **kwargs) -> str:
         # Note: the *router* is responsible for refusing local-file
@@ -156,6 +160,10 @@ class WebFetch(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "web"
+    tags: list = []
 
     async def execute(self, url: str, **kwargs) -> str:
         try:

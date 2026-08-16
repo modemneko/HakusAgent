@@ -107,6 +107,10 @@ class BrowserUse(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "browser"
+    tags: list = []
 
     async def execute(self, **kwargs) -> str:
         action = kwargs.get("action", "")

@@ -63,6 +63,8 @@ import type {
   ProjectsListResponse,
   ProjectCreateBody,
   ProjectUpdateBody,
+  SessionLogEvent,
+  SessionLogStats,
 } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
@@ -1183,6 +1185,60 @@ export class HakusAIClient {
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Delete message failed')
+  }
+
+  /**
+   * Backend atomic rewind — deletes the given message_id AND all
+   * messages after it, plus truncates the session log to the
+   * corresponding turn boundary. Returns the count of deleted
+   * messages. Use this instead of the client-side `deleteMessage`
+   * loop when you want the log to stay consistent with the message
+   * store (i.e. always, for the "撤回此轮" button).
+   */
+  async rewindSessionToMessage(sessionId: string, messageId: string): Promise<{ deleted_messages: number }> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/rewind`
+    const res = await this.fetchWithHardTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId }),
+      },
+      15000,
+    )
+    if (!res.ok) await this._throwForResponse(res, url, 'Rewind session failed')
+    return res.json()
+  }
+
+  /** Get the append-only session log (JSONL events). */
+  async getSessionLog(sessionId: string, opts?: { sinceTurn?: number; limit?: number }): Promise<{
+    session_id: string
+    events: SessionLogEvent[]
+    stats: SessionLogStats
+  }> {
+    const params = new URLSearchParams()
+    if (opts?.sinceTurn) params.set('since_turn', String(opts.sinceTurn))
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/log${qs}`
+    const res = await this.fetchWithHardTimeout(url, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Get session log failed')
+    return res.json()
+  }
+
+  /** Manually trigger session log compaction. */
+  async compactSessionLog(sessionId: string): Promise<{ session_id: string; stats: SessionLogStats }> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/log/compact`
+    const res = await this.fetchWithHardTimeout(url, { method: 'POST' }, 15000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Compact session log failed')
+    return res.json()
+  }
+
+  /** Clear the session log (live + archive). */
+  async clearSessionLog(sessionId: string): Promise<void> {
+    const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/log`
+    const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Clear session log failed')
   }
 
   /** Clear all messages in a session (keeps the session row). */

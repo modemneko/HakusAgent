@@ -114,7 +114,7 @@ export interface BackendVersionInfo {
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_BACKEND_API_VERSION_INT = 11
+export const EXPECTED_BACKEND_API_VERSION_INT = 12
 
 export interface AppConfig {
   version: string
@@ -238,10 +238,74 @@ export interface ToolInfo {
   desc: string
   dangerous: boolean
   enabled: boolean
+  /** v0.12.0+: list of tool names in this category (derived from registry). */
+  tools?: string[]
 }
 
 export interface ToolsResponse {
   tools: ToolInfo[]
+}
+
+// ========== Session Log (v0.12.0+, DeepSeek-Harness-style append-only JSONL) ==========
+
+export type SessionLogEventType =
+  | 'turn_start'
+  | 'text_delta'
+  | 'reasoning'
+  | 'tool_call_started'
+  | 'tool_call_finished'
+  | 'subagent_spawned'
+  | 'token_usage'
+  | 'turn_completed'
+  | 'turn_failed'
+  | 'cancelled'
+  | 'compacted'
+  | string  // forward-compat for custom event types
+
+export interface SessionLogEvent {
+  type: SessionLogEventType
+  ts: number
+  turn: number
+  // Type-specific fields (all optional, discriminated by `type`)
+  user_message?: string
+  run_mode?: string
+  working_dir?: string
+  provider?: string
+  model?: string
+  text?: string
+  call_id?: string
+  name?: string
+  arguments?: Record<string, unknown>
+  category?: string
+  success?: boolean
+  duration_ms?: number
+  result_preview?: string
+  result_truncated?: boolean
+  result_full_length?: number
+  error?: string
+  code?: string
+  reason?: string
+  content?: string
+  input_tokens?: number
+  output_tokens?: number
+  cache_hit_tokens?: number
+  cache_miss_tokens?: number
+  sub_agent_id?: string
+  task?: string
+  allowed_tools?: string[]
+  events_archived?: number
+  archive_path?: string
+  [key: string]: unknown  // forward-compat
+}
+
+export interface SessionLogStats {
+  session_id: string
+  log_path: string
+  archive_path: string
+  live_size_bytes: number
+  archive_size_bytes: number
+  event_count: number
+  current_turn: number
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'bypass'

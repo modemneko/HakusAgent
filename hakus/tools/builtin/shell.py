@@ -50,6 +50,10 @@ class Bash(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "shell"
+    tags: list = []
 
     async def execute(self, command: str, timeout: int = 120, max_output: int = 10000, cwd: str = "", **kwargs) -> str:
         try:

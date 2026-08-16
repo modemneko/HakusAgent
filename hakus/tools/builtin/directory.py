@@ -20,6 +20,10 @@ class ListDir(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, path: str, **kwargs) -> str:
         try:
@@ -59,6 +63,10 @@ class Tree(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "filesystem"
+    tags: list = ['read-only']
 
     async def execute(self, path: str, max_depth: int = 3, **kwargs) -> str:
         try:

@@ -543,6 +543,13 @@ class AgentCore:
         self._tool_registry.register_builtin()
         self._tool_executor = ToolExecutor(self._tool_registry)
 
+        # Mode → allowed-tools policy (DeepSeek-Harness-style preset).
+        # `None` means "no mode set yet, all tools available" (backward
+        # compat for direct-API users who never specify a mode). Once a
+        # mode is set via `set_run_mode()`, the schema builder and the
+        # tool-call dispatcher both enforce the whitelist.
+        self._run_mode: Optional[str] = None
+
         # System-level routing: catches mis-routed tool calls (e.g. model
         # calls `web_search` for a local CSV file) before they execute.
         # This replaces the four layers of defense that used to live
@@ -666,6 +673,36 @@ class AgentCore:
             logger.warning(f"Invalid reasoning_effort '{effort}', ignoring. Valid: low/high/max/None")
             return
         self._reasoning_effort = effort
+
+    # ── Run mode → tool whitelist (DeepSeek-Harness-style preset) ──
+    def set_run_mode(self, mode: Optional[str]) -> None:
+        """Set the run mode for subsequent turns.
+
+        The mode controls which tool categories are sent to the LLM and
+        which tool calls are allowed to execute. See `hakus/modes.py`
+        for the full policy table.
+
+        Passing ``None`` clears the mode (all tools available, backward
+        compat for direct-API callers).
+        """
+        if mode is None:
+            self._run_mode = None
+            return
+        from .modes import normalize_run_mode
+        self._run_mode = normalize_run_mode(mode)
+        logger.debug(f"[agent] run_mode set to {self._run_mode}")
+
+    def _allowed_tool_names(self) -> Optional[list[str]]:
+        """Return the tool names allowed by the current run mode, or
+        None if no mode is set (meaning "all tools, no filtering").
+
+        Intersects the mode whitelist with the registry's
+        `disabled_categories` set.
+        """
+        if self._run_mode is None:
+            return None
+        from .modes import mode_allowed_tools, RunMode  # noqa: F401
+        return mode_allowed_tools(self._run_mode, self._tool_registry)
 
     def _is_deepseek(self) -> bool:
         """True if the active LLM client is a DeepSeek provider."""
@@ -992,7 +1029,9 @@ class AgentCore:
 
         # --- Legacy path for models without an OpenAI client ---
         if tools is None:
-            tools = self._tool_registry.get_schemas(self._tool_registry.list_tools())
+            _allowed = self._allowed_tool_names()
+            _names = _allowed if _allowed is not None else self._tool_registry.list_tools()
+            tools = self._tool_registry.get_schemas(_names)
         if timeout is None:
             timeout = self._llm_timeout
         try:
@@ -1065,7 +1104,9 @@ class AgentCore:
             return await self._call_model_in_thread(messages, tools, timeout)
 
         if tools is None:
-            tools = self._tool_registry.get_schemas(self._tool_registry.list_tools())
+            _allowed = self._allowed_tool_names()
+            _names = _allowed if _allowed is not None else self._tool_registry.list_tools()
+            tools = self._tool_registry.get_schemas(_names)
         if timeout is None:
             timeout = self._llm_timeout
 
@@ -1250,7 +1291,9 @@ class AgentCore:
         import concurrent.futures
 
         if tools is None:
-            tools = self._tool_registry.get_schemas(self._tool_registry.list_tools())
+            _allowed = self._allowed_tool_names()
+            _names = _allowed if _allowed is not None else self._tool_registry.list_tools()
+            tools = self._tool_registry.get_schemas(_names)
         if timeout is None:
             timeout = self._llm_timeout
 
@@ -1643,6 +1686,29 @@ class AgentCore:
                 f"Plan mode: tool '{tool_name}' is blocked until plan is approved.",
                 False, time.time() - start,
             )
+
+        # Mode whitelist runtime check (defensive — the schema builder
+        # already filters disallowed tools out, but if the model
+        # hallucinates a tool name that *would* be in the registry but
+        # is disallowed by the current run mode, we block it here too).
+        # This catches the edge case where the LLM emits a tool_call
+        # for a name it remembered from a previous turn but that the
+        # current mode no longer exposes.
+        if self._run_mode is not None:
+            from .modes import mode_allows_tool
+            tool = self._tool_registry.get(tool_name)
+            if tool is not None and not mode_allows_tool(self._run_mode, tool):
+                logger.info(
+                    f"[agent] mode '{self._run_mode}' disallows tool "
+                    f"'{tool_name}' (category={tool.category}) — blocking"
+                )
+                return ToolCallResult(
+                    tool_name, arguments,
+                    f"Run mode '{self._run_mode}' does not allow tool "
+                    f"'{tool_name}' (category={tool.category}). Switch to "
+                    f"a different mode or use a read-only alternative.",
+                    False, time.time() - start,
+                )
 
         # ------------------------------------------------------------------
         # System-level routing (replaces the 4 layers of WebSearch defense)
@@ -2985,9 +3051,15 @@ class AgentCore:
                 #    persisted at the end of the previous iteration)
                 await self._context.compress(self._model)
                 messages = self._build_messages()
-                tool_schemas = self._tool_registry.get_schemas(
-                    self._tool_registry.list_tools()
-                ) or None
+                # Mode whitelist: if set, only send schemas for tools
+                # the current run mode allows. See `set_run_mode()`.
+                _allowed = self._allowed_tool_names()
+                if _allowed is not None:
+                    tool_schemas = self._tool_registry.get_schemas(_allowed) or None
+                else:
+                    tool_schemas = self._tool_registry.get_schemas(
+                        self._tool_registry.list_tools()
+                    ) or None
 
                 # ── Debug: log messages for this iteration ──
                 _dbg = _get_dbg()
@@ -3738,9 +3810,13 @@ class AgentCore:
 
                 await self._context.compress(self._model)
                 messages = self._build_messages()
-                tool_schemas = self._tool_registry.get_schemas(
-                    self._tool_registry.list_tools()
-                ) or None
+                _allowed = self._allowed_tool_names()
+                if _allowed is not None:
+                    tool_schemas = self._tool_registry.get_schemas(_allowed) or None
+                else:
+                    tool_schemas = self._tool_registry.get_schemas(
+                        self._tool_registry.list_tools()
+                    ) or None
 
                 try:
                     response, tool_calls_raw = await self._call_model_with_client(

@@ -76,6 +76,10 @@ class GitDiff(Tool):
     }
     is_concurrency_safe = True
     is_dangerous = False
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "vcs"
+    tags: list = ["read-only"]  # git_diff only reads, doesn't mutate
 
     async def execute(
         self,
@@ -206,6 +210,10 @@ class ApplyPatch(Tool):
     }
     is_concurrency_safe = False
     is_dangerous = True
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "vcs"
+    tags: list = []  # apply_patch mutates files — not read-only
 
     async def execute(
         self,

@@ -82,3 +82,46 @@ export const AGENT_MODE_META: Record<AgentMode, AgentModeMeta> = {
 export function getAgentModeMeta(mode: AgentMode): AgentModeMeta {
   return AGENT_MODE_META[mode]
 }
+
+/**
+ * Mode → allowed tool categories (mirrors `hakus/modes.py`).
+ *
+ * Used by the Composer dropdown to show a one-line summary of which
+ * tool categories each mode exposes. Must stay in sync with the
+ * backend — if you change `MODE_ALLOWED_CATEGORIES` in modes.py,
+ * update this too.
+ */
+export const MODE_ALLOWED_CATEGORIES: Record<AgentMode, string[] | null> = {
+  // swift = read-only + chat. No shell, no browser, no file writes.
+  swift: ['filesystem', 'search', 'vcs', 'web', 'task', 'plan', 'interactive', 'general'],
+  // deep = everything (no restriction).
+  deep: null,
+  // fleet = everything (same as deep; fleet's differentiation is in
+  // routing, not tool access).
+  fleet: null,
+}
+
+export const MODE_BLOCKED_CATEGORIES: Record<AgentMode, string[]> = {
+  swift: ['shell', 'browser'],
+  deep: [],
+  fleet: [],
+}
+
+/**
+ * Human-readable summary of what each mode allows. Shown under the
+ * mode label in the Composer dropdown.
+ */
+export function getModeToolSummary(mode: AgentMode): string {
+  const blocked = MODE_BLOCKED_CATEGORIES[mode]
+  if (mode === 'swift') {
+    return '只读 + 问答（无 shell / 写文件 / 浏览器）'
+  }
+  if (mode === 'deep') {
+    return '全部工具（文件 / shell / git / web / 浏览器）'
+  }
+  if (mode === 'fleet') {
+    return '全部工具 + 多专家并行'
+  }
+  return ''
+}
+

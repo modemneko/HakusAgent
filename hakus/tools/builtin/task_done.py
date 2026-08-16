@@ -16,6 +16,10 @@ class TaskDoneTool(Tool):
     """
 
     name = "task_done"
+    # First-class category — used by ToolRegistry to filter by
+    # mode whitelist and to derive the /api/tools endpoint.
+    category: str = "task"
+    tags: list = []
     description = (
         "Mark the current task as completed. "
         "Call this tool when you have finished all necessary work and want to signal completion. "

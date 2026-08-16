@@ -412,6 +412,28 @@ def get_or_create_agent(
                 # MCP is optional — don't crash agent creation if it fails.
                 logger.warning(f"[MCP] tool registration failed (non-blocking): {e}")
 
+            # Apply user's disabled-categories preference from config.yaml.
+            # This used to be a write-only bug: the toggle endpoint wrote
+            # to config but nothing read it. Now the agent's ToolRegistry
+            # respects `tools.disabled` at creation time, and the toggle
+            # endpoint also calls `set_disabled_categories` on all live
+            # agents so the change takes effect without a restart.
+            try:
+                import yaml as _yaml
+                from pathlib import Path as _Path
+                _cfg_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
+                if _cfg_path.exists():
+                    _cfg_raw = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+                    _disabled = set(_cfg_raw.get("tools", {}).get("disabled", []) or [])
+                    if _disabled:
+                        agent._tool_registry.set_disabled_categories(_disabled)
+                        logger.info(
+                            f"[tools] applied disabled categories to session={session_id}: "
+                            f"{sorted(_disabled)}"
+                        )
+            except Exception as _de:
+                logger.warning(f"[tools] failed to apply disabled categories: {_de}")
+
             _agent_cache[cache_key] = agent
     return _agent_cache[cache_key]
 
@@ -607,12 +629,25 @@ async def run_turn_stream(
     except Exception as _re_err:
         logger.warning(f"set_reasoning_effort failed (non-blocking): {_re_err}")
 
+    # Apply run mode → tool whitelist (DeepSeek-Harness-style preset).
+    # The agent stores the mode on itself; the schema builder and the
+    # tool-call dispatcher read it via `_allowed_tool_names()` and
+    # `mode_allows_tool()` respectively. See `hakus/modes.py`.
+    try:
+        agent.set_run_mode(run_mode)
+    except Exception as _rm_err:
+        logger.warning(f"set_run_mode failed (non-blocking): {_rm_err}")
+
     accumulated = ""
     input_tokens = 0
     output_tokens = 0
     cache_hit_tokens = 0
     cache_miss_tokens = 0
     iterations = 0
+
+    # Placeholder — recorder is initialized after _run_mode is determined.
+    _recorder = None
+    _turn_num = 0
 
     structured(
         logger,
@@ -712,6 +747,29 @@ async def run_turn_stream(
             rule_tester=use_rule_tester,
         )
 
+    # ── Session log recorder (append-only JSONL, DeepSeek-Harness-style) ──
+    # Every event that flows through this turn is teed to the recorder.
+    # The recorder writes to ~/.hakus/sessions/<id>/session_log.jsonl
+    # and auto-compacts when the file exceeds 5 MB or 1000 events.
+    # See `hakus/session_log.py` for the full design.
+    try:
+        from hakus.session_log import get_recorder as _get_session_recorder
+        _recorder = _get_session_recorder(session_id)
+        # Determine the next turn number for this session.
+        _turn_num = _recorder._current_turn + 1
+        _recorder.record_turn_start(
+            turn=_turn_num,
+            user_message=message[:500],  # truncate long messages
+            run_mode=_run_mode or "",
+            working_dir=working_dir or "",
+            provider=provider or "",
+            model=getattr(getattr(agent, "_model", None), "model_name", "") or "",
+        )
+    except Exception as _sl_err:
+        logger.warning(f"session_log init failed (non-blocking): {_sl_err}")
+        _recorder = None
+        _turn_num = 0
+
     try:
         if use_fleet:
             # Fleet mode: CTDE v2 — Planner + parallel Workers + Reviewer
@@ -761,6 +819,65 @@ async def run_turn_stream(
                 continue
 
             etype = evt_dict.get("event_type", "")
+
+            # ── Session log tee (append-only JSONL) ──
+            # Every event is mirrored to the session log recorder. This
+            # is non-blocking — if the recorder throws, we log a warning
+            # and continue (the stream must not break because of a
+            # logging failure). See `hakus/session_log.py`.
+            if _recorder is not None:
+                try:
+                    if etype == "text_delta":
+                        _recorder.record_text_delta(turn=_turn_num, text=evt_dict.get("text", ""))
+                    elif etype == "reasoning_delta":
+                        _recorder.record_reasoning(turn=_turn_num, text=evt_dict.get("text", ""))
+                    elif etype == "tool_call_started":
+                        _recorder.record_tool_call_started(
+                            turn=_turn_num,
+                            call_id=evt_dict.get("call_id", ""),
+                            name=evt_dict.get("name", ""),
+                            arguments=evt_dict.get("arguments", {}),
+                            category="",  # filled below if we can resolve it
+                        )
+                    elif etype == "tool_call_finished":
+                        _recorder.record_tool_call_finished(
+                            turn=_turn_num,
+                            call_id=evt_dict.get("call_id", ""),
+                            name=evt_dict.get("name", ""),
+                            success=evt_dict.get("success", True),
+                            duration_ms=float(evt_dict.get("duration", 0.0)) * 1000,
+                            result=str(evt_dict.get("result", "")),
+                            error=str(evt_dict.get("error", "")),
+                        )
+                    elif etype == "token_usage":
+                        _recorder.record_token_usage(
+                            turn=_turn_num,
+                            input_tokens=evt_dict.get("input_tokens", 0),
+                            output_tokens=evt_dict.get("output_tokens", 0),
+                            cache_hit_tokens=evt_dict.get("cache_hit_tokens", 0),
+                            cache_miss_tokens=evt_dict.get("cache_miss_tokens", 0),
+                        )
+                    elif etype == "turn_completed":
+                        _recorder.record_turn_completed(
+                            turn=_turn_num,
+                            content=accumulated,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+                    elif etype == "turn_failed":
+                        _recorder.record_turn_failed(
+                            turn=_turn_num,
+                            error=evt_dict.get("error", "unknown"),
+                            code=evt_dict.get("code", ""),
+                        )
+                    elif etype == "cancelled":
+                        _recorder.record_cancelled(
+                            turn=_turn_num,
+                            reason=evt_dict.get("reason", "user_interrupt"),
+                        )
+                except Exception as _tee_err:
+                    logger.debug(f"session_log tee failed: {_tee_err}")
+
             if etype in ("question_asked", "question_answered"):
                 # #region debug-point E:question-event-forward
                 _debug_log("E", "agent_bridge.py:run_turn_stream", f"forwarding {etype}", {"session_id": session_id, "question_id": evt_dict.get("question_id")})

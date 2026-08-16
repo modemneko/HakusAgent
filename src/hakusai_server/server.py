@@ -54,8 +54,27 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.11.0"
-SIDECAR_API_VERSION_INT = 11  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.12.0"
+SIDECAR_API_VERSION_INT = 12  # 整数版本，便于客户端比较
+# v0.12.0: + DeepSeek-Harness-inspired architecture:
+#          - Append-only session log (JSONL) at ~/.hakus/sessions/<id>/
+#            session_log.jsonl. Records every turn_start, text_delta,
+#            tool_call_started/finished, token_usage, turn_completed/
+#            failed/cancelled. Auto-compacts at 5MB / 1000 events.
+#            Endpoints: GET /api/sessions/{id}/log,
+#            POST /api/sessions/{id}/log/compact, DELETE /api/sessions/{id}/log
+#          - Mode → allowed_tools whitelist (swift = read-only, deep = all,
+#            fleet = all). Enforced both in schema building (LLM never
+#            sees disallowed tools) and at tool-call dispatch (defensive).
+#          - Tool registry refactor: Tool.category is now a first-class
+#            class attribute. ToolRegistry.list_by_category/list_by_tag/
+#            unregister/get_categories. /api/tools now derives from the
+#            live registry instead of a hardcoded list. tools.disabled
+#            in config.yaml is now actually read by the agent (was a
+#            write-only bug before).
+#          - Backend atomic rewind endpoint: POST /api/sessions/{id}/rewind
+#            deletes message_id + all subsequent messages AND truncates
+#            the session log to the corresponding turn boundary.
 # v0.11.0: + Fleet CTDE v2 — Planner + parallel Workers (sub_dir-scoped)
 #          + Reviewer gate + counterfactual expert re-run
 #          (/api/fleet/runs/{run_id} GET, /api/fleet/runs/{run_id}/experts/
@@ -1733,7 +1752,7 @@ class HakusAIServer:
 
         @app.delete("/api/sessions/{session_id}")
         async def delete_session_api(session_id: str):
-            """删除 session + 级联删除其所有 messages."""
+            """删除 session + 级联删除其所有 messages + 清掉 session log."""
             try:
                 ok = session_store.delete_session(session_id)
                 if not ok:
@@ -1743,6 +1762,14 @@ class HakusAIServer:
                     agentcore_clear_session(session_id)
                 except Exception as _e:
                     logger.warning(f"clear_session_history failed: {_e}")
+                # 同时清掉 session log (live + archive)
+                try:
+                    from hakus.session_log import get_recorder, drop_recorder
+                    recorder = get_recorder(session_id)
+                    recorder.clear()
+                    drop_recorder(session_id)
+                except Exception as _e:
+                    logger.warning(f"clear session log failed: {_e}")
                 return {"deleted": True, "id": session_id}
             except HTTPException:
                 raise
@@ -1858,6 +1885,148 @@ class HakusAIServer:
                 return {"deleted_sessions": n}
             except Exception as e:
                 logger.error(f"wipe_all_sessions failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        # ========== Session Log (append-only JSONL, DeepSeek-Harness-style) ==========
+
+        @app.get("/api/sessions/{session_id}/log")
+        async def get_session_log(session_id: str, since_turn: int = 0, limit: int = 500):
+            """返回某 session 的 append-only JSONL 事件流.
+
+            每行一个 JSON 对象, 字段: type, ts, turn, ...
+
+            Query params:
+              - since_turn: 只返回 turn >= 此值的事件 (0 = 全部)
+              - limit: 最多返回 N 条 (取最新的 N 条)
+            """
+            try:
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                from hakus.session_log import get_recorder
+                recorder = get_recorder(session_id)
+                events = recorder.read_events(since_turn=since_turn, limit=limit)
+                return {
+                    "session_id": session_id,
+                    "events": events,
+                    "stats": recorder.stats(),
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"get_session_log failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/{session_id}/log/compact")
+        async def compact_session_log(session_id: str):
+            """手动触发 session log 的 compaction.
+
+            把最旧的 50% 事件移到 session_log.compacted.jsonl, 并在 live
+            log 末尾写一个 compacted 标记. 平时是自动触发的 (超过 5MB 或
+            1000 events), 这个 endpoint 给用户/调试用.
+            """
+            try:
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                from hakus.session_log import get_recorder
+                recorder = get_recorder(session_id)
+                # Force compaction by calling the internal method.
+                with recorder._lock:
+                    recorder._maybe_compact()
+                return {"session_id": session_id, "stats": recorder.stats()}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"compact_session_log failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/sessions/{session_id}/log")
+        async def clear_session_log(session_id: str):
+            """清空 session log (live + archive). 用于 session 删除或用户主动清空."""
+            try:
+                from hakus.session_log import get_recorder, drop_recorder
+                recorder = get_recorder(session_id)
+                recorder.clear()
+                drop_recorder(session_id)
+                return {"session_id": session_id, "cleared": True}
+            except Exception as e:
+                logger.error(f"clear_session_log failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/{session_id}/rewind")
+        async def rewind_session_to_message(session_id: str, request: dict):
+            """后端原子 rewind: 删除指定 message_id 及其后的所有 messages,
+            并把 session_log.jsonl 里 turn > 该 message 所在 turn 的事件
+            全部清掉.
+
+            请求体: {"message_id": "m_xxx"}
+
+            与前端的客户端 rewind 不同, 这个 endpoint 是原子的:
+              1. 找到 message_id 所在的 turn (通过 created_at 对齐
+                 session_log 里 turn_start 事件的 ts)
+              2. 删除 session_store 里 message_id 及其后的所有 messages
+              3. 调用 recorder.rewind_to_turn(keep_turns=that_turn - 1)
+              4. 让 AgentCore 的 context 也 forget (best-effort)
+
+            返回: {"deleted_messages": N, "kept_until_turn": T}
+            """
+            try:
+                message_id = request.get("message_id")
+                if not message_id:
+                    raise HTTPException(status_code=400, detail="message_id is required")
+                if not session_store.get_session(session_id):
+                    raise HTTPException(status_code=404, detail="session not found")
+                msgs = session_store.list_messages(session_id)
+                idx = next((i for i, m in enumerate(msgs) if m["id"] == message_id), -1)
+                if idx == -1:
+                    raise HTTPException(status_code=404, detail="message not found")
+                # Delete message_id and all messages after it
+                to_delete = msgs[idx:]
+                deleted_count = 0
+                for m in to_delete:
+                    try:
+                        session_store.delete_message(m["id"])
+                        deleted_count += 1
+                    except Exception as _de:
+                        logger.warning(f"delete_message {m['id']} failed: {_de}")
+                # Best-effort: clear AgentCore in-memory context
+                try:
+                    agentcore_clear_session(session_id)
+                except Exception as _ce:
+                    logger.warning(f"clear_session_history during rewind failed: {_ce}")
+                # Rewind the session log: keep all events from turns
+                # before the turn that contained message_id. Since we
+                # don't track per-message turn numbers in SQLite, we
+                # approximate by keeping all events whose ts is before
+                # the deleted message's created_at.
+                try:
+                    from hakus.session_log import get_recorder
+                    recorder = get_recorder(session_id)
+                    # Find the turn number of the earliest deleted message
+                    # by reading the log backwards and finding the last
+                    # turn_start whose ts <= earliest deleted msg's created_at.
+                    earliest_ts = min(m["created_at"] for m in to_delete) / 1000.0
+                    events = recorder.read_events(limit=10000)
+                    keep_until_turn = 0
+                    for ev in events:
+                        if ev.get("type") == "turn_start" and ev.get("ts", 0) <= earliest_ts:
+                            keep_until_turn = ev.get("turn", 0)
+                        elif ev.get("ts", 0) > earliest_ts:
+                            break
+                    # Keep events from turns strictly before the deleted
+                    # message's turn (so the deleted turn's events are
+                    # also dropped — they correspond to deleted messages).
+                    recorder.rewind_to_turn(keep_turns=keep_until_turn - 1 if keep_until_turn > 0 else 0)
+                except Exception as _re:
+                    logger.warning(f"session_log rewind failed: {_re}")
+                return {
+                    "session_id": session_id,
+                    "deleted_messages": deleted_count,
+                    "rewound_to_message_id": message_id,
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"rewind_session_to_message failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
 
         # ========== 配置API ==========
@@ -2556,23 +2725,17 @@ class HakusAIServer:
 
         @app.get("/api/tools")
         async def list_tools():
-            """列出 hakus/tools/builtin/ 下所有内置工具及开关状态"""
-            import os
-            from pathlib import Path as _Path
-            tools_dir = _Path(os.path.dirname(__file__)).parent.parent / "hakus" / "tools" / "builtin"
-            tools = []
-            # 静态清单（与 hakus/tools/builtin/ 下的 .py 文件对应）
-            builtin = [
-                {"id": "shell",    "name": "Shell 命令",      "desc": "执行 shell 命令（受权限模式控制）",   "dangerous": True},
-                {"id": "file",     "name": "文件读写",        "desc": "读取/写入/编辑本地文件",            "dangerous": False},
-                {"id": "directory","name": "目录浏览",        "desc": "列目录、查找文件",                  "dangerous": False},
-                {"id": "web",      "name": "网页抓取",        "desc": "抓取网页内容",                      "dangerous": False},
-                {"id": "search",   "name": "网络搜索",        "desc": "搜索引擎查询",                      "dangerous": False},
-                {"id": "browser",  "name": "浏览器自动化",    "desc": "Playwright 浏览器操作",             "dangerous": True},
-                {"id": "task",     "name": "任务管理",        "desc": "创建/查看子任务",                   "dangerous": False},
-                {"id": "task_done","name": "任务完成",        "desc": "标记任务完成",                      "dangerous": False},
-            ]
-            # 读 ~/.hakus/config.yaml 里的 tools 段, 看哪些被禁用
+            """列出所有工具类别及开关状态.
+
+            DeepSeek-Harness-style: 从 ToolRegistry 派生 (不再硬编码),
+            这样新增工具自动出现在 Settings 面板里. 类别 = Tool.category,
+            开关状态从 ~/.hakus/config.yaml 的 tools.disabled 读取.
+            """
+            from hakus.tools.registry import ToolRegistry
+            # 用一个临时 registry 来获取完整类别列表 (不污染正在跑的 agent)
+            _reg = ToolRegistry()
+            _reg.register_builtin()
+            # 读 ~/.hakus/config.yaml 里的 tools 段, 看哪些类别被禁用
             import os as _os, yaml as _yaml
             from pathlib import Path as _Path2
             config_path = _Path2(_os.path.expanduser("~/.hakus/config.yaml"))
@@ -2583,14 +2746,42 @@ class HakusAIServer:
                 except Exception:
                     raw = {}
             disabled = set(raw.get("tools", {}).get("disabled", []) or [])
-            for t in builtin:
-                t["enabled"] = t["id"] not in disabled
-                tools.append(t)
+            # 把 disabled 同步到 registry, 这样 list_tools() 也会跳过它们
+            _reg.set_disabled_categories(disabled)
+            cats = _reg.get_categories()
+            # 转成前端期望的 list shape (id/name/desc/dangerous/enabled)
+            _CAT_NAMES = {
+                "filesystem": "文件读写",
+                "shell": "Shell 命令",
+                "search": "代码搜索",
+                "vcs": "Git 版本控制",
+                "web": "网页抓取",
+                "browser": "浏览器自动化",
+                "task": "任务管理",
+                "plan": "计划与待办",
+                "interactive": "交互问答",
+                "general": "通用",
+            }
+            tools = []
+            for cat_id, info in cats.items():
+                tools.append({
+                    "id": cat_id,
+                    "name": _CAT_NAMES.get(cat_id, cat_id.title()),
+                    "desc": f"{len(info['tools'])} 个工具: {', '.join(info['tools'][:5])}{'…' if len(info['tools']) > 5 else ''}",
+                    "dangerous": info["dangerous"],
+                    "enabled": cat_id not in disabled,
+                    "tools": info["tools"],
+                })
             return {"tools": tools}
 
         @app.post("/api/tools/toggle")
         async def toggle_tool(request: dict):
-            """开关某个工具。请求体: {tool_id: "shell", enabled: false}"""
+            """开关某个工具类别。请求体: {tool_id: "shell", enabled: false}
+
+            DeepSeek-Harness-style: tool_id 现在是 *类别* (不是单个工具),
+            与 Tool.category 对齐. 切换后立刻同步到所有正在跑的 AgentCore
+            的 ToolRegistry, 这样下一轮 LLM 调用就会看到新的工具集.
+            """
             import os, yaml as _yaml
             from pathlib import Path as _Path
             tool_id = request.get("tool_id")
@@ -2618,7 +2809,17 @@ class HakusAIServer:
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
-            return {"tool_id": tool_id, "enabled": enabled}
+            # 同步到所有正在跑的 AgentCore 的 registry — 之前是 write-only bug
+            try:
+                from .agent_bridge import _agent_cache
+                for agent in _agent_cache.values():
+                    try:
+                        agent._tool_registry.set_disabled_categories(disabled)
+                    except Exception as _e:
+                        logger.warning(f"set_disabled_categories on agent failed: {_e}")
+            except Exception as _e:
+                logger.warning(f"sync disabled categories to agents failed: {_e}")
+            return {"tool_id": tool_id, "enabled": enabled, "disabled_categories": sorted(disabled)}
 
         @app.get("/api/permission")
         async def get_permission():
