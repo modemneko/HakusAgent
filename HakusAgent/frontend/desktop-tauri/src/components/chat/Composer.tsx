@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import {
-  AlertTriangle,
   AtSign,
   Bot,
   Brain,
@@ -62,6 +61,7 @@ import { cn, generateId } from '@/lib/utils'
 import type { ConversationState } from '@/lib/voiceConversation'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
+import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
@@ -365,6 +365,15 @@ export function Composer({
   const setActiveProject = useProjectsStore((s) => s.setActive)
   const createProject = useProjectsStore((s) => s.create)
   const removeProject = useProjectsStore((s) => s.remove)
+  // Lock project switching once the current session has any messages.
+  // The agent's context (cwd, file scope, fleet sub_dirs) is bound to
+  // the project at turn-start; switching mid-conversation would silently
+  // desync the backend's working directory from what the user sees.
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const sessionMessages = useSessionStore((s) =>
+    s.activeSessionId ? s.messages[s.activeSessionId] : undefined,
+  )
+  const projectLocked = !!activeSessionId && (sessionMessages?.length ?? 0) > 0
   const [projectSearch, setProjectSearch] = useState('')
   const [creatingProject, setCreatingProject] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -953,11 +962,9 @@ export function Composer({
                 </div>
               )}
               {isStreaming && !taskProgress && (
-                <div className={cn("flex items-center gap-2 text-xs", elapsed >= 60 ? "text-amber-500" : "text-muted-foreground")}>
-                  {elapsed >= 60 ? <AlertTriangle className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   <span>Working {formatTime(elapsed)}</span>
-                  {elapsed >= 30 && elapsed < 60 && <span className="text-muted-foreground/80">Taking longer than usual</span>}
-                  {elapsed >= 60 && <span className="font-medium">Consider stopping and retrying</span>}
                 </div>
               )}
             </div>
@@ -1107,6 +1114,10 @@ export function Composer({
                             tabIndex={-1}
                             onClick={() => {
                               if (isConfirming) return
+                              if (projectLocked) {
+                                toast.info('当前会话已有对话，无法切换项目。请新建会话后再切换。')
+                                return
+                              }
                               setActiveProject(p.id)
                             }}
                             className={cn(
@@ -1177,7 +1188,12 @@ export function Composer({
                       })}
                   </div>
                   <DropdownMenuSeparator />
-                  {/* New project — opens folder picker */}
+                  {/* New project — opens folder picker.
+                      Allowed even when projectLocked, because creating
+                      a project doesn't switch the active one. But the
+                      auto-setActiveProject(created.id) at the end is
+                      gated — newly created project just joins the list,
+                      user can switch to it in a fresh session. */}
                   <DropdownMenuItem
                     onClick={async () => {
                       if (creatingProject) return
@@ -1187,8 +1203,12 @@ export function Composer({
                         if (!folder) return
                         const name = folder.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
                         const created = await createProject({ name, path: folder })
-                        setActiveProject(created.id)
-                        toast.success(`已添加项目：${created.name}`)
+                        if (!projectLocked) {
+                          setActiveProject(created.id)
+                          toast.success(`已添加并切换到项目：${created.name}`)
+                        } else {
+                          toast.success(`已添加项目：${created.name}（当前会话已锁定，请新建会话后切换）`)
+                        }
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : String(e)
                         toast.error(`新建项目失败：${msg}`)
@@ -1206,9 +1226,17 @@ export function Composer({
                     )}
                     <span className="text-sm font-medium">新建项目</span>
                   </DropdownMenuItem>
-                  {/* Not working in a project */}
+                  {/* Not working in a project — clears the active project.
+                      Locked when the session already has messages. */}
                   <DropdownMenuItem
-                    onClick={() => setActiveProject(null)}
+                    onClick={() => {
+                      if (projectLocked) {
+                        toast.info('当前会话已有对话，无法切换项目。请新建会话后再切换。')
+                        return
+                      }
+                      setActiveProject(null)
+                    }}
+                    disabled={projectLocked}
                     className="gap-2 py-2"
                   >
                     <X className={cn('h-4 w-4 shrink-0', !activeProjectId ? 'text-primary' : 'text-muted-foreground')} />

@@ -23,11 +23,13 @@ import {
   X,
   Loader2,
   AlertCircle,
+  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { useProjectsStore } from '@/store/projects'
+import { useSessionStore } from '@/store/session'
 import { useToast } from '@/components/ui/toast'
 import { pickFolder } from '@/api/tauriBridge'
 import { cn } from '@/lib/utils'
@@ -44,6 +46,15 @@ export function ProjectsPanel() {
   const togglePinned = useProjectsStore((s) => s.togglePinned)
   const remove = useProjectsStore((s) => s.remove)
   const toast = useToast()
+  // Lock project switching once the current session has any messages.
+  // The agent's context (cwd, file scope, fleet sub_dirs) is bound to
+  // the project at turn-start; switching mid-conversation would silently
+  // desync the backend's working directory from what the user sees.
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const sessionMessages = useSessionStore((s) =>
+    s.activeSessionId ? s.messages[s.activeSessionId] : undefined,
+  )
+  const projectLocked = !!activeSessionId && (sessionMessages?.length ?? 0) > 0
 
   const [adding, setAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -125,6 +136,15 @@ export function ProjectsPanel() {
           项目是磁盘上的一个文件夹。注册后，AI 在该文件夹内执行 read / write / bash
           等操作时不需要再拼绝对路径。移除项目只删除注册表条目，不会动磁盘上的文件夹。
         </p>
+        {projectLocked && (
+          <p className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+            <Lock className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              当前会话已有对话，项目已锁定无法切换。AI 的工作目录在会话开始时绑定，
+              中途切换会导致上下文错乱。请新建会话后再切换项目。
+            </span>
+          </p>
+        )}
       </div>
 
       <Separator />
@@ -319,15 +339,29 @@ export function ProjectsPanel() {
               )}
 
               {/* "Set as current" button — only shown if this project is
-                  not already the active one. Lets the user switch project
-                  from Settings without having to go back to the Composer. */}
+                  not already the active one. Locked when the current
+                  session already has messages, because the agent's
+                  working directory is bound at turn-start. */}
               {!isEditing && !isConfirming && !isActive && (
-                <button
-                  onClick={() => setActive(p.id)}
-                  className="mt-2 text-[11px] text-primary transition-colors hover:text-primary/80"
-                >
-                  设为当前项目
-                </button>
+                projectLocked ? (
+                  <button
+                    type="button"
+                    disabled
+                    title="当前会话已有对话，无法切换项目。请新建会话后再切换。"
+                    className="mt-2 cursor-not-allowed text-[11px] text-muted-foreground/60"
+                  >
+                    <Lock className="mr-1 inline h-3 w-3" />
+                    会话进行中，无法切换
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setActive(p.id)}
+                    className="mt-2 text-[11px] text-primary transition-colors hover:text-primary/80"
+                  >
+                    设为当前项目
+                  </button>
+                )
               )}
             </div>
           )
