@@ -2,6 +2,9 @@
 # Local sidecar test venv (do not commit)
 .venv-sidecar-test/
 
+# Stray scratch/experiment dirs (not part of project)
+frontier-swe/
+
 # Local PyInstaller build artifacts (CI rebuilds these)
 frontend/client/sidecar/build/
 frontend/client/sidecar/build-debug/

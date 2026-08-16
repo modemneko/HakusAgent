@@ -584,6 +584,8 @@ export function ChatView() {
                 completed: (event as any).fleet_result.completed || 0,
                 failed: (event as any).fleet_result.failed || 0,
                 reviewer_approved: (event as any).fleet_result.reviewer_approved ?? null,
+                reviewer_summary: (event as any).fleet_result.reviewer_summary || '',
+                reviewer_issues: (event as any).fleet_result.reviewer_issues || [],
                 experts: (event as any).fleet_result.experts || [],
               }
             : undefined,

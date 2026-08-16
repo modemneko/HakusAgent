@@ -709,6 +709,23 @@ export interface FleetExpert {
 }
 
 /**
+ * One issue flagged by the Reviewer. Mirrors the dict shape emitted by
+ * `FleetOrchestrator._review_experts`:
+ *   {expert_id, severity, fix_hint?}
+ *
+ * `severity` is a free-form string from the LLM ("high"/"medium"/"low" in
+ * practice). `fix_hint` is the suggested remedy the user can one-click
+ * inject into a counterfactual re-run.
+ */
+export interface ReviewerIssue {
+  expert_id: string
+  severity: string
+  fix_hint?: string
+  /** Free-form issue description (optional — some reviewer prompts emit it). */
+  description?: string
+}
+
+/**
  * The full fleet run payload, attached to the assistant ChatMessage when
  * agentMode === 'fleet'. Surfaced via the `fleet_result` field on the
  * `turn_completed` event from the SSE stream.
@@ -721,6 +738,10 @@ export interface FleetRunAttachment {
   failed: number
   /** Reviewer gate outcome (null if reviewer hasn't run yet). */
   reviewer_approved: boolean | null
+  /** Reviewer's one-line summary (empty if reviewer hasn't run). */
+  reviewer_summary?: string
+  /** Per-expert issues flagged by the reviewer. Empty if approved or not run. */
+  reviewer_issues?: ReviewerIssue[]
   experts: FleetExpert[]
 }
 

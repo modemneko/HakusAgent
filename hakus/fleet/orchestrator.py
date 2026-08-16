@@ -973,6 +973,10 @@ class FleetOrchestrator:
                 "completed": result.completed,
                 "failed": result.failed,
                 "reviewer_approved": result.reviewer_approved,
+                # Surface reviewer issues so the frontend can render
+                # per-expert fix hints and offer one-click rerun.
+                "reviewer_summary": result.reviewer_summary,
+                "reviewer_issues": result.reviewer_issues,
                 "experts": result.expert_results,
                 "run_id": run_id,
             },
