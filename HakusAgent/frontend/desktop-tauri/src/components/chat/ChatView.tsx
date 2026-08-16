@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2 } from 'lucide-react'
+import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2, Rocket, GitPullRequest, Compass, Bug } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
@@ -280,6 +280,15 @@ export function ChatView() {
           text,
           session?.remote_session_id || sessionId,
           (chunk, event) => {
+            // Defensive guard: if the stream has been aborted by rewind
+            // or stop, streamingLogId[session] is null and assistantMsgId
+            // has been (or will be) removed from the store. Drop any
+            // in-flight buffered SSE chunks so they don't leak into a
+            // half-removed message or get fed to TTS after the user
+            // already cancelled.
+            const currentLogId = useSessionStore.getState().streamingLogId[sessionId]
+            if (!currentLogId || currentLogId !== assistantMsgId) return
+
             if (event) {
               handleAgentEvent(event, sessionId)
               return
@@ -313,18 +322,28 @@ export function ChatView() {
         void persistMessage(sessionId, assistantMsgId)
       } catch (e: any) {
         if (e?.name === 'AbortError') {
-          updateMessage(sessionId, assistantMsgId, {
-            streaming: false,
-            content: (useSessionStore.getState().messages[sessionId]?.find((m) => m.id === assistantMsgId)?.content || '') + '\\n\\n_Stopped_',
-          })
+          // Only append "_Stopped_" if the assistant message still
+          // exists in the store. If rewind already removed it, the
+          // updateMessage call below is a no-op — and we should NOT
+          // synthesize a stale "_Stopped_" tail that the user never
+          // asked for.
+          const stillExists = !!useSessionStore.getState().messages[sessionId]?.find((m) => m.id === assistantMsgId)
+          if (stillExists) {
+            const currentContent = useSessionStore.getState().messages[sessionId]?.find((m) => m.id === assistantMsgId)?.content || ''
+            updateMessage(sessionId, assistantMsgId, {
+              streaming: false,
+              content: currentContent + '\\n\\n_Stopped_',
+            })
+            void persistMessage(sessionId, assistantMsgId)
+          }
         } else {
           const msg = e instanceof HakusAIError ? e.message : 'Failed to send message'
           updateMessage(sessionId, assistantMsgId, {
             error: msg,
             streaming: false,
           })
+          void persistMessage(sessionId, assistantMsgId)
         }
-        void persistMessage(sessionId, assistantMsgId)
       } finally {
         stopStreamingLog(sessionId)
         setStreaming(false)
@@ -849,35 +868,10 @@ export function ChatView() {
         />
         <div ref={scrollRef} className="h-full overflow-y-auto">
         {activeMessages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-base font-semibold">
-                要在 {activeProject ? activeProject.name : '当前目录'} 内开发什么?
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                构建新功能、审查代码、探索代码库，或修复问题。
-              </p>
-            </div>
-            <div className="flex max-w-md flex-wrap items-center justify-center gap-2">
-              {[
-                '构建新功能、应用或工具',
-                '审查代码并提出修改建议',
-                '探索并理解代码工具',
-                '修复问题和失败',
-              ].map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => setComposerDraft(prompt)}
-                  className="rounded-full border border-border/60 bg-card/60 px-3 py-1.5 text-xs text-foreground/90 backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
+          <EmptyStateHero
+            projectName={activeProject ? activeProject.name : '当前目录'}
+            onPick={(prompt) => setComposerDraft(prompt)}
+          />
         ) : (
           <div className="mx-auto max-w-3xl py-6">
             {buildTimeline(activeMessages).map((item, idx, arr) => {
@@ -923,6 +917,92 @@ export function ChatView() {
         onToggleVoiceCall={handleToggleVoiceCall}
         conversationState={conversationState}
       />
+    </div>
+  )
+}
+
+// =============================================================================
+// EmptyStateHero — 助手式问候语 + 方形快捷入口卡片
+// -----------------------------------------------------------------------------
+// 设计要点：
+// 1. 标题改成「问候式」语气（你好，我是 HakusAI），更像助手打招呼。
+// 2. 4 个入口从「长条形胶囊」改成「正方形卡片」：图标在顶部、文字在下方，
+//    水平并列摆放（flex-row + gap），整体居中。
+// 3. 容器变窄时自动隐藏放不下的卡片（ResizeObserver 测量 + slice），避免挤压换行。
+// =============================================================================
+interface StarterCard {
+  icon: typeof Rocket
+  label: string
+  prompt: string
+}
+
+const STARTER_CARDS: StarterCard[] = [
+  { icon: Rocket, label: '构建新功能', prompt: '帮我构建一个新功能、应用或工具' },
+  { icon: GitPullRequest, label: '审查代码', prompt: '请审查代码并提出修改建议' },
+  { icon: Compass, label: '探索代码库', prompt: '探索并理解这个代码库的整体结构' },
+  { icon: Bug, label: '修复问题', prompt: '帮我修复一个 bug 或失败的测试' },
+]
+
+// 单张卡片固定宽度（与下方 w-32 = 8rem = 128px 对齐）+ gap-3 = 12px
+const CARD_W = 128
+const CARD_GAP = 12
+
+function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: (prompt: string) => void }) {
+  // 测量容器宽度，决定能放下几张卡片（最少 1 张，最多 4 张）。
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [visibleCount, setVisibleCount] = useState(4)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const update = () => {
+      const w = el.clientWidth
+      // 能放 n 张需要：n * CARD_W + (n-1) * CARD_GAP
+      const n = Math.floor((w + CARD_GAP) / (CARD_W + CARD_GAP))
+      setVisibleCount(Math.max(1, Math.min(STARTER_CARDS.length, n)))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+        <Sparkles className="h-5 w-5" />
+      </div>
+      <div>
+        <p className="text-base font-semibold">
+          你好，我是 HakusAI
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          准备好在 <span className="font-medium text-foreground/80">{projectName}</span> 里开工了。构建新功能、审查代码、探索代码库，或修复问题 —— 选一个开始吧。
+        </p>
+      </div>
+      {/* ref 容器只用来测宽，本身不可见；内层 flex 真正承载卡片 */}
+      <div ref={containerRef} className="w-full max-w-xl">
+        <div className="flex justify-center gap-3">
+          {STARTER_CARDS.slice(0, visibleCount).map((card) => {
+            const Icon = card.icon
+            return (
+              <button
+                key={card.label}
+                onClick={() => onPick(card.prompt)}
+                title={card.prompt}
+                className="group flex w-32 aspect-square flex-col items-start gap-2 rounded-xl border border-border/60 bg-card/60 p-3 text-left backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="text-xs font-medium leading-tight text-foreground/90">
+                  {card.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
