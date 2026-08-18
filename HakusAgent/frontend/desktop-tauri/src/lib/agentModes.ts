@@ -69,7 +69,7 @@ export const AGENT_MODE_META: Record<AgentMode, AgentModeMeta> = {
   fleet: {
     id: 'fleet',
     label: 'Fleet',
-    summary: '(已下线) 多专家并行探索。后端代码保留，UI 隐藏。',
+    summary: '(已下线)',
     reasoningEffort: 'high',
   },
 }
@@ -111,9 +111,6 @@ export function getModeToolSummary(mode: AgentMode): string {
   }
   if (mode === 'deep') {
     return '全能力：Work 全部 + 浏览器 + subagent + 高级编辑'
-  }
-  if (mode === 'fleet') {
-    return '(已下线)'
   }
   return ''
 }

@@ -1443,61 +1443,6 @@ export class HakusAIClient {
       await this._throwForResponse(res, `${this.baseUrl}/api/projects/${projectId}`, 'Delete project failed')
     }
   }
-
-  // ============ Fleet CTDE v2 — expert roster + counterfactual rerun ============
-
-  /**
-   * Fetch the current expert roster for a fleet run. Useful for refreshing
-   * the right-panel "fleet" tab after a re-run or while a run is in flight.
-   */
-  async getFleetRun(runId: string): Promise<{
-    run_id: string
-    session_id: string
-    workspace_dir: string
-    experts: import('./types').FleetExpert[]
-    expert_specs: any[]
-  }> {
-    const res = await this.fetchWithHardTimeout(
-      `${this.baseUrl}/api/fleet/runs/${encodeURIComponent(runId)}`,
-      {},
-      8000,
-    )
-    if (!res.ok) {
-      await this._throwForResponse(res, `${this.baseUrl}/api/fleet/runs/${runId}`, 'Get fleet run failed')
-    }
-    return res.json()
-  }
-
-  /**
-   * Counterfactually re-run a single expert. The server keeps all other
-   * experts' outputs unchanged and only re-executes the one identified by
-   * `expertId`, optionally injecting `fixHint` into its task description.
-   *
-   * Returns the updated expert + the full new roster.
-   */
-  async rerunFleetExpert(
-    runId: string,
-    expertId: string,
-    fixHint?: string,
-  ): Promise<{
-    run_id: string
-    expert: import('./types').FleetExpert
-    experts: import('./types').FleetExpert[]
-  }> {
-    const res = await this.fetchWithHardTimeout(
-      `${this.baseUrl}/api/fleet/runs/${encodeURIComponent(runId)}/experts/${encodeURIComponent(expertId)}/rerun`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fix_hint: fixHint || null }),
-      },
-      300000, // 5 min — experts can take a while
-    )
-    if (!res.ok) {
-      await this._throwForResponse(res, `${this.baseUrl}/api/fleet/runs/${runId}/experts/${expertId}/rerun`, 'Rerun expert failed')
-    }
-    return res.json()
-  }
 }
 
 // Singleton — but settings store can call setBaseUrl() to reconfigure

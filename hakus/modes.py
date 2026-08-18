@@ -22,20 +22,18 @@ Mode mapping (internal id → user-facing label):
   - deep  → "Code"  — full coding agent. Everything Work has, plus
     browser, subagents, str_replace_editor advanced flows.
 
-Fleet mode was removed from the UI (2026-08-18) but the backend
-orchestrator code is preserved for potential future revival. The
-FLEET_MODE constant and its routing branch in agent_bridge.py are
-kept so old session_log replays still parse.
+Fleet mode was removed (2026-08-18) — backend orchestrator code
+and /api/fleet endpoints deleted. New parallel-exploration
+feature will be re-designed from scratch.
 """
 from __future__ import annotations
 
 from typing import Final, FrozenSet, Literal, get_args
 
-RunMode = Literal["swift", "deep", "fleet"]
+RunMode = Literal["swift", "deep"]
 
 SWIFT_MODE: Final[RunMode] = "swift"
 DEEP_MODE: Final[RunMode] = "deep"
-FLEET_MODE: Final[RunMode] = "fleet"  # kept for backward compat; UI hidden
 
 # User-facing aliases. The frontend displays "Work" / "Code" but the
 # wire format and persisted session_log use the internal ids so old
@@ -44,8 +42,6 @@ WORK_MODE: Final[RunMode] = SWIFT_MODE
 CODE_MODE: Final[RunMode] = DEEP_MODE
 
 RUN_MODES: Final[tuple[RunMode, ...]] = get_args(RunMode)
-# Modes actually selectable from the UI. Fleet is hidden but still
-# valid for replay/normalization purposes.
 UI_RUN_MODES: Final[tuple[RunMode, ...]] = (SWIFT_MODE, DEEP_MODE)
 DEFAULT_RUN_MODE: Final[RunMode] = SWIFT_MODE
 
@@ -84,7 +80,6 @@ MODE_ALLOWED_CATEGORIES: Final[dict[RunMode, FrozenSet[str] | None]] = {
         "general",
     }),
     DEEP_MODE: None,    # no restriction — Code = full power
-    FLEET_MODE: None,   # legacy; fleet path does its own routing
 }
 
 # Categories fully blocked per mode. Work blocks browser (heavy, rarely
@@ -92,7 +87,6 @@ MODE_ALLOWED_CATEGORIES: Final[dict[RunMode, FrozenSet[str] | None]] = {
 MODE_BLOCKED_CATEGORIES: Final[dict[RunMode, FrozenSet[str]]] = {
     SWIFT_MODE: frozenset({"browser"}),
     DEEP_MODE: frozenset(),
-    FLEET_MODE: frozenset(),
 }
 
 # Tools tagged 'code-only' are excluded from Work mode even if their
@@ -104,9 +98,10 @@ WORK_EXCLUDED_TAGS: Final[FrozenSet[str]] = frozenset({CODE_ONLY_TAG})
 
 
 def normalize_run_mode(value: str | None, *, default: RunMode = DEFAULT_RUN_MODE) -> RunMode:
-    """Normalize a run_mode string. Accepts internal ids (swift/deep/fleet)
+    """Normalize a run_mode string. Accepts internal ids (swift/deep)
     and user-facing aliases (work/code, case-insensitive). Unknown values
-    fall back to the default."""
+    fall back to the default. 'fleet' is also accepted for backward
+    compat with old session_log entries — it normalizes to swift."""
     if not value:
         return default
     normalized = value.strip().lower()
@@ -115,13 +110,19 @@ def normalize_run_mode(value: str | None, *, default: RunMode = DEFAULT_RUN_MODE
         return SWIFT_MODE
     if normalized == "code":
         return DEEP_MODE
+    # Legacy: 'fleet' was removed but old logs may reference it.
+    # Normalize to swift so old session_log replays still load.
+    if normalized == "fleet":
+        return SWIFT_MODE
     if normalized in RUN_MODES:
         return normalized  # type: ignore[return-value]
     return default
 
 
 def is_run_mode(value: str | None) -> bool:
-    return bool(value and value.strip().lower() in (*RUN_MODES, "work", "code"))
+    # 'fleet' is accepted for backward compat with old logs; normalize_run_mode
+    # will map it to swift.
+    return bool(value and value.strip().lower() in (*RUN_MODES, "work", "code", "fleet"))
 
 
 def mode_allowed_categories(mode: RunMode) -> FrozenSet[str] | None:

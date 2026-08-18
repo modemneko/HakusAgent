@@ -63,8 +63,10 @@ SIDECAR_API_VERSION_INT = 12  # 整数版本，便于客户端比较
 #            failed/cancelled. Auto-compacts at 5MB / 1000 events.
 #            Endpoints: GET /api/sessions/{id}/log,
 #            POST /api/sessions/{id}/log/compact, DELETE /api/sessions/{id}/log
-#          - Mode → allowed_tools whitelist (swift = read-only, deep = all,
-#            fleet = all). Enforced both in schema building (LLM never
+#          - Mode → allowed_tools whitelist (swift = read-only + chat +
+#            shell + filesystem write, deep = full power; blocked by tag),
+#            fleet was retired 2026-08-18). Enforced both in schema
+#            building (LLM never
 #            sees disallowed tools) and at tool-call dispatch (defensive).
 #          - Tool registry refactor: Tool.category is now a first-class
 #            class attribute. ToolRegistry.list_by_category/list_by_tag/
@@ -76,9 +78,9 @@ SIDECAR_API_VERSION_INT = 12  # 整数版本，便于客户端比较
 #            deletes message_id + all subsequent messages AND truncates
 #            the session log to the corresponding turn boundary.
 # v0.11.0: + Fleet CTDE v2 — Planner + parallel Workers (sub_dir-scoped)
-#          + Reviewer gate + counterfactual expert re-run
-#          (/api/fleet/runs/{run_id} GET, /api/fleet/runs/{run_id}/experts/
-#          {expert_id}/rerun POST). Rich orchestrator_phase_changed +
+#          + Reviewer gate + counterfactual expert re-run (RETIRED
+#          2026-08-18 — backend code + /api/fleet endpoints removed).
+#          Rich orchestrator_phase_changed +
 #          task_progress events over SSE so the frontend can render the
 #          expert roster and reviewer outcome live.
 # v0.10.0: + Project management (/api/projects CRUD) + ChatRequest.project_id
@@ -133,7 +135,7 @@ class ChatRequest(BaseModel):
     # the user switch providers from the TopBar dropdown mid-session.
     # If None, falls back to config.yaml's models.default_model.
     provider: Optional[str] = None
-    # Per-request run mode override: "swift", "deep", or "fleet".
+    # Per-request run mode override: "swift" or "deep".
     run_mode: Optional[str] = None
     # Per-request reasoning effort override (DeepSeek thinking mode).
     # Accepts "low" / "high" / "max" / None. None = model default.
@@ -2649,56 +2651,6 @@ class HakusAIServer:
             if not ok:
                 raise HTTPException(status_code=404, detail="project not found")
             return {"deleted": True}
-
-        # ========== Fleet CTDE v2 — expert roster + counterfactual rerun ==========
-        #
-        # These endpoints let the frontend inspect a finished or in-flight
-        # Fleet run and counterfactually re-run a single expert (keeping
-        # all other expert outputs unchanged). The orchestrator lives in
-        # agent_bridge._FLEET_RUNS keyed by run_id.
-
-        @app.get("/api/fleet/runs/{run_id}")
-        async def get_fleet_run_endpoint(run_id: str):
-            """Return the current expert roster + reviewer outcome for a fleet run."""
-            from .agent_bridge import _get_fleet_run
-            entry = _get_fleet_run(run_id)
-            if entry is None:
-                raise HTTPException(status_code=404, detail=f"fleet run {run_id} not found or expired")
-            fleet = entry["fleet"]
-            return {
-                "run_id": run_id,
-                "session_id": entry.get("session_id", ""),
-                "workspace_dir": entry.get("workspace_dir", ""),
-                "experts": [s.to_dict() for s in fleet.all_expert_statuses()],
-                "expert_specs": [s.to_dict() for s in fleet.expert_specs],
-            }
-
-        @app.post("/api/fleet/runs/{run_id}/experts/{expert_id}/rerun")
-        async def rerun_fleet_expert_endpoint(run_id: str, expert_id: str, request: dict):
-            """Counterfactually re-run a single expert in a finished fleet run.
-
-            Body (all optional):
-                fix_hint: str  — extra instruction appended to the expert's task
-
-            Returns the updated expert status + the new full roster.
-            """
-            from .agent_bridge import _get_fleet_run
-            entry = _get_fleet_run(run_id)
-            if entry is None:
-                raise HTTPException(status_code=404, detail=f"fleet run {run_id} not found or expired")
-            fleet = entry["fleet"]
-            fix_hint = (request or {}).get("fix_hint")
-            try:
-                status = await fleet.rerun_expert(expert_id, fix_hint=fix_hint)
-            except ValueError as e:
-                raise HTTPException(status_code=404, detail=str(e))
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"rerun failed: {e}")
-            return {
-                "run_id": run_id,
-                "expert": status.to_dict(),
-                "experts": [s.to_dict() for s in fleet.all_expert_statuses()],
-            }
 
         # ========== 记忆系统扩展 API ==========
 
