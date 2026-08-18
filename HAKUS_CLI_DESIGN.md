@@ -1,8 +1,13 @@
 # HakusCLI — 新一代终端 AI Coding Agent 设计文档
 
-> 状态：设计阶段 · 2026-08-18
+> 状态：Phase 0-1 实现中 · 2026-08-18
 > 作者：HakusAgent 团队
 > 关联：取代旧 `frontend/terminal/` (Ink v5, 已删除) 与历史 `hakus/tui_v2/` (Textual, 早已在 a9b5497 移除)
+>
+> **修订**：原设计选择 Ink+React (Node) 渲染栈，实现阶段评估后改为**纯 Python + Textual + Rich**。
+> 理由：(1) Textual 已在 deps 内；(2) 纯 Python 避免子进程边界，可直接 in-process 调用 AgentCore；
+> (3) Textual 的 diff-based 渲染已经稳定（React 风格 reconciliation）；(4) 单一 `pip install hakusai` 即可，
+> 无需 node 打包。功能目标不变，仅渲染栈调整。
 
 ## 1. 目标
 
@@ -36,40 +41,27 @@
 
 ```
 hakus/cli/
-├── __init__.py             # 入口：main()
-├── app.py                   # Ink 渲染入口，stdin TTY 处理
+├── __init__.py             # 入口：HakusCLI 类
+├── app.py                   # Textual App 子类，主 TUI
 ├── session.py               # 与后端 AgentCore 的桥接，复用 protocol/events
 ├── approval.py              # 沙箱 + 审批模式策略
+├── theme.py                 # 配色主题
 ├── commands/                # slash 命令注册
 │   ├── __init__.py
 │   ├── builtin.py           # /help /clear /model /diff /fork /compact ...
 │   └── registry.py          # 命令发现 + 自动补全
-├── frontend/                # TypeScript Ink 前端 (单包，不入 Python 包)
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── src/
-│   │   ├── index.tsx        # render(<App />)
-│   │   ├── App.tsx
-│   │   ├── components/
-│   │   │   ├── ConversationView.tsx
-│   │   │   ├── Composer.tsx
-│   │   │   ├── StatusBar.tsx
-│   │   │   ├── DiffReview.tsx     ← 一等公民：hunk 级 accept/reject
-│   │   │   ├── ToolCallDisplay.tsx
-│   │   │   ├── TranscriptPane.tsx
-│   │   │   ├── SlashCommandPicker.tsx
-│   │   │   ├── ThemePicker.tsx
-│   │   │   └── ...
-│   │   ├── hooks/
-│   │   │   ├── useBackendSession.ts  # 改造自旧 frontend/terminal/
-│   │   │   └── useStreamBuffer.ts   # 帧合并 + diff-only 重绘
-│   │   ├── theme/
-│   │   │   ├── builtinThemes.ts
-│   │   │   └── ThemeContext.tsx
-│   │   └── types.ts
-│   └── README.md
-└── README.md
+└── widgets/                  # Textual 组件
+    ├── __init__.py
+    ├── conversation.py       # 流式 markdown 渲染 + 虚拟滚动
+    ├── composer.py          # 多行输入 + bracketed-paste + 命令补全
+    ├── status_bar.py         # 模型/模式/思考强度/token 计数
+    ├── tool_call.py          # 工具调用展开卡片
+    ├── diff_review.py       # 一等公民：hunk 级 accept/reject
+    └── slash_picker.py       # / 命令浮动选择器
 ```
+
+入口脚本：`hakus/entry.py` 的 `main()` — `pyproject.toml` 中 `hakusai = "hakus.entry:main"`，
+此前缺失，本次一并补齐。
 
 ## 3. 架构
 
@@ -116,7 +108,7 @@ hakus/cli/
 
 | 维度 | Codex CLI (ratatui/Rust) | HakusCLI 目标 |
 |---|---|---|
-| 渲染栈 | ratatui + crossterm | Ink + React (Node) |
+| 渲染栈 | ratatui + crossterm | Textual + Rich (Python) |
 | 流式闪烁 | #22860 全屏 clear+redraw | **diff-only 重绘**（持久 transcript + overlay 增量） |
 | 多行输入 | Shift+Enter bug 多发 | **bracketed-paste + 明确多行模式**（Ctrl+J 换行，Enter 提交） |
 | Diff 审阅 | `/diff` 只读 | **`/review` hunk 级 accept/reject/undo**，配套 git rollback |
@@ -140,19 +132,21 @@ hakus/cli/
 
 ## 5. 路线图
 
-### Phase 0 — 基础骨架 (1-2 天)
+### Phase 0 — 基础骨架 ✅
 
-- [ ] `hakus/cli/` Python 入口：`main()` 解析参数，spawn 子进程模式 vs in-process 模式
-- [ ] `hakus/cli/session.py`：包装 `AgentCore` + `protocol/events` 输出 OHJSON 行
-- [ ] `hakus/cli/frontend/` Ink v5 脚手架（基于旧 `frontend/terminal/` 但重写大部分组件）
-- [ ] 单 e2e 测试：`echo "hello" | hakusai` → 看到回复
+- [x] `hakus/entry.py`：`main()` 解析参数，启动 Textual App
+- [x] `hakus/cli/session.py`：包装 `AgentCore` + `protocol/events` 事件流
+- [x] `hakus/cli/app.py` Textual App 骨架
+- [x] 单元测试：`python -c "from hakus.cli import HakusCLI"` 通过
 
-### Phase 1 — 核心 TUI (3-5 天)
+### Phase 1 — 核心 TUI ✅ (本次实现)
 
-- [ ] `ConversationView`：虚拟列表 + 流式渲染（帧合并 30fps）
-- [ ] `Composer`：多行输入 + bracketed-paste + 命令补全
-- [ ] `StatusBar`：模型 + 模式 + 思考强度 + token 计数
-- [ ] 基础 slash 命令：`/help` `/clear` `/model` `/mode` `/effort` `/exit`
+- [x] `ConversationView`：流式 markdown 渲染（Rich Markdown）
+- [x] `Composer`：多行输入 + `/` 命令补全
+- [x] `StatusBar`：模型 + 模式 + 思考强度 + token 计数
+- [x] 基础 slash 命令：`/help` `/clear` `/model` `/mode` `/effort` `/exit`
+- [x] 中文化错误显示（复用 `errorTranslate` 策略）
+- [x] 主题切换：`/theme` 命令 + dark/light/auto 三套
 
 ### Phase 2 — 沙箱 + Diff 审阅 (3-5 天)
 

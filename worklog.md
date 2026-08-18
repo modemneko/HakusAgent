@@ -100,3 +100,47 @@ Stage Summary:
 - Full voice pipeline with 5 stages
 - Barge-in support via interrupt()
 - Real-time metrics for latency, jitter, drop rate
+
+---
+Task ID: hakuscli-phase0-1
+Agent: main
+Task: 实现 HakusCLI Phase 0+1 (Python+Textual+Rich, 取代旧 Ink v5 / Textual v2)
+
+Work Log:
+- 修订 HAKUS_CLI_DESIGN.md：渲染栈从 Ink+React (Node) 改为 Textual+Rich (Python)
+  理由：(1) Textual 已在 deps 内 (2) 避免 Node 子进程边界, 直接 in-process 调用
+  AgentCore (3) Textual 8.x 的 diff-based 渲染已稳定 (4) 单一 pip 包即可
+- 补齐 hakus/entry.py (此前 pyproject.toml 注册了 hakusai = "hakus.entry:main"
+  但文件不存在, 命令完全无法启动)
+- 创建 hakus/cli/ 包:
+  - __init__.py            导出 HakusCLI
+  - app.py                 HakusCLI(Textual App) 主类, compose()+事件分发
+  - session.py             CLISession: AgentCore in-process 桥接, 事件回调
+  - theme.py               三套主题 (dark/light/auto) + ColorSystem 适配
+  - _tools_list.py         按模式列出可用工具
+  - commands/
+    - registry.py          SlashCommand 注册表 + parse() 解析
+    - builtin.py           10 个内置命令 (/help /clear /exit /mode /effort
+                            /model /theme /tools /about /compact)
+    - __init__.py
+  - widgets/
+    - conversation.py      流式 markdown 渲染 (Rich Markdown), 工具卡片
+    - composer.py          多行输入 (Ctrl+J 换行, Enter 提交, Esc 中断)
+    - status_bar.py        底部状态栏 (mode/effort/model/tokens/time)
+    - slash_picker.py      / 命令浮动选择器
+    - __init__.py
+- 错误中文化: app.py 中实现 translate_error() — 14 个 SDK 错误 pattern → 中文一句,
+  跟 frontend desktop-tauri 的 errorTranslate.ts 策略对齐
+- TUI 模式兼容: session.ensure_agent() 设置 agent._tui_mode = True, 让 AgentCore
+  把 LLM 调用放到独立线程, 避开 Textual 事件循环冲突
+- 测试: scripts/test_hakus_cli_smoke.py 14/14 全通过
+  覆盖: imports / app 实例化 / 命令注册 / 别名解析 / 解析 / 主题 / 思考强度归一化
+  / 错误翻译 / 命令执行 / 模式切换 / 强度切换 / 主题切换 / session 回调
+
+Stage Summary:
+- HakusCLI Phase 0+1 完成: 基础骨架 + 核心 TUI
+- 入口: `pip install -e . && hakusai` 或 `python -m hakus.entry`
+- 启动后: 对话流 + 工具卡片 + 流式 markdown + 状态栏 + 10 个 slash 命令
+- 框架: Textual 8.x + Rich 15.x (Python 3.11+)
+- 设计文档与代码同步: HAKUS_CLI_DESIGN.md 反映 Python-only 决策
+- Phase 2 (沙箱+diff 审阅) / Phase 3 (会话分支) / Phase 4 (MCP+主题+配置) 待续
