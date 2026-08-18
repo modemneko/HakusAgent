@@ -12,7 +12,6 @@ import {
   FolderOpen,
   FolderPlus,
   Image as ImageIcon,
-  Layers,
   ListChecks,
   Loader2,
   Mic,
@@ -23,13 +22,11 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
-  Ship,
   Sparkles,
   Square,
   Terminal,
   Volume2,
   X,
-  Zap,
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -50,11 +47,8 @@ import { apiClient } from '@/api/client'
 import { pickFolder } from '@/api/tauriBridge'
 import type { AgentMode, PermissionMode, ProviderInfo, TaskProgressAttachment } from '@/api/types'
 import {
-  AGENT_MODE_ORDER,
   REASONING_EFFORTS,
   REASONING_EFFORT_META,
-  getAgentModeMeta,
-  getModeToolSummary,
   type ReasoningEffort,
 } from '@/lib/agentModes'
 import { cn, generateId } from '@/lib/utils'
@@ -182,11 +176,6 @@ const TEXT_EXTENSIONS: Record<string, string> = {
   editorconfig: 'ini',
 }
 
-const AGENT_MODE_ICONS: Record<AgentMode, typeof Zap> = {
-  swift: Zap,
-  deep: Layers,
-  fleet: Ship,
-}
 const PERMISSION_META: Record<
   PermissionMode,
   { label: string; hint: string; icon: LucideIcon; tone: string }
@@ -384,8 +373,6 @@ export function Composer({
   )
   const modelText = model ? `${model.provider} ${model.model_name}` : currentProvider?.model_name
   const canUseImages = isMultimodalProvider(currentProvider, modelText)
-  const activeAgentMode = getAgentModeMeta(agentMode)
-  const ActiveAgentIcon = AGENT_MODE_ICONS[agentMode]
   const activeReasoningEffort = getReasoningEffort(agentMode)
   const currentProviderLabel = currentProvider?.display_name || defaultModel || "No model"
   const activePermissionMeta = PERMISSION_META[permission]
@@ -764,15 +751,6 @@ export function Composer({
     } finally {
       setSwitchingProvider(false)
     }
-  }
-
-  const handleAgentModeSwitch = (mode: AgentMode) => {
-    if (mode === agentMode) return
-    if (isStreaming) {
-      toast.info("Wait for the current response to finish before switching modes")
-      return
-    }
-    setAgentMode(mode)
   }
 
   const handlePermissionSwitch = async (mode: PermissionMode) => {
@@ -1290,6 +1268,9 @@ export function Composer({
                 </DropdownMenuContent>
               </DropdownMenu>
 
+              {/* Reasoning effort — independent dropdown. Three levels:
+                  快速 / 深度 / 极致. Per-mode override stored in
+                  reasoningEfforts[agentMode]. */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -1299,81 +1280,27 @@ export function Composer({
                       'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
-                    title={activeAgentMode.summary}
+                    title="思考强度"
                   >
-                    <ActiveAgentIcon className="h-3.5 w-3.5 text-primary" />
-                    <span>{activeAgentMode.label}</span>
+                    <Brain className="h-3.5 w-3.5 text-primary" />
+                    <span>{REASONING_EFFORT_META[activeReasoningEffort].label}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[280px]">
-                  {AGENT_MODE_ORDER.map((mode) => {
-                    const meta = getAgentModeMeta(mode)
-                    const Icon = AGENT_MODE_ICONS[mode]
-                    const active = agentMode === mode
-                    const modeEffort = getReasoningEffort(mode)
+                <DropdownMenuContent align="start" side="top" className="w-[180px]">
+                  {REASONING_EFFORTS.map((effort: ReasoningEffort) => {
+                    const isSelected = activeReasoningEffort === effort
+                    const meta = REASONING_EFFORT_META[effort]
                     return (
-                      <DropdownMenuSub key={mode}>
-                        <DropdownMenuSubTrigger
-                          disabled={isStreaming && !active}
-                          className={cn(
-                            'items-start gap-2 py-2',
-                            active && 'bg-accent/40',
-                          )}
-                        >
-                          <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{meta.label}</span>
-                              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                {meta.badge}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/80">
-                              <Brain className="h-2.5 w-2.5" />
-                              <span>思考: {REASONING_EFFORT_META[modeEffort].label}</span>
-                            </div>
-                            <div className="mt-0.5 text-[10px] text-muted-foreground/60">
-                              {getModeToolSummary(mode)}
-                            </div>
-                          </div>
-                          {active && <Check className="mt-0.5 h-3.5 w-3.5 text-primary" />}
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent className="w-[220px]">
-                          {/* Click the mode label itself to switch to this mode */}
-                          <DropdownMenuItem
-                            disabled={isStreaming && !active}
-                            onClick={() => handleAgentModeSwitch(mode)}
-                            className="gap-2 py-1.5"
-                          >
-                            <Icon className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
-                            <span className="flex-1">使用此模式</span>
-                            {active && <Check className="h-3 w-3 text-primary" />}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {REASONING_EFFORTS.map((effort: ReasoningEffort) => {
-                            const isSelected = modeEffort === effort
-                            return (
-                              <DropdownMenuItem
-                                key={effort}
-                                onClick={() => setReasoningEffort(mode, effort)}
-                                className="items-start gap-2 py-1.5"
-                              >
-                                <Brain className={cn('mt-0.5 h-3 w-3 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium">{REASONING_EFFORT_META[effort].label}</span>
-                                  </div>
-                                  <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-                                    {REASONING_EFFORT_META[effort].description}
-                                  </div>
-                                </div>
-                                {isSelected && <Check className="mt-0.5 h-3 w-3 text-primary" />}
-                              </DropdownMenuItem>
-                            )
-                          })}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
+                      <DropdownMenuItem
+                        key={effort}
+                        onClick={() => setReasoningEffort(agentMode, effort)}
+                        className="items-center gap-2 py-1.5"
+                      >
+                        <Brain className={cn('h-3 w-3 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
+                        <span className="flex-1 text-xs font-medium">{meta.label}</span>
+                        {isSelected && <Check className="h-3 w-3 text-primary" />}
+                      </DropdownMenuItem>
                     )
                   })}
                 </DropdownMenuContent>

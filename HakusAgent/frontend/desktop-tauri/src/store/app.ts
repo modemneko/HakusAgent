@@ -13,7 +13,6 @@ interface ModelInfo {
   model_name: string
 }
 
-export type RunMode = 'local' | 'worktree' | 'cloud'
 export type { AgentMode }
 export type RightPanelTab = 'review' | 'terminal' | 'preview' | 'logs' | 'fleet' | 'session_log'
 
@@ -30,11 +29,8 @@ interface AppStore {
   setRightPanelOpen: (open: boolean) => void
   setRightPanelTab: (tab: RightPanelTab) => void
 
-  // Run mode (Codex Local / Worktree / Cloud)
-  runMode: RunMode
-  setRunMode: (mode: RunMode) => void
-
-  // Agent mode (Swift / Deep / Fleet)
+  // Agent mode (Work = swift, Code = deep. Fleet retired from UI but
+  // type kept for backward compat with old session_log entries.)
   agentMode: AgentMode
   setAgentMode: (mode: AgentMode) => void
 
@@ -65,7 +61,6 @@ interface AppStore {
 
 const SIDEBAR_KEY = 'hakusai:sidebar-open'
 const RIGHT_PANEL_KEY = 'hakusai:right-panel-open'
-const RUN_MODE_KEY = 'hakusai:run-mode'
 const AGENT_MODE_KEY = 'hakusai:agent-mode'
 const REASONING_EFFORTS_KEY = 'hakusai:reasoning-efforts'
 
@@ -107,31 +102,12 @@ function writeRightPanelOpen(open: boolean) {
   }
 }
 
-function readRunMode(): RunMode {
-  if (typeof window === 'undefined') return 'local'
-  try {
-    const raw = localStorage.getItem(RUN_MODE_KEY) as RunMode | null
-    if (raw === 'local' || raw === 'worktree' || raw === 'cloud') return raw
-    return 'local'
-  } catch {
-    return 'local'
-  }
-}
-
-function writeRunMode(mode: RunMode) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(RUN_MODE_KEY, mode)
-  } catch {
-    /* ignore */
-  }
-}
-
 function readAgentMode(): AgentMode {
   if (typeof window === 'undefined') return 'swift'
   try {
     const raw = localStorage.getItem(AGENT_MODE_KEY) as AgentMode | null
-    if (raw === 'swift' || raw === 'deep' || raw === 'fleet') return raw
+    // 'fleet' is retired from the UI; normalize legacy persisted value.
+    if (raw === 'swift' || raw === 'deep') return raw
     return 'swift'
   } catch {
     return 'swift'
@@ -154,7 +130,9 @@ function readReasoningEfforts(): Partial<Record<AgentMode, ReasoningEffort>> {
     if (!raw) return {}
     const parsed = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return {}
-    // Validate keys and values
+    // Validate keys and values. 'fleet' key is legacy but harmless — kept
+    // so users who previously tuned fleet's reasoning don't lose data
+    // if fleet mode is ever re-enabled.
     const valid: Partial<Record<AgentMode, ReasoningEffort>> = {}
     for (const k of ['swift', 'deep', 'fleet'] as AgentMode[]) {
       const v = parsed[k]
@@ -201,12 +179,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ rightPanelOpen: open })
   },
   setRightPanelTab: (tab) => set({ rightPanelTab: tab, rightPanelOpen: true }),
-
-  runMode: readRunMode(),
-  setRunMode: (mode) => {
-    writeRunMode(mode)
-    set({ runMode: mode })
-  },
 
   agentMode: readAgentMode(),
   setAgentMode: (mode) => {

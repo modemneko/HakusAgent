@@ -794,7 +794,7 @@ export function ChatView() {
         <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">
           <div className="flex items-center gap-2">
             <WifiOff className="h-3.5 w-3.5" />
-            <span>Cannot connect to HakusAI service: {settings.connection.serverUrl}</span>
+            <span>无法连接到 HakusAI 服务：{settings.connection.serverUrl}</span>
           </div>
           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => connCheck()}>
             重试

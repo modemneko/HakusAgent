@@ -1,10 +1,11 @@
 import { memo, useState } from 'react'
-import { Check, Copy, RefreshCw, User, Sparkles, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X } from 'lucide-react'
+import { Check, Copy, RefreshCw, User, Sparkles, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { ChatMessage } from '@/api/types'
 import { cn, copyToClipboard, formatTime } from '@/lib/utils'
+import { translateError } from '@/lib/errorTranslate'
 import { ReasoningLogItem } from './ReasoningLogItem'
 import { CodeBlock } from './CodeBlock'
 import { Button } from '@/components/ui/button'
@@ -220,11 +221,10 @@ export const MessageBubble = memo(function MessageBubble({
           />
         )}
 
-        {/* Error — only on the last segment */}
+        {/* Error — only on the last segment. Shows a friendly Chinese
+            one-liner; raw technical detail is hidden behind a toggle. */}
         {isLastSegmentOfAssistantTurn && message.error && (
-          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
-            {message.error}
-          </div>
+          <ErrorBlock raw={message.error} />
         )}
 
         {/* Footer: time + actions — only on the last segment of an assistant turn,
@@ -395,3 +395,42 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
     </div>
   )
 }
+
+/**
+ * ErrorBlock — friendly Chinese title + collapsible technical detail.
+ *
+ * Wraps the raw error string with `translateError()` so the user sees
+ * a one-line summary first. If the raw text carries useful detail
+ * (longer than the title's intent), a "技术细节" toggle expands to
+ * show it in a <pre> block.
+ */
+const ErrorBlock = memo(function ErrorBlock({ raw }: { raw: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const translated = translateError(raw)
+  const hasDetail = !!translated.detail
+
+  return (
+    <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+      <div className="flex items-start gap-1.5">
+        <span className="flex-1 leading-relaxed">{translated.title}</span>
+        {hasDetail && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-destructive/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
+            aria-expanded={expanded}
+            aria-label="展开技术细节"
+          >
+            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <span>{expanded ? '收起' : '技术细节'}</span>
+          </button>
+        )}
+      </div>
+      {hasDetail && expanded && (
+        <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-destructive/5 px-2 py-1.5 text-[10px] leading-relaxed text-destructive/80">
+          {translated.detail}
+        </pre>
+      )}
+    </div>
+  )
+})

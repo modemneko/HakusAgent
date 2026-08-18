@@ -1,9 +1,8 @@
 import { useEffect, useRef, type MouseEvent, type PointerEvent } from 'react'
 import {
-  Cloud,
-  GitBranch,
+  Briefcase,
+  Code2,
   Minus,
-  Monitor,
   PanelLeft,
   PanelRight,
   Settings,
@@ -17,7 +16,8 @@ import { ProviderLogo } from '@/components/ui/provider-logo'
 import { useSessionStore } from '@/store/session'
 import { useConnectionStore } from '@/store/connection'
 import { useSettingsStore } from '@/store/settings'
-import { useAppStore, type RunMode } from '@/store/app'
+import { useAppStore } from '@/store/app'
+import type { AgentMode } from '@/api/types'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -27,10 +27,11 @@ interface TopBarProps {
   onOpenSettings: () => void
 }
 
-const RUN_MODES: { id: RunMode; label: string; icon: typeof Monitor }[] = [
-  { id: 'local', label: 'Local', icon: Monitor },
-  { id: 'worktree', label: 'Worktree', icon: GitBranch },
-  { id: 'cloud', label: 'Cloud', icon: Cloud },
+// Mode segments — Work / Code. Binds to agentMode (not the legacy runMode).
+// Work = swift (daily chat + tools, no browser), Code = deep (full power).
+const MODE_SEGMENTS: { id: AgentMode; label: string; icon: typeof Briefcase }[] = [
+  { id: 'swift', label: 'Work', icon: Briefcase },
+  { id: 'deep', label: 'Code', icon: Code2 },
 ]
 
 type WindowAction = 'minimize' | 'toggleMaximize' | 'close'
@@ -145,8 +146,8 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
     : model
       ? `${model.provider} · ${model.model_name}`
       : '等待模型信息'
-  const runMode = useAppStore((s) => s.runMode)
-  const setRunMode = useAppStore((s) => s.setRunMode)
+  const agentMode = useAppStore((s) => s.agentMode)
+  const setAgentMode = useAppStore((s) => s.setAgentMode)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
 
   const activeSession = sessions.find((s) => s.id === activeId)
@@ -178,23 +179,23 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
         </Tooltip>
 
         <div className="segment">
-          {RUN_MODES.map((mode) => {
+          {MODE_SEGMENTS.map((mode) => {
             const Icon = mode.icon
-            const active = runMode === mode.id
+            const active = agentMode === mode.id
             return (
               <Tooltip key={mode.id}>
                 <TooltipTrigger asChild>
                   <button
                     className={cn('segment-btn', active && 'segment-btn-active')}
-                    onClick={() => setRunMode(mode.id)}
-                    aria-label={`运行环境：${mode.label}`}
-                    title={`运行环境：${mode.label}`}
+                    onClick={() => setAgentMode(mode.id)}
+                    aria-label={`${mode.label} 模式`}
+                    title={`${mode.label} 模式`}
                   >
                     <Icon className="h-3 w-3" />
                     <span className="hidden md:inline">{mode.label}</span>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>运行环境：{mode.label}</TooltipContent>
+                <TooltipContent>{mode.label} 模式</TooltipContent>
               </Tooltip>
             )
           })}
