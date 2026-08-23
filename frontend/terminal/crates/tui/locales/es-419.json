@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} no tiene endpoint /models; no se sondeó la alcanzalidad.",
   "ProviderTemplateOpened": "Plantilla de proveedor '{id}' abierta. Introduce solo la API key.",
   "ProviderTemplateUnknown": "Plantilla de proveedor desconocida '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Plantilla integrada '{id}' abierta. Escribe el nombre de la variable de entorno de la API key y guarda. No pegues la clave cruda."
+  "ProviderTemplateOpenedEnvOnly": "Plantilla integrada '{id}' abierta. Escribe el nombre de la variable de entorno de la API key y guarda. No pegues la clave cruda.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

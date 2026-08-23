@@ -40,6 +40,7 @@ hakus-telemetry = { path = "../telemetry", version = "0.9.10" }
 hakus-tools = { path = "../tools", version = "0.9.10" }
 hakus-workflow = { path = "../workflow", version = "0.9.10" }
 hakus-workflow-js = { path = "../workflow-js", version = "0.9.10" }
+hakus-wechat = { path = "../wechat", version = "0.9.10" }
 schemaui = { version = "0.12.0", default-features = false, optional = true }
 async-stream = "0.3.6"
 async-trait.workspace = true

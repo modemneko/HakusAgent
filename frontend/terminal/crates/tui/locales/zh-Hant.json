@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} 沒有 /models 端點，因此未探測可達性。",
   "ProviderTemplateOpened": "已開啟提供商範本 '{id}'。只需輸入 API 金鑰。",
   "ProviderTemplateUnknown": "未知提供商範本 '{id}'。",
-  "ProviderTemplateOpenedEnvOnly": "已開啟內建範本 '{id}'。請填入 API 金鑰環境變數名後儲存，不要貼上原始金鑰。"
+  "ProviderTemplateOpenedEnvOnly": "已開啟內建範本 '{id}'。請填入 API 金鑰環境變數名後儲存，不要貼上原始金鑰。",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

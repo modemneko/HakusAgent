@@ -19,6 +19,7 @@ members = [
     "crates/telemetry",
     "crates/tools",
     "crates/tui",
+    "crates/wechat",
     "crates/workflow",
     "crates/workflow-js",
 ]
@@ -70,6 +71,8 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio-util = { version = "0.7.16", features = ["io", "full"] }
 uuid = { version = "1.11", features = ["v4"] }
+base64 = "0.22"
+rand = "0.9"
 mimalloc = { version = "0.1", default-features = false }
 
 # The everyday `--release` gate (AGENTS.md pre-push build): optimized but

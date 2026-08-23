@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} tidak punya endpoint /models; keterjangkauan tidak diselidiki.",
   "ProviderTemplateOpened": "Templat penyedia '{id}' dibuka. Masukkan API key saja.",
   "ProviderTemplateUnknown": "Templat penyedia tidak dikenal '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Templat bawaan '{id}' dibuka. Masukkan nama variabel lingkungan API key, lalu simpan. Jangan tempel kunci mentah."
+  "ProviderTemplateOpenedEnvOnly": "Templat bawaan '{id}' dibuka. Masukkan nama variabel lingkungan API key, lalu simpan. Jangan tempel kunci mentah.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

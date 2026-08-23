@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} n'a pas de point de terminaison /models ; l'accessibilité n'a pas été sondée.",
   "ProviderTemplateOpened": "Modèle de fournisseur '{id}' ouvert. Saisissez uniquement la clé API.",
   "ProviderTemplateUnknown": "Modèle de fournisseur inconnu '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Modèle intégré '{id}' ouvert. Saisissez le nom de la variable d'environnement de la clé API, puis enregistrez. Ne collez pas la clé brute."
+  "ProviderTemplateOpenedEnvOnly": "Modèle intégré '{id}' ouvert. Saisissez le nom de la variable d'environnement de la clé API, puis enregistrez. Ne collez pas la clé brute.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

@@ -40,6 +40,7 @@ mod translate;
 mod turn;
 pub mod util;
 pub mod voice;
+mod wechat;
 mod workflow;
 mod workspace;
 
@@ -190,6 +191,10 @@ impl CommandGroup for CoreCommands {
             Box::new(FunctionCommand::new(
                 voice::VoiceControlCmd::info(),
                 voice::VoiceControlCmd::execute,
+            )),
+            Box::new(FunctionCommand::new(
+                wechat::WeChatCmd::info(),
+                wechat::WeChatCmd::execute,
             )),
             Box::new(FunctionCommand::new(
                 pin::PinCmd::info(),

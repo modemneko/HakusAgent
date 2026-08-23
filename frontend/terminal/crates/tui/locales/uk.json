@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "У {provider} немає кінцевої точки /models; досяжність не зондувалась.",
   "ProviderTemplateOpened": "Відкрито шаблон провайдера '{id}'. Введіть лише API-ключ.",
   "ProviderTemplateUnknown": "Невідомий шаблон провайдера '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Відкрито вбудований шаблон '{id}'. Введіть ім’я змінної середовища API-ключа і збережіть. Не вставляйте сирий ключ."
+  "ProviderTemplateOpenedEnvOnly": "Відкрито вбудований шаблон '{id}'. Введіть ім’я змінної середовища API-ключа і збережіть. Не вставляйте сирий ключ.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

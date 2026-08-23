@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} has no /models endpoint; reachability was not probed.",
   "ProviderTemplateOpened": "Provider template '{id}' opened. Enter an API key only.",
   "ProviderTemplateUnknown": "Unknown provider template '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Built-in template '{id}' opened. Enter the API key env var name, then save. Do not paste a raw key."
+  "ProviderTemplateOpenedEnvOnly": "Built-in template '{id}' opened. Enter the API key env var name, then save. Do not paste a raw key.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

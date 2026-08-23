@@ -1127,6 +1127,23 @@ pub enum AppAction {
         model: String,
         mode: String,
     },
+    /// WeChat ClawBot integration via native iLink protocol client.
+    WeChat(WeChatAction),
+}
+
+/// Actions for the `/wechat` slash-command group.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WeChatAction {
+    /// Initiate QR-code login flow.
+    StartLogin,
+    /// Display current WeChat connection status.
+    ShowStatus,
+    /// Logout and clear persisted credentials.
+    Logout,
+    /// Send a text message to a WeChat user.
+    Send { to_user: String, text: String },
+    /// Poll once for new inbound messages.
+    Poll,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

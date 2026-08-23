@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} には /models エンドポイントがないため、到達性は調べていません。",
   "ProviderTemplateOpened": "プロバイダテンプレート '{id}' を開きました。API キーだけ入力してください。",
   "ProviderTemplateUnknown": "未知のプロバイダテンプレート '{id}'。",
-  "ProviderTemplateOpenedEnvOnly": "組み込みテンプレート '{id}' を開きました。生のキーではなく API キーの環境変数名を入力して保存してください。"
+  "ProviderTemplateOpenedEnvOnly": "組み込みテンプレート '{id}' を開きました。生のキーではなく API キーの環境変数名を入力して保存してください。",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

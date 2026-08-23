@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} no té un punt final /models; no s'ha sondejat l'accessibilitat.",
   "ProviderTemplateOpened": "S'ha obert la plantilla de proveïdor '{id}'. Introduïu només la clau API.",
   "ProviderTemplateUnknown": "Plantilla de proveïdor desconeguda '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "S'ha obert la plantilla integrada '{id}'. Introduïu el nom de la variable d'entorn de la clau API i deseu. No enganxeu la clau crua."
+  "ProviderTemplateOpenedEnvOnly": "S'ha obert la plantilla integrada '{id}'. Introduïu el nom de la variable d'entorn de la clau API i deseu. No enganxeu la clau crua.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

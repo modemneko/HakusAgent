@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} के पास /models एंडपॉइंट नहीं है; पहुँच की जाँच नहीं हुई।",
   "ProviderTemplateOpened": "प्रोवाइडर टेम्पलेट '{id}' खुला। केवल API कुंजी दर्ज करें।",
   "ProviderTemplateUnknown": "अज्ञात प्रोवाइडर टेम्पलेट '{id}'।",
-  "ProviderTemplateOpenedEnvOnly": "अंतर्निहित टेम्पलेट '{id}' खुला। API कुंजी का पर्यावरण चर नाम दर्ज कर सहेजें; कच्ची कुंजी न चिपकाएँ।"
+  "ProviderTemplateOpenedEnvOnly": "अंतर्निहित टेम्पलेट '{id}' खुला। API कुंजी का पर्यावरण चर नाम दर्ज कर सहेजें; कच्ची कुंजी न चिपकाएँ।",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }

@@ -1622,5 +1622,6 @@
   "ProviderTestConnectionNoEndpoint": "{provider} hat keinen /models-Endpunkt; die Erreichbarkeit wurde nicht geprüft.",
   "ProviderTemplateOpened": "Provider-Vorlage '{id}' geöffnet. Nur den API-Schlüssel eingeben.",
   "ProviderTemplateUnknown": "Unbekannte Provider-Vorlage '{id}'.",
-  "ProviderTemplateOpenedEnvOnly": "Eingebaute Vorlage '{id}' geöffnet. Geben Sie den Umgebungsvariablennamen des API-Schlüssels ein und speichern Sie. Keinen Rohschlüssel einfügen."
+  "ProviderTemplateOpenedEnvOnly": "Eingebaute Vorlage '{id}' geöffnet. Geben Sie den Umgebungsvariablennamen des API-Schlüssels ein und speichern Sie. Keinen Rohschlüssel einfügen.",
+  "CmdWechatDescription": "WeChat ClawBot — QR login, messaging, and polling via iLink"
 }
