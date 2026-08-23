@@ -3,8 +3,8 @@
 use crate::models::*;
 use crate::state::{AccountState, WechatState};
 use crate::{
-    AUTH_TYPE, CHANNEL_VERSION, ILINK_APP_ID, ILINK_BASE, ILINK_CLIENT_VERSION,
-    MAX_MSG_LENGTH, POLL_TIMEOUT_SECS, QR_EXPIRY_CHECK_SECS, QR_POLL_INTERVAL_SECS,
+    AUTH_TYPE, ILINK_APP_ID, ILINK_BASE, ILINK_CLIENT_VERSION,
+    MAX_MSG_LENGTH, POLL_TIMEOUT_SECS, QR_EXPIRY_CHECK_SECS,
     USER_AGENT,
 };
 use base64::Engine;
@@ -47,7 +47,7 @@ impl IlLinkClient {
 
         Self {
             http,
-            state,
+            state: Arc::new(state),
             account,
             user_contexts,
         }
@@ -97,7 +97,7 @@ impl IlLinkClient {
         headers.insert("iLink-App-Id", HeaderValue::from_static(ILINK_APP_ID));
         headers.insert(
             "iLink-App-ClientVersion",
-            HeaderValue::from(ILINK_CLIENT_VERSION.to_string()),
+            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string()).map_err(|e| WechatError::Other(e.to_string()))?,
         );
         headers.insert("AuthorizationType", HeaderValue::from_static(AUTH_TYPE));
         headers.insert(
@@ -122,7 +122,7 @@ impl IlLinkClient {
         headers.insert("iLink-App-Id", HeaderValue::from_static(ILINK_APP_ID));
         headers.insert(
             "iLink-App-ClientVersion",
-            HeaderValue::from(ILINK_CLIENT_VERSION.to_string()),
+            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
@@ -182,10 +182,16 @@ impl IlLinkClient {
         let headers = self.auth_headers().await?;
 
         // Resolve context_token for this user (if known).
-        let context_token = user_id
-            .and_then(|uid| self.user_contexts.read().await.get(uid).cloned());
+        let context_token = if let Some(uid) = user_id {
+            self.user_contexts.read().await.get(uid).cloned()
+        } else {
+            None
+        };
 
-        let body = GetUpdatesRequest { context_token };
+        let body = GetUpdatesRequest {
+            method: "getupdates".into(),
+            context_token,
+        };
         // ensure_ascii=false is the serde default; compact formatting.
         let body_json = serde_json::to_string(&body)?;
 
@@ -205,10 +211,10 @@ impl IlLinkClient {
             return Err(WechatError::Protocol { status, body });
         }
 
-        let mut result: GetUpdatesResponse = resp.json().await?;
+        let result: GetUpdatesResponse = resp.json().await?;
 
         // Persist the updated context token.
-        if let (Some(uid), Some(ref token)) = (user_id, &result.context_token) {
+        if let (Some(uid), Some(token)) = (user_id, &result.context_token) {
             if !token.is_empty() {
                 self.user_contexts
                     .write()

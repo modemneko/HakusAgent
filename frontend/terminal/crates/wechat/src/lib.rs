@@ -22,7 +22,7 @@ pub mod models;
 pub mod state;
 
 pub use client::IlLinkClient;
-pub use login::{LoginHandle, QrLoginStatus};
+pub use login::LoginHandle;
 pub use models::*;
 pub use state::WechatState;
 

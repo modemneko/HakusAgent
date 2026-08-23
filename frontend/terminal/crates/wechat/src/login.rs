@@ -1,7 +1,9 @@
 //! QR login state machine.
 
+use base64::Engine;
 use crate::client::IlLinkClient;
 use crate::models::{QrLoginStatus, QrStatusResponse, WechatError};
+use crate::QR_POLL_INTERVAL_SECS;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
