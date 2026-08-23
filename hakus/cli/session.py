@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from ..agent import AgentCore
 from ..permission import PermissionMode
+from ..providers import resolve_provider
 from ..protocol import (
     AgentEvent,
     Cancelled as CancelledEvent,
@@ -90,9 +91,9 @@ class CLISession:
         self._reasoning_effort = reasoning_effort
         self._op_queue: asyncio.Queue = asyncio.Queue()
         self._agent: Optional[AgentCore] = None
-        self._model_type = model_type or os.environ.get(
-            "HAKUS_MODEL", "deepseek"
-        )
+        # 与桌面端（hakusai_server.agent_bridge）共用同一 provider 解析：
+        # --model > HAKUS_MODEL > config.yaml models.default_model > deepseek
+        self._model_type = resolve_provider(model_type)
         self._working_dir = working_dir or os.getcwd()
         self._permission_mode = permission_mode
         # 公开回调 — TUI 注册

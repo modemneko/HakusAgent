@@ -1,0 +1,19 @@
+[package]
+name = "hakus-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Session/thread persistence and recovery model for Hakus"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+hakus-paths = { path = "../paths", version = "0.9.10" }
+hakus-protocol = { path = "../protocol", version = "0.9.10" }
+fd-lock = "4.0.4"
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

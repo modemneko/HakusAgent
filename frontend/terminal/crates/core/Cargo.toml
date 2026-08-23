@@ -1,0 +1,33 @@
+[package]
+name = "hakus-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core runtime boundaries for Hakus"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+hakus-agent = { path = "../agent", version = "0.9.10" }
+hakus-config = { path = "../config", version = "0.9.10" }
+hakus-execpolicy = { path = "../execpolicy", version = "0.9.10" }
+hakus-hooks = { path = "../hooks", version = "0.9.10" }
+hakus-mcp = { path = "../mcp", version = "0.9.10" }
+hakus-protocol = { path = "../protocol", version = "0.9.10" }
+hakus-state = { path = "../state", version = "0.9.10" }
+hakus-tools = { path = "../tools", version = "0.9.10" }
+regex = "1.11"
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

@@ -1,0 +1,12 @@
+[package]
+name = "hakus-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Model/provider registry and fallback strategy for Hakus"
+
+[dependencies]
+hakus-config = { path = "../config", version = "0.9.10" }
+serde.workspace = true

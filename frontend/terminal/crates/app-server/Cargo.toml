@@ -1,0 +1,36 @@
+[package]
+name = "hakus-app-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "App-server transport for Hakus runtime integrations"
+# `hakus app-server` is owned by hakus-cli; this crate is library-only.
+autobins = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+hakus-agent = { path = "../agent", version = "0.9.10" }
+hakus-config = { path = "../config", version = "0.9.10" }
+hakus-core = { path = "../core", version = "0.9.10" }
+hakus-execpolicy = { path = "../execpolicy", version = "0.9.10" }
+hakus-hooks = { path = "../hooks", version = "0.9.10" }
+hakus-mcp = { path = "../mcp", version = "0.9.10" }
+hakus-protocol = { path = "../protocol", version = "0.9.10" }
+hakus-release = { path = "../release", version = "0.9.10" }
+hakus-state = { path = "../state", version = "0.9.10" }
+hakus-tools = { path = "../tools", version = "0.9.10" }
+serde.workspace = true
+serde_json.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower = "0.5"

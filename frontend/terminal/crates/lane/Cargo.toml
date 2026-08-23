@@ -1,0 +1,21 @@
+[package]
+name = "hakus-lane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lane registry and Runtime backends for Hakus workflow instances"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+hakus-config = { path = "../config", version = "0.9.10" }
+fd-lock = "4.0.4"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

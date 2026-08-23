@@ -4108,6 +4108,17 @@ server = HakusAIServer()
 if __name__ == "__main__":
     import os
     import socket as _socket
+    import sys as _sys
+
+    # Windows 中文系统下，stdout/stderr 被管道接管（桌面端 sidecar、
+    # PowerShell 捕获、重定向到文件）时 Python 默认用 GBK 编码输出，
+    # 而消费方（Tauri backend.rs 的 from_utf8_lossy、UTF-8 终端）按
+    # UTF-8 解码 → 中文日志全部乱码。这里强制 UTF-8，与消费方对齐。
+    for _stream in (_sys.stdout, _sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
     port = int(os.environ.get("HAKUSAI_PORT", "48081"))
     host = server.config.server.host

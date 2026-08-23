@@ -162,10 +162,15 @@ pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
     eprintln!("[backend] Spawning python -m hakusai_server.server ...");
 
     // Spawn the Python backend via tauri-plugin-shell Command.
+    // PYTHONUTF8=1: on zh-CN Windows a piped Python child encodes stdout as
+    // GBK by default; we decode below with from_utf8_lossy, so force UTF-8
+    // (also inherited by uvicorn workers / MCP subprocesses) to avoid
+    // mojibake in every Chinese log line.
     let backend_cmd = app
         .shell()
         .command("python")
-        .args(["-m", "hakusai_server.server"]);
+        .args(["-m", "hakusai_server.server"])
+        .env("PYTHONUTF8", "1");
 
     let (rx, child) = backend_cmd
         .spawn()

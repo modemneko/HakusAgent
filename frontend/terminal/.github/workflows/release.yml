@@ -1,0 +1,115 @@
+# HakusCLI 四平台发布流水线。
+#
+# 触发：推送 v* tag 或手动 workflow_dispatch。
+# 产物命名沿用上游约定（docs/INSTALL.md 的资产表）：
+#   hakuscli-linux-x64 / hakuscli-linux-arm64 / hakuscli-android-arm64.tar.gz
+#   hakuscli-macos-arm64 / hakuscli-macos-x64
+#   hakuscli-windows-x64.exe / hakuscli-windows-arm64.exe
+name: release (artifacts only)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: hakuscli-linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - asset: hakuscli-linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            cross: true # bundled sqlite 需要 target 端 cc，用 cross 容器解决
+          - asset: hakuscli-macos-arm64
+            os: macos-14 # arm64 原生
+            target: aarch64-apple-darwin
+            cross: false
+          - asset: hakuscli-macos-x64
+            os: macos-14
+            target: x86_64-apple-darwin
+            cross: true
+          - asset: hakuscli-windows-x64.exe
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cross: false
+          - asset: hakuscli-windows-arm64.exe
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+            cross: true
+          - asset: hakuscli-android-arm64.tar.gz
+            os: ubuntu-22.04
+            target: aarch64-linux-android
+            cross: true
+            android: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up Android NDK (Termux/Bionic build)
+        if: matrix.android
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+
+      - name: Install cargo-ndk (Android)
+        if: matrix.android
+        run: cargo install cargo-ndk --locked
+
+      - name: Build (Android)
+        if: matrix.android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk --platform 26 -t arm64-v8a build --release --bin hakuscli
+          mkdir -p dist/hakuscli-android-arm64
+          cp target/aarch64-linux-android/release/hakuscli dist/hakuscli-android-arm64/
+          tar czf hakuscli-android-arm64.tar.gz -C dist hakuscli-android-arm64
+
+      - name: Build (cross, non-Android)
+        if: matrix.cross && !matrix.android
+        run: |
+          cargo install cross --locked
+          cross build --release --locked --target ${{ matrix.target }} --bin hakuscli
+
+      - name: Build (native)
+        if: matrix.cross == false && !matrix.android
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin hakuscli
+
+      - name: Package (unix)
+        if: matrix.os != 'windows-latest' && !matrix.android && matrix.asset != 'hakuscli-windows-arm64.exe'
+        run: |
+          BIN="target/${{ matrix.target }}/release/hakuscli"
+          file "$BIN" || true
+          cp "$BIN" "${{ matrix.asset }}"
+          chmod +x "${{ matrix.asset }}"
+
+      - name: Package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Copy-Item "target/${{ matrix.target }}/release/hakuscli.exe" -Destination "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error

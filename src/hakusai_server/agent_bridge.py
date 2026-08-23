@@ -195,39 +195,18 @@ def post_answer(session_id: str, question_id: str, choice: str) -> bool:
 def _resolve_provider(explicit: Optional[str] = None) -> str:
     """Pick the provider name to pass to AgentCore.
 
-    Priority:
-      1. ``explicit`` — per-request override from ChatRequest.provider
-         (this is what makes the TopBar "switch provider" dropdown work)
-      2. ``HAKUSAI_SIDECAR_PROVIDER`` env var (set by electron launcher)
-      3. ``models.default_model`` in config.yaml — read LIVE via
-         ``hakus_config.get_config()`` so that a default-model change
-         performed via ``POST /api/config/default-model`` takes effect
-         immediately (without requiring a process restart).
-         Falls back to the module-level ``BASE_CONFIG`` if the live
-         config layer is unavailable.
-      4. Fallback to "opencode" (the repo default, free models)
+    Delegates to :func:`hakus.providers.resolve_provider` — the single
+    source of truth shared with HakusCLI (terminal) so both ends resolve
+    the same default model. Desktop-specific bits: the sidecar launcher
+    env var and the "opencode" repo-default fallback.
     """
-    if explicit:
-        return explicit.lower()
-    env = os.environ.get("HAKUSAI_SIDECAR_PROVIDER")
-    if env:
-        return env.lower()
-    try:
-        # Prefer the live config (reloaded by hakus_config.reload_config()
-        # whenever the default model is changed). This avoids the historic
-        # bug where BASE_CONFIG was frozen at process start and a provider
-        # switch didn't take effect until restart.
-        from utils.hakus_config import get_config
-        live = get_config().models.default_model
-        if live:
-            return str(live).lower()
-    except Exception:
-        pass
-    try:
-        from utils.config import BASE_CONFIG
-        return str(BASE_CONFIG.get("DEFAULT_MODEL", "opencode")).lower()
-    except Exception:
-        return "opencode"
+    from hakus.providers import resolve_provider
+
+    return resolve_provider(
+        explicit,
+        env_vars=("HAKUSAI_SIDECAR_PROVIDER", "HAKUS_MODEL"),
+        default="opencode",
+    )
 
 
 def _extract_benchmark_output_dir(message: str) -> Optional[str]:

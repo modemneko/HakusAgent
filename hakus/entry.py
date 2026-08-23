@@ -1,15 +1,15 @@
-"""HakusAI 命令行入口.
+"""HakusCLI — HakusAgent 终端版入口.
 
-pyproject.toml 中: ``hakusai = "hakus.entry:main"``
+pyproject.toml 中: ``hakusai = "hakus.entry:main"`` 与别名 ``hakuscli``。
 
 用法::
 
-    hakusai                              # 启动 TUI (默认 Work 模式 + dark 主题)
-    hakusai --mode code                  # 启动 TUI (Code 模式)
-    hakusai --effort deep                # 启动 TUI (深度思考)
-    hakusai --model glm-4.5               # 指定模型
-    hakusai --theme light                 # 切换主题
-    hakusai --cwd /path/to/project        # 设置 working dir
+    hakuscli                             # 启动 TUI (默认 Work 模式 + dark 主题)
+    hakuscli --mode code                 # 启动 TUI (Code 模式)
+    hakuscli --effort deep               # 启动 TUI (深度思考)
+    hakuscli --model glm-4.5             # 指定模型
+    hakuscli --theme light               # 切换主题
+    hakuscli --cwd /path/to/project      # 设置 working dir
 
 环境变量:
     HAKUS_MODEL           默认模型名 (default: deepseek)
@@ -23,6 +23,17 @@ import argparse
 import logging
 import os
 import sys
+
+
+def _force_utf8_stdio() -> None:
+    """Windows 中文系统下，stdout/stderr 被管道/重定向接管时 Python 默认
+    用 GBK 编码，消费方按 UTF-8 解码 → 中文全乱码。强制对齐 UTF-8。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -50,9 +61,10 @@ def _normalize_effort(effort: str) -> str | None:
 
 def main() -> int:
     """主入口."""
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(
-        prog="hakusai",
-        description="HakusCLI — 新一代终端 AI Coding Agent",
+        prog="hakuscli",
+        description="HakusCLI — HakusAgent 终端版 (macOS/Linux/Windows/Termux)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "环境变量:\n"

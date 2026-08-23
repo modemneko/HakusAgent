@@ -85,3 +85,8 @@ dist/
 !**/assets/**  # Keep asset files
 
 /voxcpm
+config.yaml
+config.yaml
+scripts/test_guardian_llm.py
+scripts/test_p3_evolution.py
+scripts/test_p5_guardian_e2e.py

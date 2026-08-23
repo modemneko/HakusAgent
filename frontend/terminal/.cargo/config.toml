@@ -1,0 +1,5 @@
+# Cargo-invoked processes (tests, benches) disable the HakusAgent config.yaml
+# credential bridge so fixtures asserting "no ambient key" stay isolated from
+# the developer's real repo credentials. The shipped binary is unaffected.
+[env]
+HAKUS_AGENT_BRIDGE = { value = "0", force = true }

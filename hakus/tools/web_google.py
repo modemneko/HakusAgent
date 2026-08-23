@@ -18,12 +18,15 @@ import asyncio
 import re
 from typing import List
 
-import aiohttp
-
 from utils.config import BASE_CONFIG
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+try:
+    import aiohttp
+except ImportError:  # slim CLI installs ship without aiohttp
+    aiohttp = None  # type: ignore[assignment]
 
 try:
     from langchain_google_community import GoogleSearchAPIWrapper  # type: ignore
@@ -51,7 +54,9 @@ class WebSearcher:
     _session = None
 
     @classmethod
-    async def get_session(cls) -> aiohttp.ClientSession:
+    async def get_session(cls):
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed — run `pip install hakusai[server]` for webpage fetch")
         if cls._session is None or cls._session.closed:
             cls._session = aiohttp.ClientSession(headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"

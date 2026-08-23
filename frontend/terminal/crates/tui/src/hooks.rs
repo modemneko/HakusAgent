@@ -1,0 +1,42 @@
+//! Lifecycle hooks for the Hakus **TUI runtime**.
+//!
+//! Scope, stated plainly: every firing point in this system lives in the
+//! interactive TUI (`crates/tui/src/tui/`) and the engine turn loop it drives.
+//! `hakus exec`, the CLI dispatcher, the app-server / ACP surfaces, and
+//! the workflow tool do not fire these hooks. The unrelated `crates/hooks`
+//! event-sink crate is a different mechanism and shares no configuration.
+//!
+//! Hooks execute user-defined shell commands at:
+//! - Session start/end
+//! - Tool call before/after
+//! - Mode changes
+//! - Message submission
+//! - Error events
+//! - Turn completion
+//! - Sub-agent spawn/completion
+//! - `exec_shell` environment collection
+//!
+//! Configuration is done via `[[hooks.hooks]]` in config.toml. See
+//! `docs/HOOKS.md` for the per-event contract.
+
+mod config;
+mod executor;
+
+#[cfg(test)]
+pub use config::ALL_HOOK_EVENTS;
+#[allow(unused_imports)]
+pub use config::{Hook, HookCondition, HookConfigProblem, HookEvent, HookSteering, HooksConfig};
+pub(crate) use executor::{
+    HOOK_CONTEXT_AGGREGATE_MAX_CHARS, HOOK_LABEL_MAX_CHARS, generic_unavailable_detail,
+    parse_tool_call_before_stdout, sanitize_hook_denial_reason, sanitize_hook_label,
+    sanitize_hook_line, sanitize_hook_text,
+};
+#[cfg(test)]
+pub(crate) use executor::{
+    HOOK_MESSAGE_SUBMIT_PAYLOAD_MAX_BYTES, HOOK_TEXT_FIELD_MAX_CHARS, message_submit_payload,
+};
+#[allow(unused_imports)]
+pub use executor::{
+    HookContext, HookExecutor, HookResult, MessageSubmitOutcome, ToolCallBeforeStdout,
+    ToolCallDecision, TurnEndPayloadInput, TurnEndTotals, turn_end_payload,
+};

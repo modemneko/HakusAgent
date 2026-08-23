@@ -1,0 +1,186 @@
+# HakusAgent 全端构建 — 只出 Actions Artifacts，不发 Release。
+#
+# 内容：
+#   - hakuscli 四端（Linux x64/arm64、macOS arm64/x64、Windows x64/arm64、
+#     Android arm64）— 源码 frontend/terminal
+#   - 桌面端三平台（Windows NSIS、macOS dmg(app)、Linux deb/AppImage）
+#     — 源码 HakusAgent/frontend/desktop-tauri（Tauri 2）
+#
+# 触发：手动 workflow_dispatch / v* tag。发布 Release 是显式后续动作，
+# 本工作流永远只上传 artifacts。
+name: build-all
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── HakusCLI（Rust，四端七 target）────────────────────────────
+  hakuscli:
+    name: hakuscli-${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - asset: linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - asset: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            cross: false
+          - asset: macos-x64
+            os: macos-14
+            target: x86_64-apple-darwin
+            cross: true
+          - asset: windows-x64.exe
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cross: false
+          - asset: windows-arm64.exe
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+            cross: true
+          - asset: android-arm64.tar.gz
+            os: ubuntu-22.04
+            target: aarch64-linux-android
+            android: true
+    defaults:
+      run:
+        working-directory: frontend/terminal
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        if: matrix.android
+        with:
+          ndk-version: r27c
+
+      - run: cargo install cargo-ndk --locked
+        if: matrix.android
+
+      - name: Build (Android Bionic)
+        if: matrix.android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk --platform 26 -t arm64-v8a build --release --bin hakuscli
+          mkdir -p dist/hakuscli-android-arm64
+          cp target/aarch64-linux-android/release/hakuscli dist/hakuscli-android-arm64/
+          tar czf "../../hakuscli-android-arm64.tar.gz" -C dist hakuscli-android-arm64
+
+      - name: Build (cross)
+        if: matrix.cross == true && matrix.android != true
+        run: |
+          cargo install cross --locked
+          cross build --release --locked --target ${{ matrix.target }} --bin hakuscli
+
+      - name: Build (native)
+        if: matrix.cross == false && matrix.android != true
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin hakuscli
+
+      - name: Package (unix)
+        if: matrix.os != 'windows-latest' && matrix.android != true
+        run: |
+          cp "target/${{ matrix.target }}/release/hakuscli" "hakuscli-${{ matrix.asset }}"
+          chmod +x "hakuscli-${{ matrix.asset }}"
+
+      - name: Package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Copy-Item "target/${{ matrix.target }}/release/hakuscli.exe" -Destination "hakuscli-${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hakuscli-${{ matrix.asset }}
+          path: frontend/terminal/hakuscli-*
+          if-no-files-found: error
+
+  # ── 桌面端（Tauri 2，三平台）──────────────────────────────────
+  desktop:
+    name: desktop-${{ matrix.platform }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest # arm64 (M 系列)
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-13 # x64 (Intel)
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        working-directory: HakusAgent/frontend/desktop-tauri
+        run: npm ci
+
+      - name: Build Tauri app
+        working-directory: HakusAgent/frontend/desktop-tauri
+        run: npx tauri build ${{ matrix.args }}
+
+      - name: Upload bundles (windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-x64
+          path: |
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Upload bundles (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.platform == 'macos-latest' && 'arm64' || 'x64' }}
+          path: |
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/dmg/*.dmg
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/macos/*.app
+          if-no-files-found: warn
+
+      - name: Upload bundles (linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-x64
+          path: |
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
+            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn

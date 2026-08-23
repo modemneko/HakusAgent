@@ -1,0 +1,22 @@
+[package]
+name = "hakus-release"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared Hakus release discovery and version comparison helpers"
+
+[dependencies]
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+rustls.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-roots = "1"

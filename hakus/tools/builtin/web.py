@@ -37,7 +37,7 @@ import re
 import urllib.parse
 from typing import Any, Dict
 
-import aiohttp
+import httpx
 
 from ..base import Tool
 
@@ -67,13 +67,11 @@ async def _duckduckgo_search(query: str, max_results: int = 5) -> str:
         )
     }
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(
-                url, timeout=aiohttp.ClientTimeout(total=15)
-            ) as resp:
-                if resp.status != 200:
-                    return f"Error searching: HTTP {resp.status} from search backend."
-                html = await resp.text()
+        async with httpx.AsyncClient(headers=headers, timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return f"Error searching: HTTP {resp.status_code} from search backend."
+            html = resp.text
     except Exception as e:
         return f"Error searching: network unavailable ({type(e).__name__})."
 
@@ -167,15 +165,13 @@ class WebFetch(Tool):
 
     async def execute(self, url: str, **kwargs) -> str:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status != 200:
-                        return f"Error fetching URL: HTTP {resp.status}"
-                    text = await resp.text()
-                    if len(text) > 10000:
-                        return text[:10000] + "\n... [truncated]"
-                    return text
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return f"Error fetching URL: HTTP {resp.status_code}"
+                text = resp.text
+                if len(text) > 10000:
+                    return text[:10000] + "\n... [truncated]"
+                return text
         except Exception as e:
             return f"Error fetching URL: {e}"

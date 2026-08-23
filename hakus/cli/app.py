@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from typing import Optional
 
 from textual import events, work
@@ -190,6 +191,8 @@ class HakusCLI(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
+        # 记录 Textual 主循环线程 — _marshal 用来判断回调来自哪个线程
+        self._main_thread_id = threading.get_ident()
         # 初始化 StatusBar 显示
         sb = self.query_one(StatusBar)
         sb.update_mode(self.session.run_mode)
@@ -270,20 +273,31 @@ class HakusCLI(App):
             except Exception:
                 pass
 
-    # ── 事件回调 (在 textual worker 线程中被调用) ──────────
+    # ── 事件回调 ──────────────────────────────────────────
+    #
+    # _run_turn 是 async worker，session 回调发生在 Textual 主循环线程上，
+    # 此时 call_from_thread 会抛 RuntimeError（必须从别的线程调）——
+    # 这正是"按发送没反应"的根因：每个事件的 UI 更新都炸掉且被静默吞掉。
+    # 因此：主线程直接调用；仅当未来回调真的来自其他线程时才走
+    # call_from_thread。
+
+    def _marshal(self, fn, *args) -> None:
+        if getattr(self, "_main_thread_id", None) == threading.get_ident():
+            fn(*args)
+        else:
+            self.call_from_thread(fn, *args)
 
     def _on_turn_start(self, stats: TurnStats) -> None:
         # 状态栏开始计时
-        self.call_from_thread(self._refresh_statusbar)
+        self._marshal(self._refresh_statusbar)
 
     def _on_turn_end(self, stats: TurnStats) -> None:
         # 终态刷新一次
-        self.call_from_thread(self._refresh_statusbar)
+        self._marshal(self._refresh_statusbar)
 
     def _on_event(self, event) -> None:
-        """AgentCore 事件回调. 通常在 worker thread, 必须 schedule 到主循环."""
-        # 用 call_from_thread 把 UI 更新推到 Textual 主循环
-        self.call_from_thread(self._dispatch_to_ui, event)
+        """AgentCore 事件回调 — 可能来自主循环或其他线程，统一调度."""
+        self._marshal(self._dispatch_to_ui, event)
 
     def _dispatch_to_ui(self, event) -> None:
         """在 Textual 主循环里执行 — 直接操作 widget."""

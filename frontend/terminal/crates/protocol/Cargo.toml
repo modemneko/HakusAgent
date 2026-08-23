@@ -1,0 +1,14 @@
+[package]
+name = "hakus-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "App-server protocol frames for Hakus runtime integrations"
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

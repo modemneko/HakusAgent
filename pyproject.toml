@@ -23,29 +23,23 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-# 核心依赖
+# 核心依赖 — HakusCLI 终端版最小集。
+# 约束：必须是纯 Python 或四平台（macOS/Linux/Windows/Termux）均有
+# 预编译 wheel 的包。任何重依赖（编译型/服务端/语音）一律进 extras，
+# 否则 Termux 上装不动。CI 有 slim-import 检测防止回归。
 dependencies = [
     # 基础
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
-    "watchdog>=3.0.0",
 
-    # Web框架
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "websockets>=12.0",
-    "python-multipart>=0.0.6",
-
-    # 数据验证
+    # 数据验证（hakus/mcp/config.py 等顶层使用）
     "pydantic>=2.5.0",
-    "pydantic-settings>=2.1.0",
 
-    # HTTP客户端
-    "aiohttp>=3.9.0",
+    # HTTP客户端 — web_search/web_fetch 工具与 LLM API 都走 httpx
     "httpx>=0.25.0",
 
     # LLM SDK — hakus/models/_legacy.py top-level `import openai`, so the
-    # sidecar can't even boot a chat without this. Previously lived only in
+    # agent can't even boot a chat without this. Previously lived only in
     # requirements.txt + [project.optional-dependencies].models, but CI uses
     # `pip install -e .` which skips both. Move to main deps to fix CI.
     "openai>=1.0.0",
@@ -58,20 +52,27 @@ dependencies = [
     "rich>=13.0.0",
     "textual>=0.85.0",
 
-    # 工具
-    "numpy>=1.24.0",
-
     # MCP (Model Context Protocol) client — for spawning external tool servers
     # via stdio. Used by hakus/mcp/manager.py. Version 1.27+ required for
-    # stable ClientSession API.
+    # stable ClientSession API. HakusCLI 的一等功能，保留在主依赖。
     "mcp>=1.27.0",
+]
 
+[project.optional-dependencies]
+# 桌面端 sidecar（python -m hakusai_server.server）所需
+server = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "python-multipart>=0.0.6",
+    "aiohttp>=3.9.0",
+    "watchdog>=3.0.0",
+    "pydantic-settings>=2.1.0",
     # P5 Observability — structured logging + Prometheus metrics
     "structlog>=24.0.0",
     "prometheus_client>=0.20.0",
 ]
 
-[project.optional-dependencies]
 # AI模型支持
 models = [
     "openai>=1.6.0",
@@ -90,8 +91,9 @@ voice = [
     "pyaudio>=0.2.14",
 ]
 
-# 记忆系统
+# 记忆系统（numpy 在 Termux 需自编译，故仅 memory extra 提供）
 memory = [
+    "numpy>=1.24.0",
     "langchain>=0.1.0",
     "chromadb>=0.4.18",
     "sentence-transformers>=2.2.0",
@@ -116,13 +118,15 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-# 全部依赖
+# 全部依赖（= 桌面端全量）
 all = [
-    "hakusai[models,voice,memory,live]"
+    "hakusai[server,models,voice,memory,live]"
 ]
 
 [project.scripts]
 hakusai = "hakus.entry:main"
+# HakusCLI — 终端版别名
+hakuscli = "hakus.entry:main"
 
 [project.urls]
 Homepage = "https://github.com/hakusai/hakusai"

@@ -1,0 +1,231 @@
+# CNB is a one-way mirror from GitHub. Keep this file source-controlled here;
+# CNB-side edits will be overwritten by the GitHub -> CNB sync workflow.
+
+.feishu_bridge_tests: &feishu_bridge_tests
+  name: feishu bridge tests
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 8
+  docker:
+    image: node:22-bookworm
+  stages:
+    - name: feishu bridge tests
+      script: |
+        set -eu
+        cd integrations/feishu-bridge
+        npm ci
+        npm run check
+        npm test
+
+.rust_workspace_gates_stage: &rust_workspace_gates_stage
+  name: rust workspace gates
+  # The all-feature TUI test crate is large enough that concurrent rustc and
+  # clippy processes or disposable test debug metadata can exceed the shared
+  # CNB runner's memory. Keep the full gate surface, but serialize Cargo,
+  # omit test-only debug tables, and use the established workspace-test stack
+  # size so deep runtime API tests do not abort on the platform default.
+  timeout: 45m
+  script: |
+    set -eu
+    export CARGO_BUILD_JOBS=1
+    export CARGO_PROFILE_TEST_DEBUG=0
+    ./scripts/release/check-versions.sh
+    ./scripts/release/check-ohos-deps.sh
+    cargo fmt --all -- --check
+    cargo check --workspace --all-targets --locked
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    # Hermetic HOME so libtest's shared process cannot see a populated
+    # ~/.hakus/config.toml (#5355 config-fixture family). Tests stay in
+    # the suite; isolation is scheduling, not deletion.
+    hermetic_home="${TMPDIR:-/tmp}/cw-cnb-hermetic-home-$$"
+    mkdir -p "${hermetic_home}/.hakus"
+    export HOME="${hermetic_home}"
+    export USERPROFILE="${hermetic_home}"
+    export HAKUS_HOME="${hermetic_home}/.hakus"
+    unset HAKUS_CONFIG_PATH DEEPSEEK_CONFIG_PATH DEEPSEEK_HOME || true
+    RUST_MIN_STACK=16777216 cargo test --workspace --all-features --locked
+    # Parity gates as first-class steps so drift surfaces as a named failure,
+    # not a buried workspace-test entry. Mirrors release.yml's parity job.
+    cargo test -p hakus-protocol --test parity_protocol --locked
+    cargo test -p hakus-state --test parity_state --locked
+
+.linux_rust_gates: &linux_rust_gates
+  name: linux rust gates
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 16
+  docker:
+    image: rust:1.88-bookworm
+  stages:
+    - name: install linux dependencies
+      script: |
+        set -eu
+        apt-get update
+        apt-get install -y git libdbus-1-dev nodejs npm pkg-config
+        if command -v rustup >/dev/null 2>&1; then
+          rustup component add rustfmt clippy
+        fi
+
+    - *rust_workspace_gates_stage
+
+    - name: linux npm wrapper smoke
+      # Full LTO can link silently for longer than CNB's default 10-minute
+      # no-output window. Keep the production profile and give the job enough
+      # time to emit its version and wrapper receipts.
+      timeout: 45m
+      script: |
+        set -eu
+        # The release profile uses full LTO and one codegen unit. Bound Cargo's
+        # parallelism so the final links cannot exhaust a shared CNB runner.
+        cargo build --jobs 2 --release --locked -p hakus-cli
+        cp target/release/hakus target/release/codew
+        export PATH="$PWD/target/release:$PATH"
+        node scripts/release/npm-wrapper-smoke.js
+        ./target/release/hakus --version
+        ./target/release/codew --version
+
+.linux_release_preflight: &linux_release_preflight
+  name: linux release preflight
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 16
+  docker:
+    image: rust:1.88-bookworm
+  stages:
+    - name: install release dependencies
+      script: |
+        set -eu
+        apt-get update
+        apt-get install -y curl git libdbus-1-dev nodejs npm pkg-config
+        if command -v rustup >/dev/null 2>&1; then
+          rustup component add rustfmt clippy
+        fi
+
+    - *rust_workspace_gates_stage
+
+    - name: crate publish dry-run
+      script: |
+        set -eu
+        ./scripts/release/publish-crates.sh dry-run
+
+    - name: release binary smoke
+      # Full LTO can link silently for longer than CNB's default 10-minute
+      # no-output window. Keep the production profile and give the job enough
+      # time to emit its version and wrapper receipts.
+      timeout: 45m
+      script: |
+        set -eu
+        # Keep the production release profile intact while avoiding a burst of
+        # concurrent rustc/linker processes on the shared release runner.
+        cargo build --jobs 2 --release --locked -p hakus-cli
+        cp target/release/hakus target/release/codew
+        export PATH="$PWD/target/release:$PATH"
+        node scripts/release/npm-wrapper-smoke.js
+        ./target/release/hakus --version
+        ./target/release/codew --version
+
+main:
+  push:
+    - *feishu_bridge_tests
+    - *linux_rust_gates
+
+"(fix/*|rebrand/*)":
+  push:
+    - *linux_rust_gates
+
+"work/v*":
+  push:
+    - *feishu_bridge_tests
+    - *linux_release_preflight
+
+$:
+  tag_push:
+    - docker:
+        image: rust:1.88-bookworm
+      stages:
+        - name: build linux x64 release assets (static)
+          # The static full-LTO link can also outlive CNB's default no-output
+          # window. Do not weaken the release profile to keep the runner alive.
+          timeout: 45m
+          script: |
+            set -eu
+
+            apt-get update
+            apt-get install -y git musl-tools nodejs pkg-config
+            rustup target add x86_64-unknown-linux-musl
+
+            ./scripts/release/check-versions.sh
+            ./scripts/release/check-ohos-deps.sh
+            checkout_sha="$(git rev-parse 'HEAD^{commit}')"
+            commit_sha="${CNB_COMMIT:-${checkout_sha}}"
+            if [ "$commit_sha" != "$checkout_sha" ]; then
+              echo "ERROR: CNB_COMMIT ${commit_sha} does not match checkout ${checkout_sha}" >&2
+              exit 1
+            fi
+            export DEEPSEEK_BUILD_SHA="$commit_sha"
+            cargo build --jobs 2 --release --locked \
+              --target x86_64-unknown-linux-musl \
+              -p hakus-cli   # single binary
+
+            mkdir -p target/cnb-release
+            BIN_DIR="target/x86_64-unknown-linux-musl/release"
+            cp "$BIN_DIR/hakus" target/cnb-release/hakus-linux-x64
+            cp "$BIN_DIR/hakus" target/cnb-release/codew-linux-x64
+            cp "$BIN_DIR/hakus" target/cnb-release/hakus-tui-linux-x64
+            strip \
+              target/cnb-release/hakus-linux-x64 \
+              target/cnb-release/codew-linux-x64 \
+              target/cnb-release/hakus-tui-linux-x64 \
+              || true
+
+            (
+              cd target/cnb-release
+              sha256sum \
+                hakus-linux-x64 \
+                codew-linux-x64 \
+                hakus-tui-linux-x64 \
+                > hakus-artifacts-sha256.txt
+            )
+
+            tag_name="${CNB_BRANCH:-}"
+            if [ -z "$tag_name" ]; then
+              tag_name="$(git describe --tags --exact-match 2>/dev/null || true)"
+            fi
+            version="${tag_name#v}"
+            cargo_version="$(grep -E '^version = "' Cargo.toml | head -n1 | sed -E 's/^version = "([^"]+)".*/\1/')"
+            if [ -n "$tag_name" ] && [ "$version" != "$cargo_version" ]; then
+              echo "ERROR: tag ${tag_name} does not match Cargo.toml version ${cargo_version}" >&2
+              exit 1
+            fi
+            {
+              echo "# ${tag_name:-CNB release}"
+              echo
+              awk -v version="${version}" '
+                index($0, "## [" version "]") == 1 { in_section = 1; next }
+                in_section && /^## \[/ { exit }
+                in_section { print }
+              ' CHANGELOG.md
+              echo
+              echo "Built by CNB from ${commit_sha}."
+              echo
+              echo "Assets:"
+              echo "- hakus-linux-x64"
+              echo "- codew-linux-x64"
+              echo "- hakus-tui-linux-x64 (v0.9.4 compatibility alias)"
+              echo "- hakus-artifacts-sha256.txt"
+            } > target/cnb-release/CNB_RELEASE.md
+
+        - name: create cnb release
+          type: git:release
+          options:
+            descriptionFromFile: target/cnb-release/CNB_RELEASE.md
+            latest: true
+
+        - name: upload linux x64 release assets
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - target/cnb-release/hakus-linux-x64
+              - target/cnb-release/codew-linux-x64
+              - target/cnb-release/hakus-tui-linux-x64
+              - target/cnb-release/hakus-artifacts-sha256.txt

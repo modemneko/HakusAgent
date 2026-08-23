@@ -1,0 +1,791 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub mod agent_mail;
+pub mod agent_run;
+pub mod event_msg;
+pub mod fleet;
+pub mod ids;
+pub mod journal;
+pub mod op;
+pub mod runtime;
+pub mod workroom;
+
+/// Common trait for lifecycle status enums across the protocol layer.
+///
+/// Every status enum — thread, goal, fleet run, worker, and job status —
+/// implements this trait so generic code can ask three universal questions
+/// without matching on every variant.
+pub trait Status {
+    /// Returns `true` when this status represents a final, non-progressable state
+    /// (e.g. Completed, Failed, Cancelled, Archived, Retired).
+    fn is_terminal(&self) -> bool;
+
+    /// Returns `true` when work is currently in-flight
+    /// (e.g. Running, Active, Busy, Queued, Pending).
+    fn is_active(&self) -> bool;
+
+    /// Returns `true` when the item has been explicitly paused by the user
+    /// or system (e.g. Paused).
+    fn is_paused(&self) -> bool;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Envelope<T> {
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    pub body: T,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadStatus {
+    Running,
+    Idle,
+    Completed,
+    Failed,
+    Paused,
+    Archived,
+}
+
+impl Status for ThreadStatus {
+    fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Archived)
+    }
+    fn is_active(&self) -> bool {
+        matches!(self, Self::Running)
+    }
+    fn is_paused(&self) -> bool {
+        matches!(self, Self::Paused)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSource {
+    Interactive,
+    Resume,
+    Fork,
+    Api,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Thread {
+    pub id: String,
+    pub preview: String,
+    pub ephemeral: bool,
+    pub model_provider: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub status: ThreadStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    pub cwd: PathBuf,
+    pub cli_version: String,
+    pub source: SessionSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadGoalStatus {
+    Active,
+    Paused,
+    Blocked,
+    UsageLimited,
+    BudgetLimited,
+    Complete,
+}
+
+impl Status for ThreadGoalStatus {
+    fn is_terminal(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+    fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+    fn is_paused(&self) -> bool {
+        matches!(self, Self::Paused)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThreadGoal {
+    pub thread_id: String,
+    pub goal_id: String,
+    pub objective: String,
+    pub status: ThreadGoalStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub time_used_seconds: i64,
+    pub continuation_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadStartParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub persist_extended_history: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadResumeParams {
+    pub thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality: Option<String>,
+    #[serde(default)]
+    pub persist_extended_history: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkParams {
+    pub thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
+    #[serde(default)]
+    pub persist_extended_history: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadListParams {
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadReadParams {
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadSetNameParams {
+    pub thread_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadGoalSetParams {
+    pub thread_id: String,
+    pub objective: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadGoalGetParams {
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadGoalClearParams {
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadGoalProgressParams {
+    pub thread_id: String,
+    #[serde(default)]
+    pub token_delta: i64,
+    #[serde(default)]
+    pub time_delta_seconds: i64,
+    #[serde(default)]
+    pub record_continuation: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ThreadRequest {
+    Create {
+        #[serde(default)]
+        metadata: Value,
+    },
+    Start(ThreadStartParams),
+    Resume(ThreadResumeParams),
+    Fork(ThreadForkParams),
+    List(ThreadListParams),
+    Read(ThreadReadParams),
+    SetName(ThreadSetNameParams),
+    GoalSet(ThreadGoalSetParams),
+    GoalGet(ThreadGoalGetParams),
+    GoalClear(ThreadGoalClearParams),
+    GoalRecordProgress(ThreadGoalProgressParams),
+    Archive {
+        thread_id: String,
+    },
+    Unarchive {
+        thread_id: String,
+    },
+    Message {
+        thread_id: String,
+        input: String,
+    },
+}
+
+/// Response to a [`ThreadRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadResponse {
+    /// The thread this response pertains to.
+    pub thread_id: String,
+    /// Human-readable status string (e.g. `"ok"`, `"error"`).
+    pub status: String,
+    /// The thread details, when a single thread is returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<Thread>,
+    /// List of threads, populated by `List` requests.
+    #[serde(default)]
+    pub threads: Vec<Thread>,
+    /// Thread goal returned by goal get/set requests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<ThreadGoal>,
+    /// The model used for the thread, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The model provider used for the thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    /// The working directory of the thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    /// The active approval policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<String>,
+    /// The active sandbox configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    /// Streaming events associated with this response.
+    #[serde(default)]
+    pub events: Vec<EventFrame>,
+    /// Arbitrary additional response data.
+    #[serde(default)]
+    pub data: Value,
+}
+
+/// Application-level requests that are not tied to a specific thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppRequest {
+    /// Query the server's capabilities.
+    Capabilities,
+    /// Read a configuration value by key.
+    ConfigGet { key: String },
+    /// Set a configuration key to a value.
+    ConfigSet { key: String, value: String },
+    /// Remove a configuration key.
+    ConfigUnset { key: String },
+    /// List all configuration entries.
+    ConfigList,
+    /// Reload configuration from disk and apply to the live runtime.
+    ///
+    /// Re-reads both `config.toml` and the sibling `permissions.toml`,
+    /// refreshing the live `Runtime.config` and `Runtime.exec_policy`
+    /// so headless clients can pick up external config-file *and*
+    /// permission-rule edits without restarting.
+    ///
+    /// Mirrors the TUI `reload_runtime_config` codepath for everything
+    /// reachable from the headless `Runtime`. MCP server connections
+    /// are not refreshed — changing `mcp_config_path` or the referenced
+    /// `mcp.json` still requires a headless-runtime restart. The TUI's
+    /// explicit `/mcp reload` operation is not part of this protocol path.
+    ConfigReload,
+    /// List available models.
+    Models,
+    /// List threads that are currently loaded in memory.
+    ThreadLoadedList,
+    /// Submit answers to a prior [`EventFrame::UserInputRequest`].
+    ///
+    /// `request_id` must match a pending clarification request. Headless
+    /// clients use this to return the user's selections back to the runtime.
+    SubmitUserInput {
+        request_id: String,
+        answers: Vec<UserInputAnswerEvent>,
+    },
+}
+
+/// Response to an [`AppRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppResponse {
+    /// Whether the request succeeded.
+    pub ok: bool,
+    /// The response payload.
+    pub data: Value,
+    /// Streaming events associated with this response.
+    #[serde(default)]
+    pub events: Vec<EventFrame>,
+}
+
+/// A simple prompt request that sends text to the model and returns output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptRequest {
+    /// Optional thread context for the prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// The prompt text.
+    pub prompt: String,
+    /// Model override, or the default if omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// Response to a [`PromptRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptResponse {
+    /// The model's output text.
+    pub output: String,
+    /// The model that produced the output.
+    pub model: String,
+    /// Streaming events associated with this response.
+    #[serde(default)]
+    pub events: Vec<EventFrame>,
+}
+
+/// Policy controlling when the agent must ask the user for approval before acting.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AskForApproval {
+    /// Ask for approval unless the action is on a trusted path/resource.
+    UnlessTrusted,
+    /// Only ask after a tool call fails.
+    OnFailure,
+    /// Ask every time a tool call is requested.
+    OnRequest,
+    /// Reject the action without asking, with details on which categories are blocked.
+    Reject {
+        sandbox_approval: bool,
+        rules: bool,
+        mcp_elicitations: bool,
+    },
+    /// Never ask; auto-approve all actions.
+    Never,
+}
+
+/// Classification of tool invocation origin.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    /// A built-in function tool.
+    Function,
+    /// An MCP (Model Context Protocol) tool.
+    Mcp,
+}
+
+/// Parameters for executing a local shell command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalShellParams {
+    /// The shell command to execute.
+    pub command: String,
+    /// Working directory for the command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Timeout in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// The payload of a tool call, discriminated by tool type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolPayload {
+    /// A built-in function call with JSON-encoded arguments.
+    Function { arguments: String },
+    /// A custom tool invocation with a free-form input string.
+    Custom { input: String },
+    /// A local shell command execution.
+    LocalShell { params: LocalShellParams },
+    /// An MCP tool invocation targeting a specific server and tool.
+    Mcp {
+        server: String,
+        tool: String,
+        raw_arguments: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        raw_tool_call_id: Option<String>,
+    },
+}
+
+/// The result of a tool call, discriminated by tool type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolOutput {
+    /// Result of a built-in function call.
+    Function {
+        /// The output body, if any.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body: Option<Value>,
+        /// Whether the call succeeded.
+        success: bool,
+    },
+    /// Result of an MCP tool call.
+    Mcp {
+        /// The result value returned by the MCP server.
+        result: Value,
+    },
+}
+
+impl ToolOutput {
+    /// Returns the tool's application-level success independently of transport.
+    ///
+    /// MCP success requires the top-level `isError` field to be omitted or the
+    /// literal boolean `false`; malformed present metadata fails closed.
+    pub fn success(&self) -> bool {
+        match self {
+            Self::Function { success, .. } => *success,
+            Self::Mcp { result } => {
+                matches!(result.get("isError"), None | Some(Value::Bool(false)))
+            }
+        }
+    }
+}
+
+/// Action to take for a network policy rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkPolicyRuleAction {
+    /// Allow network access to the host.
+    Allow,
+    /// Deny network access to the host.
+    Deny,
+}
+
+/// A proposed amendment to the network access policy for a specific host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkPolicyAmendment {
+    /// The host to amend the policy for.
+    pub host: String,
+    /// The action to apply.
+    pub action: NetworkPolicyRuleAction,
+}
+
+/// A user's decision on an approval request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReviewDecision {
+    /// Approve the action.
+    Approved,
+    /// Approve and also amend the execution policy.
+    ApprovedExecpolicyAmendment,
+    /// Approve for the remainder of this session only.
+    ApprovedForSession,
+    /// Approve with a network policy amendment.
+    NetworkPolicyAmendment {
+        host: String,
+        action: NetworkPolicyRuleAction,
+    },
+    /// Deny the action.
+    Denied,
+    /// Abort the entire turn.
+    Abort,
+}
+
+/// Status of an MCP server during startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpStartupStatus {
+    /// The server is in the process of starting.
+    Starting,
+    /// The server is ready to accept requests.
+    Ready,
+    /// The server failed to start.
+    Failed { error: String },
+    /// Startup was cancelled.
+    Cancelled,
+}
+
+/// A progress update for a single MCP server's startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpStartupUpdateEvent {
+    /// Name of the MCP server.
+    pub server_name: String,
+    /// Current startup status.
+    pub status: McpStartupStatus,
+}
+
+/// Details of an MCP server that failed to start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpStartupFailure {
+    /// Name of the MCP server that failed.
+    pub server_name: String,
+    /// Error description.
+    pub error: String,
+}
+
+/// Summary event emitted once all MCP servers have finished starting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpStartupCompleteEvent {
+    /// Servers that started successfully.
+    pub ready: Vec<String>,
+    /// Servers that failed to start.
+    pub failed: Vec<McpStartupFailure>,
+    /// Servers whose startup was cancelled.
+    pub cancelled: Vec<String>,
+}
+
+/// Context about a network access request that requires approval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkApprovalContext {
+    /// The host being accessed.
+    pub host: String,
+    /// The network protocol (e.g. `"https"`, `"tcp"`).
+    pub protocol: String,
+}
+
+/// A selectable option presented to the user in a clarification question.
+///
+/// Headless serialization shape for the `request_user_input` model tool,
+/// mirrored after the TUI's `UserInputOption`. Shared by the
+/// [`EventFrame::UserInputRequest`] frame and the [`AppRequest::SubmitUserInput`]
+/// reply path so both surfaces agree on the question schema.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserInputOptionEvent {
+    /// Short label for the option (also the value submitted when picked).
+    pub label: String,
+    /// Longer description shown alongside the label.
+    pub description: String,
+}
+
+/// A single clarification question posed to the user.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserInputQuestionEvent {
+    /// Compact header shown as the question title.
+    pub header: String,
+    /// Stable identifier used to correlate answers back to this question.
+    pub id: String,
+    /// The question body.
+    pub question: String,
+    /// 2-4 suggested answers.
+    pub options: Vec<UserInputOptionEvent>,
+    /// When `true`, the client should also offer a free-text response.
+    #[serde(default)]
+    pub allow_free_text: bool,
+    /// When `true`, the user may select more than one option.
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+/// An event requesting structured user input via a model-tool call.
+///
+/// Sibling of [`ExecApprovalRequestEvent`] for the clarification-question
+/// flow. Emitted fire-and-return by `Runtime::invoke_tool` when the model
+/// invokes `request_user_input` in a headless context.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserInputRequestEvent {
+    /// Identifier of the tool call requesting input.
+    pub call_id: String,
+    /// The turn during which the request was made.
+    pub turn_id: String,
+    /// Unique identifier for this user-input request (clients reply with it).
+    pub request_id: String,
+    /// 1-3 questions to present.
+    pub questions: Vec<UserInputQuestionEvent>,
+}
+
+/// One answer to a clarification question.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserInputAnswerEvent {
+    /// The `id` of the question this answer corresponds to.
+    pub id: String,
+    /// The selected option's label, or `"Other"` for a free-text response.
+    pub label: String,
+    /// The resolved value (option label, or the typed free-text).
+    pub value: String,
+}
+
+/// An event requesting user approval for a command execution or patch application.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecApprovalRequestEvent {
+    /// Identifier of the tool call requesting approval.
+    pub call_id: String,
+    /// Unique identifier for this approval request.
+    pub approval_id: String,
+    /// The turn during which the request was made.
+    pub turn_id: String,
+    /// The command that would be executed.
+    pub command: String,
+    /// The working directory for the command.
+    pub cwd: String,
+    /// Human-readable reason why approval is needed.
+    pub reason: String,
+    /// Policy rule that matched this approval request, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule: Option<Box<str>>,
+    /// Network context if the approval involves network access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_approval_context: Option<NetworkApprovalContext>,
+    /// Proposed execution policy rule amendments.
+    #[serde(default)]
+    pub proposed_execpolicy_amendment: Vec<String>,
+    /// Proposed network policy amendments.
+    #[serde(default)]
+    pub proposed_network_policy_amendments: Vec<NetworkPolicyAmendment>,
+    /// Additional permissions being requested.
+    #[serde(default)]
+    pub additional_permissions: Vec<String>,
+    /// The set of decisions the user can choose from.
+    #[serde(default)]
+    pub available_decisions: Vec<ReviewDecision>,
+}
+
+/// The channel a response delta is being written to.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseChannel {
+    /// The main visible text output.
+    #[default]
+    Text,
+    /// Internal reasoning / chain-of-thought output.
+    Reasoning,
+}
+
+impl ResponseChannel {
+    /// Returns `true` if this is the `Text` channel.
+    pub const fn is_text(&self) -> bool {
+        matches!(self, ResponseChannel::Text)
+    }
+}
+
+/// A user's approval decision sent in response to an approval request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalDecisionRequest {
+    /// The decision identifier (e.g. `"approved"`, `"denied"`).
+    pub decision: String,
+    /// Whether to remember this decision for future similar requests.
+    #[serde(default)]
+    pub remember: bool,
+}
+
+/// A single streaming event frame emitted during agent execution.
+///
+/// Events are tagged by the `event` field and cover the full lifecycle of a
+/// turn: response streaming, tool calls, MCP lifecycle, command execution,
+/// patch application, approvals, and errors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum EventFrame {
+    /// A new model response has started.
+    ResponseStart { response_id: String },
+    /// A incremental text delta for an in-progress response.
+    TextDelta {
+        response_id: String,
+        delta: String,
+        #[serde(default, skip_serializing_if = "ResponseChannel::is_text")]
+        channel: ResponseChannel,
+    },
+    /// The model response has finished.
+    ResponseEnd { response_id: String },
+    /// A tool call has begun.
+    ToolCallStart {
+        response_id: String,
+        tool_name: String,
+        arguments: Value,
+    },
+    /// A tool call has completed and produced a result.
+    ToolCallResult {
+        response_id: String,
+        tool_name: String,
+        output: Value,
+    },
+    /// Progress update for an MCP server starting up.
+    McpStartupUpdate { update: McpStartupUpdateEvent },
+    /// All MCP servers have finished starting.
+    McpStartupComplete { summary: McpStartupCompleteEvent },
+    /// An MCP tool call has begun.
+    McpToolCallBegin {
+        server_name: String,
+        tool_name: String,
+    },
+    /// An MCP tool call has finished.
+    McpToolCallEnd {
+        server_name: String,
+        tool_name: String,
+        ok: bool,
+    },
+    /// User approval is needed for a command execution.
+    ExecApprovalRequest { request: ExecApprovalRequestEvent },
+    /// User approval is needed for applying a patch.
+    ApplyPatchApprovalRequest { request: ExecApprovalRequestEvent },
+    /// A model tool is requesting structured clarification input from the user.
+    ///
+    /// Headless sibling of the TUI's `request_user_input` modal flow.
+    /// `request_id` correlates with an [`AppRequest::SubmitUserInput`] reply.
+    UserInputRequest { request: UserInputRequestEvent },
+    /// An MCP server is requesting user input (elicitation).
+    ElicitationRequest {
+        server_name: String,
+        request_id: String,
+        prompt: String,
+    },
+    /// A command has started executing.
+    ExecCommandBegin { command: String, cwd: String },
+    /// Incremental output from a running command.
+    ExecCommandOutputDelta { command: String, delta: String },
+    /// A command has finished executing.
+    ExecCommandEnd { command: String, exit_code: i32 },
+    /// A patch has started being applied to a file.
+    PatchApplyBegin { path: String },
+    /// A patch has finished being applied.
+    PatchApplyEnd { path: String, ok: bool },
+    /// A new turn has started within a thread.
+    TurnStarted { turn_id: String },
+    /// A turn has completed successfully.
+    TurnCompleted { turn_id: String },
+    /// HakusAgent 对齐：Python `AgentEvent.Cancelled`。Turn 被取消（未完成）。
+    Cancelled { turn_id: String, reason: String },
+    /// A thread goal was set or updated.
+    ThreadGoalUpdated { goal: ThreadGoal },
+    /// A thread goal was cleared.
+    ThreadGoalCleared { thread_id: String },
+    /// An error occurred during processing.
+    Error {
+        response_id: String,
+        message: String,
+    },
+}
