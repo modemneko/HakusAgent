@@ -3,8 +3,8 @@
 //! Exposes `/wechat login|status|logout|send <user> <text>|poll`.
 
 //! The command emits [`AppAction::WeChat(WeChatAction)`] variants which are
-handled in the UI event loop where the live `IlLinkClient` can be
-accessed.
+//! handled in the UI event loop where the live `IlLinkClient` can be
+//! accessed.
 
 use crate::commands::CommandResult;
 use crate::commands::traits::{CommandInfo, RegisterCommand};

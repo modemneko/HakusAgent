@@ -2135,6 +2135,32 @@ pub(crate) async fn apply_command_result(
                 });
                 app.status_message = Some(status);
             }
+            AppAction::WeChat(wc_action) => {
+                use crate::tui::app::types::WeChatAction;
+                let msg = match wc_action {
+                    WeChatAction::StartLogin => {
+                        "WeChat login: feature not yet wired to the TUI event loop."
+                    }
+                    WeChatAction::ShowStatus => {
+                        "WeChat status: feature not yet wired to the TUI event loop."
+                    }
+                    WeChatAction::Logout => {
+                        "WeChat logout: feature not yet wired to the TUI event loop."
+                    }
+                    WeChatAction::Send { to_user, text } => {
+                        // TODO: integrate with IlLinkClient once embedded in App.
+                        let _ = (to_user, text);
+                        "WeChat send: feature not yet wired to the TUI event loop."
+                    }
+                    WeChatAction::Poll => {
+                        "WeChat poll: feature not yet wired to the TUI event loop."
+                    }
+                };
+                app.add_message(HistoryCell::System {
+                    content: msg.to_string(),
+                });
+                app.status_message = Some(msg.to_string());
+            }
         }
     }
 
