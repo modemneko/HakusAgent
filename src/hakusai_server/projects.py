@@ -212,7 +212,9 @@ def resolve_working_dir(project_id: Optional[str]) -> Optional[str]:
       - project_id doesn't exist in the registry (deleted?)
       - the project's folder no longer exists on disk
 
-    The caller (agent_bridge) treats None as "use the default _REPO_ROOT".
+    The caller (agent_bridge) treats None as "use the default workspace"
+    (the user's home, or $HAKUS_WORKSPACE if set) — NOT the sidecar's
+    source tree. An active project is what pins the agent to a folder.
     """
     if not project_id or project_id == "none":
         return None

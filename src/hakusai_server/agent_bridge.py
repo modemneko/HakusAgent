@@ -34,13 +34,10 @@ Two reasons:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
 import threading
-import time
-import urllib.request
 from typing import Any, AsyncIterator, Dict, Optional
 
 from hakus.modes import DEFAULT_RUN_MODE, DEEP_MODE, SWIFT_MODE, normalize_run_mode
@@ -56,6 +53,20 @@ logger = get_logger("haku.agent.bridge")
 
 # Project root is two levels above src/hakusai_server/agent_bridge.py
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Default working directory when the user is NOT working in a registered
+# project ("不在项目中工作" / no active project selected).
+#
+# The old default was _REPO_ROOT (this sidecar's source tree), which made the
+# agent read/write files inside the HakusAgent repo itself — so the AI always
+# "thought it was in the HakusAgent folder" even when the user meant to work
+# somewhere neutral. That was wrong: launching the desktop app has nothing to
+# do with where the agent should operate.
+#
+# Now the neutral default is the user's home directory, overridable via the
+# HAKUS_WORKSPACE env var (e.g. a sandbox dir). This keeps the agent out of the
+# sidecar's source tree unless the user explicitly registers a project.
+_DEFAULT_WORKSPACE = os.environ.get("HAKUS_WORKSPACE") or os.path.expanduser("~")
 
 _SIDECAR_SYSTEM_PROMPT = """\
 You are HakusAI, an AI-powered development assistant running inside the HakusAI sidecar.
@@ -77,63 +88,6 @@ PERSISTENCE RULES (IMPORTANT — do not stop prematurely):
 
 Current workspace root: {working_dir}
 """
-
-# #region debug-point helper
-_DEBUG_ENV_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    ".dbg", "agent-stalls-after-tools.env",
-)
-_DEBUG_URL = "http://127.0.0.1:7777/event"
-_DEBUG_SESSION = "agent-stalls-after-tools"
-
-
-def _debug_log(hypothesis_id: str, location: str, msg: str, data: Optional[Dict[str, Any]] = None) -> None:
-    try:
-        url = _DEBUG_URL
-        session = _DEBUG_SESSION
-        try:
-            with open(_DEBUG_ENV_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("DEBUG_SERVER_URL="):
-                        url = line.split("=", 1)[1].strip()
-                    elif line.startswith("DEBUG_SESSION_ID="):
-                        session = line.split("=", 1)[1].strip()
-        except Exception:
-            pass
-        payload = {
-            "sessionId": session,
-            "runId": "pre",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "msg": f"[DEBUG] {msg}",
-            "data": data or {},
-            "ts": time.time(),
-        }
-        body = json.dumps(payload).encode("utf-8")
-        try:
-            req = urllib.request.Request(
-                url,
-                data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=1).read()
-        except Exception:
-            pass
-        try:
-            local_log = os.path.join(
-                os.path.dirname(_DEBUG_ENV_PATH),
-                f"trae-debug-log-{session}.ndjson.local",
-            )
-            with open(local_log, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-
-# #endregion
 
 
 # Per-session AgentCore cache. Each (session_id, provider) pair gets its
@@ -169,21 +123,12 @@ def post_answer(session_id: str, question_id: str, choice: str) -> bool:
     """
     from hakus.protocol import AnswerOp
 
-    # #region debug-point A:post-answer
-    _debug_log("A", "agent_bridge.py:post_answer", "answer posted", {"session_id": session_id, "question_id": question_id, "choice": choice})
-    # #endregion
     with _session_op_lock:
         queue = _session_op_receivers.get(session_id)
     if queue is None:
-        # #region debug-point A:post-answer-no-queue
-        _debug_log("A", "agent_bridge.py:post_answer", "no queue for session", {"session_id": session_id})
-        # #endregion
         return False
     try:
         queue.put_nowait(AnswerOp(question_id=question_id, choice=choice))
-        # #region debug-point A:post-answer-queued
-        _debug_log("A", "agent_bridge.py:post_answer", "answer queued", {"session_id": session_id, "question_id": question_id, "queue_size": queue.qsize()})
-        # #endregion
         return True
     except asyncio.QueueFull:
         logger.warning(
@@ -278,13 +223,15 @@ def get_or_create_agent(
     ignore the user's selection.
     """
     resolved_provider = _resolve_provider(provider)
-    # Normalize working_dir: None / "" / non-existent path → _REPO_ROOT.
-    # projects.resolve_working_dir() already returns a realpath'd value
-    # when coming from the project picker, but we double-check here so
-    # a stale projects.json entry pointing at a deleted folder doesn't
-    # crash AgentCore.__init__.
+    # Normalize working_dir: None / "" / non-existent path → _DEFAULT_WORKSPACE
+    # (the user's home unless HAKUS_WORKSPACE is set). The old fallback was
+    # _REPO_ROOT — the sidecar's source tree — which made every "no project"
+    # session operate inside the HakusAgent repo. projects.resolve_working_dir()
+    # already returns a realpath'd value when coming from the project picker,
+    # but we double-check here so a stale projects.json entry pointing at a
+    # deleted folder doesn't crash AgentCore.__init__.
     resolved_working_dir = (
-        working_dir if working_dir and os.path.isdir(working_dir) else _REPO_ROOT
+        working_dir if working_dir and os.path.isdir(working_dir) else _DEFAULT_WORKSPACE
     )
     cache_key = (session_id, resolved_provider, resolved_working_dir)
     if cache_key in _agent_cache:
@@ -481,10 +428,6 @@ async def run_turn_stream(
         message_length=len(message),
     )
 
-    # #region debug-point E:stream-start
-    _debug_log("E", "agent_bridge.py:run_turn_stream", "stream start", {"session_id": session_id, "provider": provider})
-    # #endregion
-
     # ── Tri-mode routing (Swift / Deep / Fleet) ────────────────────────
     # Swift 模式 (default): 单 AgentCore 循环 + 规则 Tester (零 LLM)
     #   - 省 ~84% token：合并 Planner+Dev，Tester 改规则检测
@@ -533,7 +476,7 @@ async def run_turn_stream(
             deep_workspace_dir = (
                 benchmark_workspace
                 or getattr(agent_context, "working_dir", None)
-                or _REPO_ROOT
+                or _DEFAULT_WORKSPACE
             )
             use_deep_single_task = True
             use_orchestrator = True
@@ -586,7 +529,7 @@ async def run_turn_stream(
         if use_orchestrator:
             # Orchestrator mode: multi-agent pipeline (Plan→Develop→Test→Fix)
             from hakus.orchestrator import Orchestrator, OrchestratorConfig
-            workspace_dir = deep_workspace_dir or _REPO_ROOT
+            workspace_dir = deep_workspace_dir or _DEFAULT_WORKSPACE
             orch = Orchestrator(
                 root_agent=agent,
                 workspace_dir=workspace_dir,
@@ -682,11 +625,6 @@ async def run_turn_stream(
                         )
                 except Exception as _tee_err:
                     logger.debug(f"session_log tee failed: {_tee_err}")
-
-            if etype in ("question_asked", "question_answered"):
-                # #region debug-point E:question-event-forward
-                _debug_log("E", "agent_bridge.py:run_turn_stream", f"forwarding {etype}", {"session_id": session_id, "question_id": evt_dict.get("question_id")})
-                # #endregion
 
             if etype == "text_delta":
                 text = evt_dict.get("text", "")

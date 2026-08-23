@@ -43,9 +43,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { apiClient } from '@/api/client'
-import { pickFolder } from '@/api/tauriBridge'
-import type { AgentMode, PermissionMode, ProviderInfo, TaskProgressAttachment } from '@/api/types'
+  import { apiClient } from '@/api/client'
+  import { pickFolder } from '@/api/tauriBridge'
+  import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment } from '@/api/types'
 import {
   REASONING_EFFORTS,
   REASONING_EFFORT_META,
@@ -324,6 +324,12 @@ export function Composer({
   const [availablePermissions, setAvailablePermissions] = useState<PermissionMode[]>(['auto', 'ask', 'bypass'])
   const [permissionLoading, setPermissionLoading] = useState(false)
   const [switchingProvider, setSwitchingProvider] = useState(false)
+  // Model picker (provider → collapsible model list). Models are fetched
+  // lazily per provider the first time the user expands it, and cached so
+  // re-opening the dropdown is instant. keyed by provider id.
+  const [modelsCache, setModelsCache] = useState<Record<string, ProviderModel[]>>({})
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
+  const [modelsLoading, setModelsLoading] = useState(false)
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -338,7 +344,6 @@ export function Composer({
   const defaultModel = useSettingsStore((s) => s.defaultModel)
   const providersLoading = useSettingsStore((s) => s.providersLoading)
   const loadProviders = useSettingsStore((s) => s.loadProviders)
-  const setDefaultModel = useSettingsStore((s) => s.setDefaultModel)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
   const model = useAppStore((s) => s.model)
   const agentMode = useAppStore((s) => s.agentMode)
@@ -374,7 +379,9 @@ export function Composer({
   const modelText = model ? `${model.provider} ${model.model_name}` : currentProvider?.model_name
   const canUseImages = isMultimodalProvider(currentProvider, modelText)
   const activeReasoningEffort = getReasoningEffort(agentMode)
-  const currentProviderLabel = currentProvider?.display_name || defaultModel || "No model"
+  const currentProviderLabel = currentProvider
+    ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
+    : defaultModel || "No model"
   const activePermissionMeta = PERMISSION_META[permission]
   const ActivePermissionIcon = activePermissionMeta.icon
 
@@ -738,14 +745,46 @@ export function Composer({
     addAttachments(Array.from(e.dataTransfer.files))
   }
 
-  const handleProviderSwitch = async (providerId: string) => {
-    if (providerId === defaultModel || isStreaming) return
+  // Toggle a provider row in the model picker. First expand fetches its
+  // model list (cached from then on); collapsing just hides the list.
+  const toggleProviderModels = async (providerId: string) => {
+    if (expandedProvider === providerId) {
+      setExpandedProvider(null)
+      return
+    }
+    setExpandedProvider(providerId)
+    if (modelsCache[providerId]) return
+    setModelsLoading(true)
+    try {
+      const r = await apiClient.fetchProviderModels(providerId)
+      const models = r.ok && r.models?.length ? r.models : []
+      setModelsCache((prev) => ({ ...prev, [providerId]: models }))
+      if (!models.length) {
+        toast.info('该 provider 未返回任何模型')
+      }
+    } catch (e: any) {
+      toast.error(`获取模型失败：${e?.message || e}`)
+    } finally {
+      setModelsLoading(false)
+    }
+  }
+
+  // Pick a specific model. Persists it as that provider's model_name and
+  // makes the provider the default, so the composer reads like
+  // "provider/model" (the screenshot behavior).
+  const handleModelSelect = async (provider: ProviderInfo, modelId: string) => {
+    if (isStreaming) return
+    if (provider.model_name === modelId && provider.is_default) return
     setSwitchingProvider(true)
     try {
-      await setDefaultModel(providerId)
+      await apiClient.updateProvider({
+        provider: provider.id,
+        model_name: modelId,
+        set_as_default: true,
+      } as any)
+      await loadProviders()
       await refreshServerInfo()
-      const provider = providers.find((p) => p.id === providerId)
-      toast.success(`Model switched to ${provider?.display_name || providerId}`)
+      toast.success(`Model switched to ${provider.display_name}/${modelId}`)
     } catch (e: any) {
       toast.error(`Model switch failed: ${e?.message || e}`)
     } finally {
@@ -1244,27 +1283,81 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[260px]">
+                <DropdownMenuContent align="start" side="top" className="w-[280px]">
                   {providers.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
                     </div>
                   )}
-                  {providers.map((provider) => (
-                    <DropdownMenuItem
-                      key={provider.id}
-                      onClick={() => handleProviderSwitch(provider.id)}
-                      className="gap-2 py-2"
-                    >
-                      <ProviderLogo providerId={provider.id} size={16} className="shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{provider.display_name}</div>
-                        <div className="truncate text-[10px] text-muted-foreground">
-                        </div>
+                  {providers.map((provider) => {
+                    const isExpanded = expandedProvider === provider.id
+                    const models = modelsCache[provider.id]
+                    const isCurrent = provider.is_default
+                    return (
+                      <div key={provider.id} className="p-0.5">
+                        {/* Provider row — click toggles the model list; the
+                            chevron/right arrow is the expand affordance. */}
+                        <button
+                          type="button"
+                          onClick={() => void toggleProviderModels(provider.id)}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.06]',
+                            isExpanded && 'bg-foreground/[0.04]',
+                          )}
+                        >
+                          <ProviderLogo providerId={provider.id} size={16} className="shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm">{provider.display_name}</div>
+                            <div className="truncate text-[10px] text-muted-foreground">
+                              {provider.model_name || '未设置模型'}
+                            </div>
+                          </div>
+                          {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                          <ChevronDown
+                            className={cn(
+                              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+                              isExpanded && 'rotate-180',
+                            )}
+                          />
+                        </button>
+
+                        {/* Collapsible model list for this provider. */}
+                        {isExpanded && (
+                          <div className="ml-3 border-l border-border/60 pl-1.5">
+                            {modelsLoading && !models ? (
+                              <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                加载模型…
+                              </div>
+                            ) : models && models.length > 0 ? (
+                              models.map((m) => {
+                                const isSelected =
+                                  isCurrent && provider.model_name === m.id
+                                return (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => void handleModelSelect(provider, m.id)}
+                                    className={cn(
+                                      'flex w-full items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-left text-xs transition-colors hover:bg-foreground/[0.06]',
+                                      isSelected && 'bg-foreground/[0.04]',
+                                    )}
+                                  >
+                                    <span className="min-w-0 flex-1 truncate">{m.name || m.id}</span>
+                                    {isSelected && <Check className="h-3 w-3 shrink-0 text-primary" />}
+                                  </button>
+                                )
+                              })
+                            ) : (
+                              <div className="px-2 py-2 text-xs text-muted-foreground">
+                                该 provider 无可用模型
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {provider.is_default && <Check className="h-3.5 w-3.5 text-primary" />}
-                    </DropdownMenuItem>
-                  ))}
+                    )
+                  })}
                 </DropdownMenuContent>
               </DropdownMenu>
 

@@ -2,6 +2,9 @@
 # Local sidecar test venv (do not commit)
 .venv-sidecar-test/
 
+# Local agent-debug tooling (dev-only, never commit)
+.dbg/
+
 # Stray scratch/experiment dirs (not part of project)
 frontier-swe/
 

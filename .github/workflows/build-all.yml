@@ -77,6 +77,13 @@ jobs:
       - run: cargo install cargo-ndk --locked
         if: matrix.android
 
+      # `libdbus-1` is needed by the opt-in OS keyring backend (keyring ->
+      # secret-service -> dbus -> libdbus-sys). It is only compiled on Linux
+      # targets, so install the dev package before a native build.
+      - name: Install system deps (linux native)
+        if: matrix.os == 'ubuntu-22.04' && matrix.cross == false && matrix.android != true
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Build (Android Bionic)
         if: matrix.android
         env:
@@ -85,10 +92,17 @@ jobs:
           cargo ndk --platform 26 -t arm64-v8a build --release --bin hakuscli
           mkdir -p dist/hakuscli-android-arm64
           cp target/aarch64-linux-android/release/hakuscli dist/hakuscli-android-arm64/
-          tar czf "../../hakuscli-android-arm64.tar.gz" -C dist hakuscli-android-arm64
+          tar czf hakuscli-android-arm64.tar.gz -C dist hakuscli-android-arm64
 
       - name: Build (cross)
         if: matrix.cross == true && matrix.android != true
+        env:
+          # Cross compiles inside a container. Native system libraries must be
+          # installed inside that container via CROSS_APT_DEPS, otherwise
+          # libdbus-sys fails to find `dbus-1`. Only linux targets pull in
+          # dbus; aarch64-unknown-linux-gnu additionally needs a cross C
+          # toolchain (gcc-aarch64-linux-gnu).
+          CROSS_APT_DEPS: ${{ matrix.os == 'ubuntu-22.04' && 'libdbus-1-dev,gcc-aarch64-linux-gnu' || '' }}
         run: |
           cargo install cross --locked
           cross build --release --locked --target ${{ matrix.target }} --bin hakuscli
