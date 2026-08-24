@@ -86,7 +86,7 @@ impl ExecPolicyConfig {
 }
 
 pub fn default_execpolicy_path() -> Option<PathBuf> {
-    crate::config::hakus_home().ok().map(|home| home.join("execpolicy.toml"))
+    hakus_config::hakus_home().ok().map(|home| home.join("execpolicy.toml"))
 }
 
 pub fn load_default_policy() -> Result<Option<ExecPolicyConfig>> {

@@ -36,7 +36,7 @@ pub const MAX_HISTORY_ENTRIES: usize = 1000;
 const HISTORY_FILE_NAME: &str = "composer_history.txt";
 
 fn default_history_path() -> Option<PathBuf> {
-    crate::config::hakus_home()
+    hakus_config::hakus_home()
         .ok()
         .map(|root| root.join(HISTORY_FILE_NAME))
 }

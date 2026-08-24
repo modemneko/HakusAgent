@@ -39,7 +39,7 @@ use super::CommandResult;
 
 /// Path to the global user commands directory: `~/.hakus/commands/`.
 fn global_commands_dir() -> PathBuf {
-    crate::config::hakus_home().unwrap_or_else(|_| PathBuf::from(".hakus"))
+    hakus_config::hakus_home().unwrap_or_else(|_| PathBuf::from(".hakus"))
         .join("commands")
 }
 

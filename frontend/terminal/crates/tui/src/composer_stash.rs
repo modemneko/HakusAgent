@@ -70,7 +70,7 @@ pub struct StashedDraft {
 }
 
 fn default_stash_path() -> Option<PathBuf> {
-    crate::config::hakus_home()
+    hakus_config::hakus_home()
         .ok()
         .map(|home| home.join(STASH_FILE_NAME))
 }
