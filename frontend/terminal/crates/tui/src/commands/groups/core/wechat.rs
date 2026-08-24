@@ -9,8 +9,7 @@
 use crate::commands::CommandResult;
 use crate::commands::traits::{CommandInfo, RegisterCommand};
 use crate::localization::MessageId;
-use crate::tui::app::{App, AppAction};
-use crate::tui::app::types::WeChatAction;
+use crate::tui::app::{AppAction, WeChatAction};
 
 // ---------------------------------------------------------------------------
 // CommandInfo constants

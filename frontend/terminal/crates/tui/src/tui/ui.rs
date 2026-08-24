@@ -141,7 +141,7 @@ use super::app::{
     AppAction, AppMode, ComposerSubmitAction, ComposerSubmitChord, EffectiveReasoningEffort,
     GoalControlIntent, OnboardingState, PendingGoalControl, PendingProviderSwitch, QueuedMessage,
     ReasoningEffort, StatusToast, StatusToastLevel, SubmitDisposition, TaskPanelEntry,
-    TaskPanelEntryKind, ToolEvidence, TuiOptions, bound_agent_activity_text, is_stop_word,
+    TaskPanelEntryKind, ToolEvidence, TuiOptions, WeChatAction, bound_agent_activity_text, is_stop_word,
     looks_like_slash_command_input, shell_command_from_bang_input,
 };
 use super::approval::{

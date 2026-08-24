@@ -2136,7 +2136,6 @@ pub(crate) async fn apply_command_result(
                 app.status_message = Some(status);
             }
             AppAction::WeChat(wc_action) => {
-                use crate::tui::app::types::WeChatAction;
                 let msg = match wc_action {
                     WeChatAction::StartLogin => {
                         "WeChat login: feature not yet wired to the TUI event loop."

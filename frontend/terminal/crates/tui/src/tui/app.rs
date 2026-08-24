@@ -66,7 +66,7 @@ pub use types::{
     AppAction, AppMode, AppModeUi, AutomationAction, ComposerDensity, ComposerSubmitAction,
     ComposerSubmitChord, InitialInput, McpUiAction, QueuedMessage, ReasoningEffort,
     SettingSelection, ShellJobAction, SubmitDisposition, TaskPanelEntry, TaskPanelEntryKind,
-    ToolCollapseMode, ToolDetailRecord, TranscriptSpacing, TuiOptions, VimMode,
+    ToolCollapseMode, ToolDetailRecord, TranscriptSpacing, TuiOptions, VimMode, WeChatAction,
 };
 pub(crate) use types::{
     CacheReplayTarget, EffectiveReasoningEffort, GoalControlIntent, PendingGoalControl,
