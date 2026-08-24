@@ -32,7 +32,7 @@ Legacy note: old references to `xiaohongshu-card.md` should route to `social-car
 | `canvas-and-device.md` | Viewport presets, device frames, deck canvases, social-card sizes, long-image/export surfaces, fixed aspect ratios. |
 | `quality-gate.md` | Final blocking delivery gate for generated or major-edited design artifacts. |
 | `export.md` | Package, convert, or hand off the current artifact. |
-| `skills/version-management/SKILL.md` | Parallel version-management skill for editable web entry files (`.html`, `.jsx`, `.tsx`, `.vue`); not a design reference. |
+| `skills/core/version-management/SKILL.md` | Parallel version-management skill for editable web entry files (`.html`, `.jsx`, `.tsx`, `.vue`); not a design reference. |
 
 ## Template Library
 

@@ -102,4 +102,4 @@ the code. Apply `horizontal-craft/chinese-typography.md` if substantial Chinese 
 ## Handoff
 
 May continue to: `design-system-reference.md`, `design-system-generation.md`, `export.md`,
-`skills/version-management/SKILL.md`, built-in selected-region edits, and local parameter handling.
+`skills/core/version-management/SKILL.md`, built-in selected-region edits, and local parameter handling.

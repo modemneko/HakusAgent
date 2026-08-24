@@ -450,7 +450,7 @@ horizontal-craft/technique-library.md        → 超出纯 CSS 的效果能服�
 
 ## Web entry / version management（Web 入口 / 版本管理）
 
-`quality-gate.md` 通过后，**当且仅当交付物含入口前端文件**（`.html`/`.jsx`/`.tsx`/`.vue`）时运行 `skills/version-management/SKILL.md`（按输出类型触发，不是场景）。它管项目路径/素材/git/版本卡片；只贴在对话里或存到工作区根目录**不算**交付。纯图片/文档/PPTX/JSON/DESIGN.md/无新 Web 入口的导出包则跳过。
+`quality-gate.md` 通过后，**当且仅当交付物含入口前端文件**（`.html`/`.jsx`/`.tsx`/`.vue`）时运行 `skills/core/version-management/SKILL.md`（按输出类型触发，不是场景）。它管项目路径/素材/git/版本卡片；只贴在对话里或存到工作区根目录**不算**交付。纯图片/文档/PPTX/JSON/DESIGN.md/无新 Web 入口的导出包则跳过。
 
 ---
 

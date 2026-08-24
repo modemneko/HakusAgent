@@ -207,7 +207,7 @@ Rules:
 - `canvas-and-device.md` — fixed export surface, embedded preview, mobile-first viewport, or snapshot/social summary.
 - `design-system-reference.md` — brand/style/template/DESIGN.md reference.
 
-Do not load `export.md` or `skills/version-management/SKILL.md` as references. They are delivery/handoff flows.
+Do not load `export.md` or `skills/core/version-management/SKILL.md` as references. They are delivery/handoff flows.
 
 ---
 
