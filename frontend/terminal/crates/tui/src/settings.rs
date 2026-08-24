@@ -1,6 +1,6 @@
 //! Settings system - Persistent user preferences
 //!
-//! Settings are stored at ~/.hakus/settings.toml, with legacy fallbacks.
+//! Settings are stored under the canonical Hakus data root.
 //!
 //! TUI-specific preferences (theme, keybinds, font_size) that survive project
 //! switches are stored separately in tui.toml. See [`TuiPrefs`].
@@ -65,8 +65,7 @@ impl InlineDiffMode {
 /// TUI-specific preferences that are decoupled from agent/project config so
 /// they survive project switches (issue #437).
 ///
-/// Stored at `~/.hakus/tui.toml` on new installs, with
-/// `~/.deepseek/tui.toml` retained as a legacy read fallback. When the file is
+/// Stored at `~/.hakus/tui.toml`. When the file is
 /// absent the values fall back to the `[tui]` section of the normal
 /// `config.toml` (via [`TuiPrefs::load`]), and then to the struct's own
 /// defaults.
@@ -135,7 +134,7 @@ pub struct KeybindPrefs {
 #[allow(dead_code)] // see TuiPrefs note above; deferred to a later settings pass (#657).
 impl TuiPrefs {
     /// Return the canonical path of the TUI preferences file:
-    /// `~/.hakus/tui.toml`, or legacy `~/.deepseek/tui.toml` when present.
+    /// `~/.hakus/tui.toml`.
     ///
     /// Tests may override the home directory through the canonical
     /// `HAKUS_CONFIG_PATH` environment variable. The parent directory of
@@ -158,7 +157,7 @@ impl TuiPrefs {
         tui_prefs_path_from_environment()
     }
 
-    /// Load TUI preferences from `~/.hakus/tui.toml` or a legacy fallback.
+    /// Load TUI preferences from `~/.hakus/tui.toml`.
     ///
     /// If the file does not exist the struct defaults are returned — no error
     /// is produced. Parse errors surface as `Err` so the caller can warn the
@@ -248,30 +247,14 @@ fn tui_prefs_path_from_environment() -> Result<PathBuf> {
             anyhow::anyhow!("Failed to resolve tui.toml path: no Hakus home found.")
         });
     }
-    let legacy_home = hakus_config::legacy_deepseek_home()
-        .ok()
-        .map(|home| home.join(TUI_PREFS_FILE_NAME));
-
-    resolve_tui_prefs_path_from_candidates(primary, legacy_home)
+    resolve_tui_prefs_path_from_candidates(primary, None)
 }
 
 fn resolve_tui_prefs_path_from_candidates(
     primary: Option<PathBuf>,
-    legacy_home: Option<PathBuf>,
+    _legacy_home: Option<PathBuf>,
 ) -> Result<PathBuf> {
-    if let Some(path) = primary.as_ref()
-        && path.exists()
-    {
-        return Ok(path.clone());
-    }
-
-    if let Some(path) = legacy_home.as_ref()
-        && path.exists()
-    {
-        return Ok(path.clone());
-    }
-
-    primary.or(legacy_home).ok_or_else(|| {
+    primary.ok_or_else(|| {
         anyhow::anyhow!("Failed to resolve tui preferences path: no home directory found.")
     })
 }
@@ -609,7 +592,7 @@ impl Default for Settings {
             // The whale lives in the terminal window title (OSC 0). The in-app
             // header defaults to the static typographic `cw` mark so the two
             // surfaces do not compete with a second spinner.
-            status_indicator: "cw".to_string(),
+            status_indicator: "hakus".to_string(),
             synchronized_output: "auto".to_string(),
             workspace_follow_symlinks: false,
             feature_intro_shown: false,
@@ -736,9 +719,7 @@ pub fn preset_fields(name: &str) -> Option<&'static [(&'static str, &'static str
 impl Settings {
     /// Get the canonical settings file path.
     ///
-    /// New writes should target `~/.hakus/settings.toml`. Legacy
-    /// DeepSeek-branded paths remain readable as fallbacks during load, but we
-    /// no longer surface them as the primary path in `/config`.
+    /// Settings are stored at `~/.hakus/settings.toml`.
     pub fn path() -> Result<PathBuf> {
         let (primary, _legacy_home, legacy_config_dir) = settings_path_candidates();
         primary.or(legacy_config_dir).ok_or_else(|| {
@@ -753,12 +734,10 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Load settings for a diagnostic without migrating a legacy file.
+    /// Load settings for a diagnostic without writing a settings file.
     ///
-    /// This preserves the same candidate precedence, parser normalization, and
-    /// environment overlays as [`Settings::load`]. Unlike an interactive
-    /// startup, diagnostics must not create `~/.hakus/settings.toml` just
-    /// because they inspected a legacy `~/.deepseek/settings.toml` file.
+    /// This preserves the same parser normalization and environment overlays
+    /// as [`Settings::load`]. Diagnostics never create a settings file.
     pub(crate) fn load_read_only() -> Result<Self> {
         let mut settings = Self::load_persisted_read_only()?;
         settings.apply_env_overrides();
@@ -779,8 +758,7 @@ impl Settings {
         Self::load_persisted_from_candidates(primary, legacy_home, legacy_config_dir)
     }
 
-    /// Load normalized disk values for a diagnostic without creating a
-    /// primary settings file from a legacy fallback.
+    /// Load normalized disk values for a diagnostic without writing settings.
     fn load_persisted_read_only() -> Result<Self> {
         let (primary, legacy_home, legacy_config_dir) = settings_path_candidates();
         Self::load_persisted_from_candidates_with_migration(
@@ -1986,28 +1964,10 @@ impl Settings {
 
 fn resolve_settings_path_from_candidates(
     primary: Option<PathBuf>,
-    legacy_home: Option<PathBuf>,
-    legacy_config_dir: Option<PathBuf>,
+    _legacy_home: Option<PathBuf>,
+    _legacy_config_dir: Option<PathBuf>,
 ) -> Result<PathBuf> {
-    if let Some(path) = primary.as_ref()
-        && path.exists()
-    {
-        return Ok(path.clone());
-    }
-
-    if let Some(path) = legacy_home
-        && path.exists()
-    {
-        return Ok(path);
-    }
-
-    if let Some(path) = legacy_config_dir.as_ref()
-        && path.exists()
-    {
-        return Ok(path.clone());
-    }
-
-    primary.or(legacy_config_dir).ok_or_else(|| {
+    primary.ok_or_else(|| {
         anyhow::anyhow!("Failed to resolve settings path: no config directory found.")
     })
 }
@@ -2378,9 +2338,8 @@ fn settings_path_candidates() -> (Option<PathBuf>, Option<PathBuf>, Option<PathB
 
 fn settings_path_candidates_from_environment() -> (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)
 {
-    // Allow tests to override the settings directory via the same env vars
-    // used for config. HAKUS_CONFIG_PATH is canonical; the legacy alias
-    // remains a read-only fallback for existing installs.
+    // Allow tests to override the settings directory via the canonical config
+    // path environment variable.
     if let Some(parent) = config_override_parent() {
         return (Some(parent.join(SETTINGS_FILE_NAME)), None, None);
     }
@@ -2388,21 +2347,12 @@ fn settings_path_candidates_from_environment() -> (Option<PathBuf>, Option<PathB
     let primary = hakus_config::hakus_home()
         .ok()
         .map(|home| home.join(SETTINGS_FILE_NAME));
-    if hakus_config::hakus_home_is_explicit() {
-        return (primary, None, None);
-    }
-    let legacy_home = hakus_config::legacy_deepseek_home()
-        .ok()
-        .map(|home| home.join(SETTINGS_FILE_NAME));
-    let legacy_config_dir =
-        dirs::config_dir().map(|dir| dir.join("deepseek").join(SETTINGS_FILE_NAME));
-
-    (primary, legacy_home, legacy_config_dir)
+    (primary, None, None)
 }
 
 fn config_override_parent() -> Option<PathBuf> {
     fn read() -> Option<PathBuf> {
-        for var in ["HAKUS_CONFIG_PATH", "DEEPSEEK_CONFIG_PATH"] {
+        for var in ["HAKUS_CONFIG_PATH"] {
             if let Ok(config_path) = std::env::var(var) {
                 let config_path = config_path.trim();
                 if !config_path.is_empty() {
@@ -2662,10 +2612,10 @@ fn normalize_tool_collapse_mode(value: &str) -> &str {
 /// in `update_setting` can surface a clear error.
 fn normalize_status_indicator(value: &str) -> &str {
     match value.trim().to_ascii_lowercase().as_str() {
-        "cw" | "mark" | "text" => "cw",
+        "cw" | "hakus" | "mark" | "text" => "hakus",
         // The whale emoji header chip is retired (2026-07-23): persisted
         // opt-ins migrate to the typographic mark on load.
-        "whale" | "🐳" | "🐋" => "cw",
+        "whale" | "🐳" | "🐋" => "hakus",
         "dots" | "dot" => "dots",
         "off" | "none" | "hidden" | "false" => "off",
         _ => value,
@@ -4841,7 +4791,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_load_migrates_legacy_deepseek_home_into_hakus_home_without_explicit_home() {
+    fn settings_load_ignores_legacy_deepseek_home_without_explicit_home() {
         let _g = config_path_test_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let primary = tmp.path().join(".hakus").join("settings.toml");
@@ -4855,10 +4805,10 @@ mod tests {
 
         let loaded = Settings::load_persisted().expect("load persisted settings");
 
-        assert!(loaded.low_motion, "legacy settings should still be read");
+        assert!(!loaded.low_motion, "legacy settings must not be read");
         assert!(
-            primary.exists(),
-            "settings load should migrate to primary path"
+            !primary.exists(),
+            "settings load must not migrate a legacy path"
         );
         let display = loaded.display(crate::localization::Locale::En);
         assert!(
@@ -4868,7 +4818,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_load_read_only_reads_legacy_home_without_creating_primary() {
+    fn settings_load_read_only_ignores_legacy_home_without_creating_primary() {
         let _g = config_path_test_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let primary = tmp.path().join(".hakus").join("settings.toml");
@@ -4884,11 +4834,11 @@ mod tests {
 
         let loaded = Settings::load_read_only().expect("read-only settings load");
 
-        assert_eq!(loaded.default_mode, "plan");
+        assert_eq!(loaded.default_mode, "agent");
         assert!(loaded.low_motion, "environment overlays still apply");
         assert!(
             !loaded.fancy_animations,
-            "environment overlays still apply to parsed legacy settings"
+            "environment overlays still apply to canonical settings"
         );
         assert!(
             !primary.exists(),
@@ -4902,7 +4852,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_load_migrates_platform_legacy_fallback_into_hakus_home_without_explicit_home() {
+    fn settings_load_ignores_platform_legacy_fallback_without_explicit_home() {
         let _g = config_path_test_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let primary = tmp.path().join(".hakus").join("settings.toml");
@@ -4929,10 +4879,10 @@ mod tests {
         )
         .expect("load persisted settings");
 
-        assert!(loaded.low_motion, "legacy settings should still be read");
+        assert!(!loaded.low_motion, "legacy settings must not be read");
         assert!(
-            primary.exists(),
-            "legacy fallback should be copied into primary"
+            !primary.exists(),
+            "legacy fallback must not be copied into primary"
         );
         let display = loaded.display(crate::localization::Locale::En);
         assert!(
@@ -5039,7 +4989,7 @@ mod tests {
     }
 
     #[test]
-    fn tui_prefs_path_reads_legacy_deepseek_home_when_present() {
+    fn tui_prefs_path_ignores_legacy_deepseek_home_when_present() {
         let _g = config_path_test_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let primary = tmp.path().join(".hakus").join("tui.toml");
@@ -5048,10 +4998,10 @@ mod tests {
         let legacy_home = legacy_dir.join("tui.toml");
         std::fs::write(&legacy_home, "theme = \"light\"\n").expect("legacy prefs");
 
-        let got = resolve_tui_prefs_path_from_candidates(Some(primary), Some(legacy_home.clone()))
+        let got = resolve_tui_prefs_path_from_candidates(Some(primary.clone()), Some(legacy_home.clone()))
             .expect("tui prefs path");
 
-        assert_eq!(got, legacy_home);
+        assert_eq!(got, primary);
     }
 
     #[test]

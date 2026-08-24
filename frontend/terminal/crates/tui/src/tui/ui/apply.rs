@@ -4,6 +4,7 @@
 //! Moved verbatim out of `ui.rs`.
 
 use super::*;
+use base64::Engine as _;
 
 /// Record the model frozen into a child's runtime at spawn time.
 ///
@@ -1985,25 +1986,6 @@ pub(crate) async fn apply_command_result(
                     content: format_task_list(&tasks),
                 });
             }
-            AppAction::RemoteControl(action) => match action {
-                crate::remote_control::RemoteControlAction::Start => {
-                    start_remote_control_session(app);
-                }
-                crate::remote_control::RemoteControlAction::Stop => {
-                    app.remote_control.stop();
-                    let status = app.remote_control.status_line();
-                    if app.remote_control.blocks_local_input() {
-                        app.sticky_status = Some(StatusToast::new(
-                            status.clone(),
-                            StatusToastLevel::Warning,
-                            None,
-                        ));
-                    } else {
-                        app.sticky_status = None;
-                    }
-                    app.status_message = Some(status);
-                }
-            },
             AppAction::TaskShow { id } => {
                 let task = match app.current_session_id.as_deref() {
                     Some(session_id) => task_manager.get_task_for_owner(&id, session_id).await,
@@ -2136,29 +2118,85 @@ pub(crate) async fn apply_command_result(
                 app.status_message = Some(status);
             }
             AppAction::WeChat(wc_action) => {
+                let client = hakus_wechat::IlLinkClient::with_default_state();
                 let msg = match wc_action {
                     WeChatAction::StartLogin => {
-                        "WeChat login: feature not yet wired to the TUI event loop."
+                        match hakus_wechat::login::start_qr_login(&client).await {
+                            Ok(handle) => {
+                                let state_dir = hakus_wechat::WechatState::default_dir();
+                                let _ = std::fs::create_dir_all(&state_dir);
+                                let image_path = state_dir.join("wechat-login.png");
+                                let raw = handle
+                                    .qr_image_b64
+                                    .strip_prefix("data:image/png;base64,")
+                                    .unwrap_or(&handle.qr_image_b64);
+                                let qr_saved = base64::engine::general_purpose::STANDARD
+                                    .decode(raw)
+                                    .ok()
+                                    .filter(|bytes| bytes.len() > 16)
+                                    .and_then(|bytes| std::fs::write(&image_path, bytes).ok())
+                                    .is_some();
+                                let token_path = state_dir.join("wechat-login.txt");
+                                if !qr_saved {
+                                    let _ = std::fs::write(&token_path, &handle.qr_token);
+                                }
+                                let terminal_qr = qrcode::QrCode::new(handle.qr_token.as_bytes())
+                                    .map(|qr| {
+                                        qr.render::<qrcode::render::unicode::Dense1x2>()
+                                            .quiet_zone(true)
+                                            .build()
+                                    })
+                                    .unwrap_or_else(|_| "(terminal QR preview unavailable)".to_string());
+                                tokio::spawn(async move {
+                                    match handle.wait().await {
+                                        Ok(hakus_wechat::QrLoginStatus::Confirmed { .. }) => {
+                                            tracing::info!("WeChat QR login confirmed")
+                                        }
+                                        Ok(status) => tracing::info!(?status, "WeChat QR login ended"),
+                                        Err(error) => tracing::warn!(%error, "WeChat QR login failed"),
+                                    }
+                                });
+                                if qr_saved {
+                                    format!("WeChat QR login started. Scan this code now:\n\n{terminal_qr}\n\nPNG backup: {}\nCredentials: {}", image_path.display(), state_dir.display())
+                                } else {
+                                    format!("WeChat QR login started. Scan this code now:\n\n{terminal_qr}\n\nQR token backup: {}\nCredentials: {}", token_path.display(), state_dir.display())
+                                }
+                            }
+                            Err(error) => format!("WeChat login failed: {error}"),
+                        }
                     }
                     WeChatAction::ShowStatus => {
-                        "WeChat status: feature not yet wired to the TUI event loop."
+                        if client.is_logged_in().await {
+                            let account = client
+                                .account_snapshot()
+                                .await
+                                .map(|state| state.account_id)
+                                .unwrap_or_default();
+                            format!("WeChat status: connected{}", if account.is_empty() { String::new() } else { format!(" ({account})") })
+                        } else {
+                            "WeChat status: not connected".to_string()
+                        }
                     }
-                    WeChatAction::Logout => {
-                        "WeChat logout: feature not yet wired to the TUI event loop."
-                    }
-                    WeChatAction::Send { to_user, text } => {
-                        // TODO: integrate with IlLinkClient once embedded in App.
-                        let _ = (to_user, text);
-                        "WeChat send: feature not yet wired to the TUI event loop."
-                    }
-                    WeChatAction::Poll => {
-                        "WeChat poll: feature not yet wired to the TUI event loop."
-                    }
+                    WeChatAction::Logout => match client.logout().await {
+                        Ok(()) => "WeChat logout: credentials cleared".to_string(),
+                        Err(error) => format!("WeChat logout failed: {error}"),
+                    },
+                    WeChatAction::Send { to_user, text } => match client.send_text(&to_user, &text).await {
+                        Ok(()) => format!("WeChat message sent to {to_user}"),
+                        Err(error) => format!("WeChat send failed: {error}"),
+                    },
+                    WeChatAction::Poll => match client.poll_text_messages().await {
+                        Ok(messages) if messages.is_empty() => "WeChat poll: no new text messages".to_string(),
+                        Ok(messages) => messages
+                            .into_iter()
+                            .map(|(user, text, _)| format!("{user}: {text}"))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        Err(error) => format!("WeChat poll failed: {error}"),
+                    },
                 };
-                app.add_message(HistoryCell::System {
-                    content: msg.to_string(),
-                });
-                app.status_message = Some(msg.to_string());
+                app.add_message(HistoryCell::System { content: msg.clone() });
+                app.status_message = Some(msg);
             }
         }
     }

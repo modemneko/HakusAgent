@@ -18,6 +18,7 @@
 
 pub mod client;
 pub mod login;
+pub mod messaging;
 pub mod models;
 pub mod state;
 

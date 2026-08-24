@@ -965,46 +965,8 @@ impl ChatWidget {
             }
         }
 
-        if self.ambient_life
-            && let Some(inks) = self.ambient_inks
-        {
-            let cursor = crate::tui::ambient_life::AmbientCursor {
-                // Pointer column is refined by hover_layer when available; row
-                // participates in vertical flee proximity.
-                column: 0,
-                row: area.y.saturating_add(area.height / 2),
-                flee_elapsed_ms: self.fish_flee_elapsed_ms,
-            };
-            // Whale cameo rides the completion breath clock when present.
-            let whale = crate::tui::ambient_life::WhaleCameo {
-                elapsed_ms: self.ocean_column.and_then(|c| c.completion_elapsed_ms()),
-                anchor_x: area.x.saturating_add(area.width / 2),
-                anchor_y: area.y.saturating_add(area.height.saturating_mul(2) / 3),
-            };
-            // Per-frame budget counters (built/painted/skipped/clipped);
-            // consumed by ambient-life tests and debug tooling, not by the
-            // widget itself.
-            let _ambient_stats = crate::tui::ambient_life::render_ambient_life(
-                area,
-                buf,
-                inks,
-                &self.lines,
-                self.ocean_elapsed_ms,
-                self.ocean_presence_f32(),
-                cursor,
-                whale,
-            );
-            if let Some(column) = self.ocean_column {
-                crate::tui::ambient_life::apply_caustic_shimmer(
-                    area,
-                    buf,
-                    &column,
-                    self.ocean_elapsed_ms,
-                    self.ocean_animated,
-                    &self.lines,
-                );
-            }
-        }
+        // Hakus keeps the transcript focused: no ambient mascots, whale
+        // cameos, fish, or decorative glyphs are painted in the chat field.
     }
 }
 
@@ -5051,7 +5013,7 @@ mod tests {
         let names: Vec<&str> = hints.iter().map(|hint| hint.name.as_str()).collect();
         assert_eq!(
             names,
-            ["/help", "/setup", "/model", "/settings", "/resume", "/rc",],
+            ["/help", "/setup", "/model", "/settings", "/resume",],
             "bare / should offer the small starting set: {names:?}"
         );
         assert!(

@@ -9,7 +9,7 @@ use serde::Serialize;
 /// Canonical user-scoped paths reported by both human and JSON doctor output.
 ///
 /// Resolution is read-only: this type does not construct managers, create
-/// directories, or trigger legacy migration.
+/// directories or mutate user state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DoctorPathReport {
     pub(crate) home: PathBuf,
@@ -58,7 +58,7 @@ impl DoctorPathReport {
             .context("could not resolve the personal Fleet definitions directory")?;
         let personal_fleet_agents = crate::fleet::profile::personal_agent_profile_dir()
             .context("could not resolve the personal Fleet agent directory")?;
-        let (secrets, _) = hakus_secrets::FileKeyringStore::default_paths_read_only()
+        let secrets = hakus_secrets::FileKeyringStore::default_path()
             .context("could not resolve the file secret backend path")?;
         Ok(Self {
             home,
@@ -143,13 +143,6 @@ pub(crate) fn secret_backend_human_lines(
     };
     if let Some(path) = diagnostic.path.as_deref() {
         lines.push(format!("path: {}", path.display()));
-    }
-    if let Some(path) = diagnostic.legacy_path.as_deref() {
-        lines.push(format!(
-            "legacy_path: {} ({}, {inspection})",
-            path.display(),
-            presence(diagnostic.legacy_presence)
-        ));
     }
     lines.push("No credential-store values were read or printed by this check.".to_string());
     lines

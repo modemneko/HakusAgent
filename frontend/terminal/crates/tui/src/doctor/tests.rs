@@ -341,8 +341,7 @@ fn explicit_hakus_home_owns_every_default_user_path() {
     let runtime_config = crate::runtime_threads::RuntimeThreadManagerConfig::from_task_data_dir(
         task_manager_root.clone(),
     );
-    let (secrets, legacy_secrets) =
-        hakus_secrets::FileKeyringStore::default_paths_read_only().expect("secret paths");
+    let secrets = hakus_secrets::FileKeyringStore::default_path().expect("secret path");
 
     assert_eq!(report.home, home);
     assert_eq!(report.config, home.join("config.toml"));
@@ -370,7 +369,6 @@ fn explicit_hakus_home_owns_every_default_user_path() {
         crate::fleet::profile::personal_agent_profile_dir().expect("personal agents")
     );
     assert_eq!(report.secrets, secrets);
-    assert_eq!(legacy_secrets, None);
     assert_eq!(report.entries().len(), 14);
     let json = serde_json::to_value(&report).expect("serialize path snapshot");
     for (label, path) in report.entries() {

@@ -41,6 +41,7 @@ repository = "https://github.com/Hmbown/CodeWhale"
 anyhow = "1.0.100"
 async-trait = "0.1.89"
 axum = { version = "0.8.5", features = ["json"] }
+base64 = "0.22"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.54", features = ["derive"] }
 clap_complete = "4.5"
@@ -50,6 +51,7 @@ encoding_rs = "0.8.35"
 # carries one jsonschema/jsonschema-regex/referencing/fancy-regex stack.
 # Move both together when schemaui catches up (dependabot: keep in step).
 jsonschema = { version = "0.46", default-features = false }
+rand = "0.9"
 reqwest = { version = "0.13.1", default-features = false, features = ["json", "rustls-no-provider", "socks"] }
 # NOT "parallel": the Workflow VM stays single-threaded and bridges to the
 # multi-thread engine over channels (see crates/workflow-js).
@@ -71,8 +73,6 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio-util = { version = "0.7.16", features = ["io", "full"] }
 uuid = { version = "1.11", features = ["v4"] }
-base64 = "0.22"
-rand = "0.9"
 mimalloc = { version = "0.1", default-features = false }
 
 # The everyday `--release` gate (AGENTS.md pre-push build): optimized but

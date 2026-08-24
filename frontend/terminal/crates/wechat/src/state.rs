@@ -56,15 +56,13 @@ impl WechatState {
         Self { state_dir }
     }
 
-    /// Default state dir: `$HAKUS_HOME` or `~/.hakus`.
+    /// Default state dir: explicit `HAKUS_HOME`, portable `./.hakus`, or the
+    /// installed per-user root when `HAKUS_INSTALL_MODE=installed`.
     pub fn default_dir() -> PathBuf {
-        if let Ok(home) = std::env::var("HAKUS_HOME") {
-            PathBuf::from(home)
-        } else if let Some(dirs) = dirs::home_dir() {
-            dirs.join(".hakus")
-        } else {
-            PathBuf::from(".")
-        }
+        hakus_paths::hakus_home()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| PathBuf::from(".hakus"))
     }
 
     // -- Account state -------------------------------------------------------
@@ -113,6 +111,36 @@ impl WechatState {
 
     fn user_state_path(&self) -> PathBuf {
         self.state_dir.join("wechat-state.jsonl")
+    }
+
+    fn updates_buf_path(&self) -> PathBuf {
+        self.state_dir.join("wechat-updates-buf.txt")
+    }
+
+    /// Load the opaque iLink pagination cursor.
+    pub fn load_updates_buf(&self) -> Result<String> {
+        let path = self.updates_buf_path();
+        if !path.exists() {
+            return Ok(String::new());
+        }
+        Ok(std::fs::read_to_string(path)?.trim().to_string())
+    }
+
+    /// Persist the opaque iLink pagination cursor.
+    pub fn save_updates_buf(&self, value: &str) -> Result<()> {
+        self.ensure_dir()?;
+        std::fs::write(self.updates_buf_path(), value)?;
+        Ok(())
+    }
+
+    /// Remove pagination and per-user conversation state on logout.
+    pub fn clear_contexts(&self) -> Result<()> {
+        for path in [self.user_state_path(), self.updates_buf_path()] {
+            if path.exists() {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Load all per-user context tokens into a `HashMap`.

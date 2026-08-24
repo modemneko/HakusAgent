@@ -5094,72 +5094,12 @@ async fn runtime_info_reports_bind_state() -> Result<()> {
     assert!(info["version"].is_string());
     assert_eq!(info["transports"], json!(["http", "sse"]));
     assert_eq!(info["capabilities"]["threads"], true);
-    assert_eq!(info["capabilities"]["account_session"], true);
     assert_eq!(info["capabilities"]["external_tools"], true);
     assert_eq!(info["capabilities"]["worker_runtime"], true);
-    assert_eq!(info["account"]["schema_version"], 1);
-    assert_eq!(info["account"]["state"], "signed_out");
-    assert_eq!(info["account"]["api_base"], "https://api.hakus.net");
-    assert_eq!(info["account"]["scopes"], json!([]));
-    assert!(info["account"].get("access_token").is_none());
-    assert!(info["account"].get("refresh_token").is_none());
-    assert!(info["account"].get("email").is_none());
     assert!(info["experimental"].is_object());
 
     handle.abort();
     Ok(())
-}
-
-#[test]
-fn unauthenticated_runtime_info_redacts_secure_account_identity_without_loading_it() {
-    use hakus_secrets::account::{AccountSessionState, RuntimeAccountInfo};
-
-    let loaded = std::cell::Cell::new(false);
-    let info = runtime_account_info_for_request(false, "https://api.hakus.net", || {
-        loaded.set(true);
-        RuntimeAccountInfo {
-            schema_version: 1,
-            state: AccountSessionState::Authenticated,
-            api_base: "https://api.hakus.net".to_string(),
-            account_id: Some("acct-private".to_string()),
-            session_id: Some("session-private".to_string()),
-            scopes: vec!["identity:read".to_string()],
-            expires_at: Some("2030-01-01T00:00:00Z".to_string()),
-        }
-    });
-    assert!(
-        !loaded.get(),
-        "unauthenticated probes must not read secure storage"
-    );
-    assert_eq!(info.state, AccountSessionState::SignedOut);
-    let json = serde_json::to_string(&info).unwrap();
-    for private in ["acct-private", "session-private", "identity:read"] {
-        assert!(!json.contains(private));
-    }
-}
-
-#[test]
-fn runtime_account_api_origin_rejects_credentials_paths_and_non_loopback_http() {
-    assert_eq!(
-        normalize_runtime_account_api_base("https://api.hakus.net/"),
-        Some("https://api.hakus.net".to_string())
-    );
-    assert_eq!(
-        normalize_runtime_account_api_base("http://127.0.0.1:8787"),
-        Some("http://127.0.0.1:8787".to_string())
-    );
-    for invalid in [
-        "https://user:secret@example.test",
-        "https://example.test/account",
-        "https://example.test?token=secret",
-        "http://api.hakus.net",
-    ] {
-        assert_eq!(
-            normalize_runtime_account_api_base(invalid),
-            None,
-            "{invalid}"
-        );
-    }
 }
 
 #[tokio::test]

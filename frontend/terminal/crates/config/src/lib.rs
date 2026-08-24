@@ -2837,8 +2837,7 @@ impl ConfigToml {
         Ok(())
     }
 
-    /// Merge safe project-level overrides from `$WORKSPACE/.hakus/config.toml`
-    /// or legacy `$WORKSPACE/.deepseek/config.toml`.
+    /// Merge safe project-level overrides from `$WORKSPACE/.hakus/config.toml`.
     ///
     /// Repo-local config is untrusted input. This helper intentionally ignores
     /// credentials, endpoints, provider selection, auth/session values, telemetry,
@@ -3864,10 +3863,9 @@ impl ProjectConfigOutcome {
 /// Load a project-level config from the workspace, reporting why a file that
 /// exists could not be used.
 ///
-/// Checks `$WORKSPACE/.hakus/config.toml` first, falling back to
-/// `$WORKSPACE/.deepseek/config.toml` for backward compatibility.
+/// Checks the canonical `$WORKSPACE/.hakus/config.toml` location.
 pub fn load_project_config_outcome(workspace: &Path) -> ProjectConfigOutcome {
-    for dir in [HAKUS_APP_DIR, LEGACY_APP_DIR] {
+    for dir in [HAKUS_APP_DIR] {
         let path = workspace.join(dir).join(CONFIG_FILE_NAME);
         if !project_config_candidate_exists(&path) {
             continue;
@@ -5643,19 +5641,14 @@ pub fn default_secrets() -> &'static Secrets {
     })
 }
 
-// ── CodeWhale state root (v0.8.44) ──────────────────────────────────
-//
-// v0.8.44 migrates product-owned app state from ~/.deepseek/ to
-// ~/.hakus/ while keeping ~/.deepseek/ as a compatibility fallback.
-// New installs write to ~/.hakus/. Existing installs with only
-// ~/.deepseek/ continue working without data loss.
+// ── Hakus state root ─────────────────────────────────────────────────
 
-pub use hakus_paths::{HAKUS_APP_DIR, LEGACY_APP_DIR};
+pub use hakus_paths::HAKUS_APP_DIR;
 
-/// Resolve the primary CodeWhale home directory.
+/// Resolve the canonical Hakus home directory.
 ///
-/// `$HAKUS_HOME` takes precedence when set. Otherwise defaults to
-/// `$HOME/.hakus`. This is the write target for new product state.
+/// `$HAKUS_HOME` takes precedence when set. Portable launches use the current
+/// directory and installed launches use the user's home directory.
 pub fn hakus_home() -> Result<PathBuf> {
     hakus_paths::hakus_home()
         .map_err(anyhow::Error::new)?
@@ -5664,15 +5657,14 @@ pub fn hakus_home() -> Result<PathBuf> {
 
 /// Whether `$HAKUS_HOME` is set to a non-empty value.
 ///
-/// An explicit CodeWhale home is an isolation boundary: state/config resolvers
-/// must not fall back to ambient legacy `~/.deepseek` data outside that root.
+/// No other product directory is consulted.
 pub fn hakus_home_is_explicit() -> bool {
     hakus_paths::hakus_home_is_explicit()
 }
 
-/// Resolve the legacy DeepSeek home directory (`$HOME/.deepseek`).
-///
-/// Always returns the legacy path regardless of whether it exists.
+/// Deprecated source-compatibility accessor. Runtime path resolution never
+/// calls this helper and never reads or writes the returned directory.
+#[deprecated(note = "Hakus no longer reads or writes the legacy directory")]
 pub fn legacy_deepseek_home() -> Result<PathBuf> {
     hakus_paths::legacy_deepseek_home().context("failed to resolve home directory")
 }
@@ -5709,36 +5701,18 @@ fn ensure_safe_state_subdir(subdir: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a state subdirectory, preferring the CodeWhale root if
-/// it already exists, otherwise falling back to the legacy root.
+/// Resolve a state subdirectory under the canonical Hakus root.
 ///
-/// This is the read-path resolver: it returns the primary path when
-/// migration has occurred or on a fresh install, but keeps reading
-/// from the legacy path for users who haven't migrated yet.
+/// This resolver never consults a legacy product directory.
 pub fn resolve_state_dir(subdir: &str) -> Result<PathBuf> {
     ensure_safe_state_subdir(subdir)?;
-    let explicit_hakus_home = hakus_home_is_explicit();
-    let primary = hakus_home()?.join(subdir);
-    if explicit_hakus_home || primary.exists() {
-        return Ok(primary);
-    }
-    let legacy = legacy_deepseek_home()?.join(subdir);
-    if legacy.exists() {
-        return Ok(legacy);
-    }
-    // Neither exists — return primary for first-write creation.
-    Ok(primary)
+    Ok(hakus_home()?.join(subdir))
 }
 
-/// Ensure a state subdirectory exists under the primary CodeWhale root,
+/// Ensure a state subdirectory exists under the canonical Hakus root,
 /// creating it if necessary. This is the write-path resolver.
 ///
-/// On the first creation of a real subdirectory (not the root sentinel `"."`),
-/// if a legacy `~/.deepseek/<subdir>` exists but the primary
-/// `~/.hakus/<subdir>` does not, the legacy directory is relocated into
-/// the primary location so the user keeps their data and the legacy tree
-/// stops growing (#3240). After migration, [`resolve_state_dir`] finds the
-/// data in the primary location; the read resolver itself is unchanged.
+/// No migration or compatibility read is performed.
 pub fn ensure_state_dir(subdir: &str) -> Result<PathBuf> {
     let (dir, migration) = ensure_state_dir_with_migration(subdir)?;
     if let Some(migration) = migration {
@@ -5763,160 +5737,31 @@ pub struct StateMigration {
 
 impl StateMigration {
     pub fn user_notice(&self) -> String {
-        let action = match self.kind {
-            StateMigrationKind::Relocated => "relocated",
-            StateMigrationKind::Copied => "copied",
-        };
-        let legacy_detail = match self.kind {
-            StateMigrationKind::Relocated => {
-                "The legacy .deepseek copy for this state path was removed by the move."
-            }
-            StateMigrationKind::Copied => {
-                "The legacy .deepseek copy was left in place because a direct move failed."
-            }
-        };
-
         format!(
-            "Hakus migrated legacy state ({action}):\n  {} -> {}\nYour data was preserved. Use .hakus as the canonical state location from now on.\n{legacy_detail}\nIf no other apps use it, you can remove the legacy .deepseek tree after confirming everything looks right.",
-            self.legacy_path.display(),
+            "Legacy state migration is disabled; canonical state is {}.",
             self.primary_path.display(),
         )
     }
 }
 
-/// Variant of [`ensure_state_dir`] that exposes whether a legacy state path was
-/// migrated. Most callers should use [`ensure_state_dir`]; this is kept for
-/// tests and future UI surfaces that want to render the notice themselves.
+/// Source-compatible variant of [`ensure_state_dir`]. It never migrates a
+/// legacy path and always returns `None` for the migration value.
 pub fn ensure_state_dir_with_migration(subdir: &str) -> Result<(PathBuf, Option<StateMigration>)> {
     ensure_safe_state_subdir(subdir)?;
-    let explicit_hakus_home = hakus_home_is_explicit();
     let dir = hakus_home()?.join(subdir);
-    let migration = if !explicit_hakus_home {
-        migrate_legacy_state_dir(&dir, subdir)?
-    } else {
-        None
-    };
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create {}/", dir.display()))?;
-    Ok((dir, migration))
+    Ok((dir, None))
 }
 
-/// One-time relocation of a legacy `~/.deepseek/<subdir>` state directory into
-/// the primary `~/.hakus/<subdir>` location (#3240). No-op once the primary
-/// exists, for the root sentinel `"."` (a whole-tree move is owned by the
-/// config-file migration), or when no legacy directory is present.
-fn migrate_legacy_state_dir(primary: &Path, subdir: &str) -> Result<Option<StateMigration>> {
-    if primary.exists() || subdir == "." || subdir.is_empty() {
-        return Ok(None);
-    }
-    let legacy = match legacy_deepseek_home() {
-        Ok(home) => home.join(subdir),
-        Err(_) => return Ok(None),
-    };
-    if !legacy.exists() {
-        return Ok(None);
-    }
-    // The primary's parent (the ~/.hakus root) must exist for the rename.
-    if let Some(parent) = primary.parent()
-        && let Err(err) = std::fs::create_dir_all(parent)
-    {
-        tracing::warn!(
-            target: "config::migration",
-            "Could not create {} for state migration ({}); writing to primary anyway",
-            parent.display(),
-            err
-        );
-    }
-    match std::fs::rename(&legacy, primary) {
-        Ok(()) => {
-            tracing::info!(
-                target: "config::migration",
-                "Migrated legacy state directory {} -> {} (relocated). The .deepseek copy was removed.",
-                legacy.display(),
-                primary.display()
-            );
-            return Ok(Some(StateMigration {
-                subdir: subdir.to_string(),
-                legacy_path: legacy,
-                primary_path: primary.to_path_buf(),
-                kind: StateMigrationKind::Relocated,
-            }));
-        }
-        Err(err) => {
-            // Cross-device rename or permission issue: fall back to a
-            // recursive copy so the user keeps their data. The legacy tree is
-            // left in place; it stops growing because writes now target the
-            // primary path.
-            match copy_dir_recursive(&legacy, primary) {
-                Ok(()) => {
-                    tracing::info!(
-                        target: "config::migration",
-                        "Migrated legacy state directory {} -> {} (copied; rename failed: {err}). \
-                         The legacy .deepseek copy was left in place.",
-                        legacy.display(),
-                        primary.display()
-                    );
-                    return Ok(Some(StateMigration {
-                        subdir: subdir.to_string(),
-                        legacy_path: legacy,
-                        primary_path: primary.to_path_buf(),
-                        kind: StateMigrationKind::Copied,
-                    }));
-                }
-                Err(copy_err) => {
-                    tracing::warn!(
-                        target: "config::migration",
-                        "Could not migrate legacy state {} -> {} (rename: {err}; copy: {copy_err}). \
-                         New data is written to the primary path; the legacy tree remains untouched.",
-                        legacy.display(),
-                        primary.display()
-                    );
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
-/// Recursively copy a directory tree from `src` to `dst`, creating `dst`.
-/// Symlinks and other non-file/non-dir entries are skipped (rare in state dirs).
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
-    for entry in
-        std::fs::read_dir(src).with_context(|| format!("failed to read {}", src.display()))?
-    {
-        let entry = entry.with_context(|| format!("failed to read entry in {}", src.display()))?;
-        let path = entry.path();
-        let target = dst.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("failed to read file type for {}", path.display()))?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&path, &target)?;
-        } else if file_type.is_file() {
-            std::fs::copy(&path, &target).with_context(|| {
-                format!("failed to copy {} -> {}", path.display(), target.display())
-            })?;
-        }
-    }
-    Ok(())
-}
-
-/// Resolve a project-local state subdirectory, preferring `.hakus/`
-/// when it exists, falling back to `.deepseek/` for legacy projects.
+/// Resolve a project-local state subdirectory under `.hakus/`.
 ///
-/// Returns `(true, path)` when the primary `.hakus/` path is used,
-/// `(false, path)` for the legacy fallback. The boolean helps callers
-/// emit a deprecation notice on legacy paths.
+/// The boolean is retained for source compatibility and is always `true`.
 pub fn resolve_project_state_dir(workspace: &Path, subdir: &str) -> Result<(bool, PathBuf)> {
     ensure_safe_state_subdir(subdir)?;
     let workspace = normalize_project_workspace(workspace)?;
     let primary = workspace.join(HAKUS_APP_DIR).join(subdir);
-    if primary.exists() {
-        return Ok((true, primary));
-    }
-    let legacy = workspace.join(LEGACY_APP_DIR).join(subdir);
-    Ok((false, legacy))
+    Ok((true, primary))
 }
 
 /// Ensure a project-local state subdirectory exists under `.hakus/`,
@@ -5941,7 +5786,7 @@ pub fn resolve_config_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 /// Whether `path` names a workspace-scoped config document —
-/// `<repo>/.hakus/config.toml` (or the legacy `.deepseek` layout) inside a
+/// `<repo>/.hakus/config.toml` inside a
 /// checkout — rather than a user-global config file.
 ///
 /// Credential writes (api_key values, `auth_mode` markers, oauth/external
@@ -5951,7 +5796,7 @@ pub fn resolve_config_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
 /// #5193).
 ///
 /// A path is classified workspace-scoped only when its parent directory is a
-/// `.hakus`/`.deepseek` app dir outside the user's home AND the document
+/// `.hakus` app dir outside the user's home AND the document
 /// belongs to a workspace: it is relative (resolves against the process cwd),
 /// its base directory contains the process cwd, or its base directory is a
 /// checkout (has a `.git` entry). An explicit `$HAKUS_HOME` config is
@@ -5991,7 +5836,7 @@ fn config_path_is_workspace_scoped_with_context(
     let parent_is_app_dir = parent
         .file_name()
         .and_then(OsStr::to_str)
-        .is_some_and(|name| name == HAKUS_APP_DIR || name == LEGACY_APP_DIR);
+        .is_some_and(|name| name == HAKUS_APP_DIR);
     if !parent_is_app_dir {
         return false;
     }
@@ -6037,7 +5882,7 @@ mod credential_scope_tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo = temp.path().join("repo");
         let cwd = repo.join("nested/dir");
-        for app_dir in [".hakus", ".deepseek"] {
+        for app_dir in [".hakus"] {
             let config = repo.join(app_dir).join("config.toml");
             assert!(
                 config_path_is_workspace_scoped_with_context(
@@ -6464,18 +6309,7 @@ fn write_permissions_atomic(path: &Path, body: &[u8]) -> Result<()> {
 }
 
 pub fn default_config_path() -> Result<PathBuf> {
-    // Prefer ~/.hakus/config.toml when it exists (fresh install or
-    // migrated), otherwise fall back to ~/.deepseek/config.toml.
-    let primary = hakus_home()?.join(CONFIG_FILE_NAME);
-    if hakus_home_is_explicit() || primary.exists() {
-        return Ok(primary);
-    }
-    let legacy = legacy_deepseek_home()?.join(CONFIG_FILE_NAME);
-    if legacy.exists() {
-        return Ok(legacy);
-    }
-    // Neither exists — return primary so first write creates it there.
-    Ok(primary)
+    Ok(hakus_home()?.join(CONFIG_FILE_NAME))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6487,44 +6321,16 @@ pub struct ConfigMigration {
 impl ConfigMigration {
     pub fn user_notice(&self) -> String {
         format!(
-            "Migrated legacy config from {} to {}. Use the .hakus path for future edits; the .deepseek file remains only as a compatibility fallback.",
-            self.legacy_path.display(),
+            "Legacy config migration is disabled; canonical config is {}.",
             self.primary_path.display()
         )
     }
 }
 
-/// v0.8.44: one-time migration from `~/.deepseek/config.toml` to
-/// `~/.hakus/config.toml`. Called on first launch after the config
-/// is loaded; copies the legacy file if the primary doesn't exist yet.
-/// Never overwrites an existing primary config.
+/// Source-compatible no-op. Hakus does not read or migrate legacy config
+/// files; canonical configuration is resolved directly under the Hakus home.
 pub fn migrate_config_if_needed() -> Result<Option<ConfigMigration>> {
-    if hakus_home_is_explicit() {
-        return Ok(None);
-    }
-    let primary = hakus_home()?.join(CONFIG_FILE_NAME);
-    if primary.exists() {
-        return Ok(None);
-    }
-    let legacy = legacy_deepseek_home()?.join(CONFIG_FILE_NAME);
-    if !legacy.exists() {
-        return Ok(None);
-    }
-    // Copy the config to the new home.
-    if let Some(parent) = primary.parent() {
-        std::fs::create_dir_all(parent).context("failed to create hakus config directory")?;
-    }
-    std::fs::copy(&legacy, &primary)
-        .context("failed to migrate config from deepseek to hakus home")?;
-    tracing::info!(
-        "Migrated config from {} to {}",
-        legacy.display(),
-        primary.display()
-    );
-    Ok(Some(ConfigMigration {
-        legacy_path: legacy,
-        primary_path: primary,
-    }))
+    Ok(None)
 }
 
 fn parse_bool(raw: &str) -> Result<bool> {

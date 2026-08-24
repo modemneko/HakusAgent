@@ -1040,11 +1040,7 @@ fn user_anchors_section(workspace: Option<&std::path::Path>) -> String {
         return String::new();
     };
     let primary = workspace.join(".hakus").join("anchors.md");
-    let path = if primary.exists() {
-        primary
-    } else {
-        workspace.join(".deepseek").join("anchors.md")
-    };
+    let path = primary;
     match std::fs::read_to_string(path) {
         Ok(contents) if !contents.trim().is_empty() => {
             format!("\n\nUser-pinned anchors (verbatim):\n{}", contents.trim())

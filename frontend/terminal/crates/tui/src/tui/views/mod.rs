@@ -988,9 +988,6 @@ pub enum ViewEvent {
     /// Emitted by the setup Runtime Posture card to hand off to the existing
     /// config view for approval/sandbox/network details.
     SetupOpenConfigRequested,
-    /// Emitted by the progressive setup guide to start the same account-owned
-    /// web remote-control flow as `/rc`. Setup never duplicates enrollment.
-    SetupOpenRemoteControlRequested,
     /// Emitted by the `/hotbar` setup wizard when the user chooses "Disable
     /// Hotbar". The host persists `hotbar = []` and hides the panel.
     HotbarDisableRequested,

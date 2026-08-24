@@ -91,7 +91,6 @@ mod provider_lake;
 mod provider_readiness;
 mod purge;
 mod regex_cache;
-mod remote_control;
 mod remote_setup;
 pub mod repl;
 mod repo_law;
@@ -253,10 +252,6 @@ struct Cli {
     /// Skip onboarding screens
     #[arg(long)]
     skip_onboarding: bool,
-
-    /// Start account-owned web remote control for this interactive session.
-    #[arg(long, hide = true)]
-    remote_control: bool,
 
     /// Start a fresh session, ignoring any crash-recovery checkpoint
     #[arg(long = "fresh")]
@@ -1586,7 +1581,7 @@ fn run_with_args(args: Vec<String>) -> Result<()> {
     crate::tui::ui::fatal_signal_guard::install_fatal_signal_guard();
 
     // Set up process panic hook before anything else — writes crash dumps
-    // to ~/.deepseek/crashes/ even if the panic happens before tokio is up,
+    // to the canonical Hakus home even if the panic happens before tokio is up,
     // and restores the terminal so a panicked TUI doesn't leave the user's
     // shell stuck in alt-screen mode.
     let orig_hook = std::panic::take_hook();
@@ -1629,8 +1624,8 @@ fn run_with_args(args: Vec<String>) -> Result<()> {
             hakus_telemetry::record_blocking(hakus_telemetry::Event::Panic { site });
         }
         // Write crash dump best-effort
-        if let Some(home) = crate::config::effective_home_dir() {
-            let crash_dir = home.join(".deepseek").join("crashes");
+        if let Ok(home) = hakus_config::hakus_home() {
+            let crash_dir = home.join("crashes");
             let _ = std::fs::create_dir_all(&crash_dir);
             use chrono::Utc;
             let ts = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
@@ -5230,12 +5225,9 @@ fn doctor_legacy_state_status(
 fn doctor_state_roots() -> (PathBuf, PathBuf) {
     let code_home =
         hakus_config::hakus_home().unwrap_or_else(|_| PathBuf::from("~/.hakus"));
-    let legacy_home = if hakus_config::hakus_home_is_explicit() {
-        code_home.join(hakus_config::LEGACY_APP_DIR)
-    } else {
-        hakus_config::legacy_deepseek_home().unwrap_or_else(|_| PathBuf::from("~/.deepseek"))
-    };
-    (code_home, legacy_home)
+    // Keep the diagnostic tuple shape stable for callers while ensuring the
+    // doctor never inspects a second, legacy storage root.
+    (code_home.clone(), code_home.join("legacy-disabled"))
 }
 
 fn doctor_legacy_state_report(
@@ -9420,8 +9412,7 @@ fn preserve_interrupted_checkpoint_for_explicit_resume(launch_workspace: &Path) 
     }
 }
 
-/// Load project-level config from `$WORKSPACE/.hakus/config.toml`, with
-/// legacy `$WORKSPACE/.deepseek/config.toml` fallback, then apply its fields as
+/// Load project-level config from `$WORKSPACE/.hakus/config.toml`, then apply its fields as
 /// overrides on top of the global config (#485).
 /// Only explicitly set fields in the project file are applied; everything
 /// else falls back to the global value.
@@ -9453,28 +9444,13 @@ fn merge_project_config_with_approval_baseline(
         return;
     }
 
-    // v0.8.44: prefer .hakus/config.toml, fall back to .deepseek/
+    // Project configuration is canonical and lives only under `.hakus/`.
     let path = workspace
         .join(hakus_config::HAKUS_APP_DIR)
         .join("config.toml");
     let raw = match read_project_config_file(&path) {
         Ok(Some(r)) => r,
-        Ok(None) => {
-            let legacy = workspace
-                .join(hakus_config::LEGACY_APP_DIR)
-                .join("config.toml");
-            match read_project_config_file(&legacy) {
-                Ok(Some(r)) => r,
-                Ok(None) => return,
-                Err(err) => {
-                    eprintln!(
-                        "warning: failed to read project-scope config {}: {err}",
-                        legacy.display()
-                    );
-                    return;
-                }
-            }
-        }
+        Ok(None) => return,
         Err(err) => {
             eprintln!(
                 "warning: failed to read project-scope config {}: {err}",
@@ -9493,7 +9469,7 @@ fn merge_project_config_with_approval_baseline(
     };
 
     // #417: dangerous keys are denied at project scope. A malicious
-    // `<workspace>/.deepseek/config.toml` could otherwise:
+    // `<workspace>/.hakus/config.toml` could otherwise:
     // * `api_key` / `base_url` / `provider` — exfiltrate prompts to a
     //   look-alike endpoint by swapping the user's credentials and
     //   target host with project-controlled values.
@@ -9800,18 +9776,12 @@ async fn run_interactive_with_notice(
     pending_telemetry_notice: Option<crate::telemetry_notice::PendingTelemetryNotice>,
     plugin_registry: std::sync::Arc<crate::plugins::PluginRegistry>,
 ) -> Result<()> {
-    let initial_input = if cli.remote_control {
-        Some(tui::InitialInput::RemoteControl)
-    } else {
-        initial_input
-    };
     let workspace = cli
         .workspace
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     // Merge project-level config from $WORKSPACE/.hakus/config.toml
-    // or legacy $WORKSPACE/.deepseek/config.toml
     // unless --no-project-config was passed (#485).
     let mut merged_config = config.clone();
     merge_user_workspace_config(&mut merged_config, cli.config.clone(), &workspace);
@@ -9836,16 +9806,6 @@ async fn run_interactive_with_notice(
             Ok(None) => {}
             Err(err) => logging::warn(format!("Failed to create first-run config file: {err}")),
         }
-    }
-
-    // v0.8.44: migrate config from ~/.deepseek/ to ~/.hakus/ on first
-    // launch. Non-fatal — existing installs keep working either way.
-    match hakus_config::migrate_config_if_needed() {
-        Ok(Some(migration)) => {
-            eprintln!("{}", migration.user_notice());
-        }
-        Ok(None) => {}
-        Err(err) => logging::warn(format!("Config migration skipped: {err}")),
     }
 
     let model = config.default_model();
@@ -12830,10 +12790,7 @@ mod doctor_legacy_state_tests {
         );
 
         assert_eq!(primary_root, explicit_home);
-        assert_eq!(
-            legacy_root,
-            primary_root.join(hakus_config::LEGACY_APP_DIR)
-        );
+        assert_eq!(legacy_root, primary_root.join("legacy-disabled"));
         assert!(
             report
                 .iter()
@@ -14105,12 +14062,6 @@ mod terminal_mode_tests {
             "a network-capable role keeps the configured policy"
         );
     }
-    #[test]
-    fn hidden_remote_control_flag_starts_the_interactive_handoff() {
-        let cli = parse_cli(&["hakus-tui", "--remote-control"]);
-        assert!(cli.remote_control);
-    }
-
     #[test]
     fn plugin_registry_discovery_is_route_independent_and_read_only() {
         let _env_lock = crate::test_support::lock_test_env();
@@ -16606,12 +16557,12 @@ mod project_config_tests {
     use std::fs;
     use tempfile::tempdir;
 
-    /// Write a `<workspace>/.deepseek/config.toml` and return the workspace
+    /// Write a `<workspace>/.hakus/config.toml` and return the workspace
     /// root so the merge function can find it.
     fn workspace_with_project_config(body: &str) -> tempfile::TempDir {
         let tmp = tempdir().expect("tempdir");
-        let project_dir = tmp.path().join(".deepseek");
-        fs::create_dir_all(&project_dir).expect("mkdir .deepseek");
+        let project_dir = tmp.path().join(".hakus");
+        fs::create_dir_all(&project_dir).expect("mkdir .hakus");
         fs::write(project_dir.join("config.toml"), body).expect("write project config");
         tmp
     }

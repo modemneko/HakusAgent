@@ -592,13 +592,6 @@ pub enum MessageId {
     CmdQueueIndexPositive,
     CmdQueueIndexMin,
     CmdRelayDescription,
-    CmdRemoteControlDescription,
-    CmdRemoteEnvDescription,
-    CmdRemoteEnvOverview,
-    CmdRemoteEnvOpening,
-    CmdRemoteEnvUnavailable,
-    CmdRemoteEnvSourceCustodyPolicy,
-    CmdRemoteEnvBrowserLabel,
     CmdRenameDescription,
     CmdTitleDescription,
     CmdRestoreDescription,
@@ -875,7 +868,6 @@ pub enum MessageId {
     SetupActionModel,
     SetupActionFleet,
     SetupActionHotbar,
-    SetupActionRemote,
     SetupActionMode,
     SetupActionConfig,
     SetupActionRuntimePreset,
@@ -2295,13 +2287,6 @@ pub const ALL_MESSAGE_IDS: &[MessageId] = &[
     MessageId::CmdQueueIndexPositive,
     MessageId::CmdQueueIndexMin,
     MessageId::CmdRelayDescription,
-    MessageId::CmdRemoteControlDescription,
-    MessageId::CmdRemoteEnvDescription,
-    MessageId::CmdRemoteEnvOverview,
-    MessageId::CmdRemoteEnvOpening,
-    MessageId::CmdRemoteEnvUnavailable,
-    MessageId::CmdRemoteEnvSourceCustodyPolicy,
-    MessageId::CmdRemoteEnvBrowserLabel,
     MessageId::CmdRenameDescription,
     MessageId::CmdTitleDescription,
     MessageId::CmdRestoreDescription,
@@ -2573,7 +2558,6 @@ pub const ALL_MESSAGE_IDS: &[MessageId] = &[
     MessageId::SetupActionModel,
     MessageId::SetupActionFleet,
     MessageId::SetupActionHotbar,
-    MessageId::SetupActionRemote,
     MessageId::SetupActionMode,
     MessageId::SetupActionConfig,
     MessageId::SetupActionRuntimePreset,
@@ -4163,37 +4147,6 @@ mod tests {
         assert!(tr(Locale::En, MessageId::ConfigCommandSource).contains("{source}"));
         assert!(tr(Locale::En, MessageId::ConfigCommandInvalidValue).contains("{choices}"));
         assert!(tr(Locale::En, MessageId::ConfigNotificationUpdated).contains("{scope}"));
-    }
-
-    #[test]
-    fn remote_env_strings_are_explicitly_localized_in_every_complete_pack() {
-        let ids = [
-            MessageId::CmdRemoteEnvDescription,
-            MessageId::CmdRemoteEnvOverview,
-            MessageId::CmdRemoteEnvOpening,
-            MessageId::CmdRemoteEnvUnavailable,
-            MessageId::CmdRemoteEnvSourceCustodyPolicy,
-            MessageId::CmdRemoteEnvBrowserLabel,
-        ];
-
-        for locale in Locale::shipped_complete() {
-            let messages = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-                locale_json_source(*locale),
-            )
-            .unwrap_or_else(|err| panic!("{} locale JSON should parse: {err}", locale.tag()));
-            for id in ids {
-                let key = format!("{id:?}");
-                let value = messages
-                    .get(&key)
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_else(|| panic!("{} must explicitly define {key}", locale.tag()));
-                assert!(
-                    !value.trim().is_empty(),
-                    "{} {key} must not be empty",
-                    locale.tag()
-                );
-            }
-        }
     }
 
     #[test]

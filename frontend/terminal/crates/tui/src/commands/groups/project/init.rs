@@ -20,8 +20,8 @@ use crate::commands::CommandResult;
 fn init(app: &mut App) -> CommandResult {
     let workspace = &app.workspace;
 
-    // Ensure .deepseek/ is gitignored if we're inside a git repo.
-    ensure_deepseek_gitignored(workspace);
+    // Ensure generated Hakus state is gitignored if we're inside a git repo.
+    ensure_hakus_gitignored(workspace);
 
     // Check if AGENTS.md already exists — update it in place rather than refusing.
     let agents_path = workspace.join("AGENTS.md");
@@ -60,7 +60,7 @@ fn init(app: &mut App) -> CommandResult {
 /// keeping the authored `.hakus/constitution.json` repo authority policy
 /// committable (a directory exclude cannot be overridden, so `.hakus/*` plus
 /// a negation is required).
-fn ensure_deepseek_gitignored(workspace: &Path) {
+fn ensure_hakus_gitignored(workspace: &Path) {
     let Some(git_root) = git_root(workspace) else {
         return;
     };
@@ -69,7 +69,6 @@ fn ensure_deepseek_gitignored(workspace: &Path) {
     let entries = [
         "**/.hakus/*",
         "!**/.hakus/constitution.json",
-        ".deepseek/",
     ];
 
     // Read existing contents once.
@@ -872,9 +871,9 @@ mod tests {
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
         let result = init(&mut app);
         assert!(!result.is_error);
-        // Should have added .deepseek/ to .gitignore.
+        // Should have added the Hakus state rule to .gitignore.
         let gi = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
-        assert!(gi.contains(".deepseek/"));
+        assert!(gi.contains("**/.hakus/*"));
     }
 
     #[test]
@@ -1322,15 +1321,15 @@ mod tests {
         assert!(detect_js_frameworks(&deps).is_empty());
     }
 
-    // --- ensure_deepseek_gitignored (preserved tests) ---
+    // --- ensure_hakus_gitignored ---
 
     #[test]
-    fn ensure_deepseek_gitignored_creates_gitignore() {
+    fn ensure_hakus_gitignored_creates_gitignore() {
         let tmpdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
-        assert!(content.contains(".deepseek/"));
+        assert!(content.contains("**/.hakus/*"));
         // .hakus/ is ignored at any depth, but the committed
         // constitution.json is kept.
         assert!(content.contains("**/.hakus/*"));
@@ -1338,58 +1337,58 @@ mod tests {
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_appends_to_existing() {
+    fn ensure_hakus_gitignored_appends_to_existing() {
         let tmpdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
         std::fs::write(tmpdir.path().join(".gitignore"), "target/\n").unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
         assert!(content.contains("target/"));
-        assert!(content.contains(".deepseek/"));
+        assert!(content.contains("**/.hakus/*"));
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_idempotent() {
+    fn ensure_hakus_gitignored_idempotent() {
         let tmpdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
-        ensure_deepseek_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
-        assert_eq!(content.matches(".deepseek/").count(), 1);
+        assert_eq!(content.matches("**/.hakus/*").count(), 1);
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_skips_non_git_repo() {
+    fn ensure_hakus_gitignored_skips_non_git_repo() {
         let tmpdir = TempDir::new().unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
         assert!(!tmpdir.path().join(".gitignore").exists());
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_handles_no_trailing_newline() {
+    fn ensure_hakus_gitignored_handles_no_trailing_newline() {
         let tmpdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
         std::fs::write(tmpdir.path().join(".gitignore"), "target/").unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
+        ensure_hakus_gitignored(tmpdir.path());
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
         assert!(content.contains("target/"));
-        assert!(content.contains(".deepseek/"));
+        assert!(content.contains("**/.hakus/*"));
         let lines: Vec<&str> = content.lines().collect();
         assert!(lines.len() >= 2);
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_detects_variant_without_slash() {
+    fn ensure_hakus_gitignored_detects_variant_without_slash() {
         let tmpdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tmpdir.path().join(".git")).unwrap();
-        std::fs::write(tmpdir.path().join(".gitignore"), ".deepseek\n").unwrap();
-        ensure_deepseek_gitignored(tmpdir.path());
+        std::fs::write(tmpdir.path().join(".gitignore"), "**/.hakus/*\n").unwrap();
+        ensure_hakus_gitignored(tmpdir.path());
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
-        assert_eq!(content.matches(".deepseek").count(), 1);
+        assert_eq!(content.matches("**/.hakus/*").count(), 1);
     }
 
     #[test]
-    fn ensure_deepseek_gitignored_updates_repo_root_from_nested_workspace() {
+    fn ensure_hakus_gitignored_updates_repo_root_from_nested_workspace() {
         let tmpdir = TempDir::new().unwrap();
         Command::new("git")
             .args(["init"])
@@ -1399,10 +1398,10 @@ mod tests {
         let nested = tmpdir.path().join("nested").join("app");
         std::fs::create_dir_all(&nested).unwrap();
 
-        ensure_deepseek_gitignored(&nested);
+        ensure_hakus_gitignored(&nested);
 
         let content = std::fs::read_to_string(tmpdir.path().join(".gitignore")).unwrap();
-        assert!(content.contains(".deepseek/"));
+        assert!(content.contains("**/.hakus/*"));
         assert!(!nested.join(".gitignore").exists());
     }
 }

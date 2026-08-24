@@ -19,7 +19,7 @@ const LEVEL_ICONS: Record<string, typeof Info> = {
 
 const LEVEL_COLORS: Record<string, string> = {
   DEBUG: 'text-muted-foreground',
-  INFO: 'text-blue-500',
+  INFO: 'text-primary',
   WARNING: 'text-amber-500',
   ERROR: 'text-destructive',
   CRITICAL: 'text-destructive',
@@ -27,7 +27,7 @@ const LEVEL_COLORS: Record<string, string> = {
 
 const LEVEL_BG: Record<string, string> = {
   DEBUG: 'bg-muted/30',
-  INFO: 'bg-blue-500/10',
+  INFO: 'bg-primary/10',
   WARNING: 'bg-amber-500/10',
   ERROR: 'bg-destructive/10',
   CRITICAL: 'bg-destructive/10',

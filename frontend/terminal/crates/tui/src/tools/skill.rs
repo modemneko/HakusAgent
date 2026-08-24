@@ -140,7 +140,7 @@ impl ToolSpec for LoadSkillTool {
                         "no skills directories found; install skills under `<workspace>/.hakus/skills/<name>/SKILL.md` or `~/.hakus/skills/<name>/SKILL.md`"
                             .to_string()
                     } else {
-                        "no skills directories found; install skills under `<workspace>/.agents/skills/<name>/SKILL.md`, `~/.hakus/skills/<name>/SKILL.md`, or `~/.deepseek/skills/<name>/SKILL.md`"
+                        "no skills directories found; install skills under `<workspace>/.agents/skills/<name>/SKILL.md` or `~/.hakus/skills/<name>/SKILL.md`"
                             .to_string()
                     }
                 } else {
@@ -638,7 +638,7 @@ mod tests {
         let mut context = ToolContext::new(workspace);
         // The skill tool reads $HOME for the global default; pin it to a
         // tempdir so the test is hermetic regardless of the host's
-        // ~/.deepseek/skills.
+        // ~/.hakus/skills.
         context.workspace = tmp.path().to_path_buf();
 
         let tool = LoadSkillTool;

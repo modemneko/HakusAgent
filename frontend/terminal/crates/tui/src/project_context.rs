@@ -1,13 +1,11 @@
 //! Project context loading for Hakus.
-//!
 //! This module handles loading project-specific context files that provide
 //! instructions and context to the AI agent. These include:
 //!
 //! - `AGENTS.md` - Cross-agent project instructions (canonical, highest priority)
 //! - `.claude/instructions.md` - Claude-style hidden instructions (compat)
 //! - `CLAUDE.md` - Claude-style instructions (compat)
-//! - `.hakus/instructions.md` - Hidden instructions file (compat)
-//! - `.deepseek/instructions.md` - Hidden instructions file (legacy)
+//! - `.hakus/instructions.md` - Hidden instructions file (Hakus)
 //!
 //! Hakus-specific repo authority/prioritization policy lives separately in
 //! `.hakus/constitution.json` and is rendered as its own higher-authority
@@ -43,7 +41,6 @@ const PROJECT_CONTEXT_FILES: &[&str] = &[
     ".claude/instructions.md",
     "CLAUDE.md",
     ".hakus/instructions.md",
-    ".deepseek/instructions.md",
 ];
 
 /// Rules directories auto-discovered at workspace level, in priority order.
@@ -62,20 +59,16 @@ const WHALE_IGNORED_WARNING: &str = "WHALE.md is ignored; move project instructi
 /// User-level project instructions loaded as a fallback when the workspace and
 /// its parents do not define project context. Any global AGENTS.md takes
 /// priority over a global instructions.md (#3012). Within each file name,
-/// `.hakus/` takes priority over vendor-neutral `.agents/`, which takes
-/// priority over legacy `.deepseek/`. Global `WHALE.md` files are ignored and
+/// `.hakus/` takes priority over vendor-neutral `.agents/`. Global `WHALE.md` files are ignored and
 /// reported as migration-only diagnostics.
 const GLOBAL_AGENTS_RELATIVE_PATH: &[&str] = &[".hakus", "AGENTS.md"];
 const GLOBAL_AGENTS_VENDOR_NEUTRAL_PATH: &[&str] = &[".agents", "AGENTS.md"];
-const GLOBAL_AGENTS_LEGACY_PATH: &[&str] = &[".deepseek", "AGENTS.md"];
 const GLOBAL_WHALE_RELATIVE_PATH: &[&str] = &[".hakus", "WHALE.md"];
 const GLOBAL_WHALE_VENDOR_NEUTRAL_PATH: &[&str] = &[".agents", "WHALE.md"];
-const GLOBAL_WHALE_LEGACY_PATH: &[&str] = &[".deepseek", "WHALE.md"];
 /// Global `instructions.md` (#3012): auto-loaded as a fallback context layer,
 /// ranked below AGENTS.md, mirroring the project-level precedence.
 const GLOBAL_INSTRUCTIONS_RELATIVE_PATH: &[&str] = &[".hakus", "instructions.md"];
 const GLOBAL_INSTRUCTIONS_VENDOR_NEUTRAL_PATH: &[&str] = &[".agents", "instructions.md"];
-const GLOBAL_INSTRUCTIONS_LEGACY_PATH: &[&str] = &[".deepseek", "instructions.md"];
 
 /// Maximum size for project context files (to prevent loading huge files)
 const MAX_CONTEXT_SIZE: usize = 100 * 1024; // 100KB
@@ -367,8 +360,8 @@ pub(crate) fn project_context_cache_candidate_paths(
     }
 
     paths.extend(repo_constitution_candidate_paths(&workspace));
-    paths.push(workspace.join(".deepseek").join("trusted"));
-    paths.push(workspace.join(".deepseek").join("trust.json"));
+        paths.push(workspace.join(".hakus").join("trusted"));
+        paths.push(workspace.join(".hakus").join("trust.json"));
     paths.extend(crate::config::workspace_trust_config_candidate_paths());
 
     // Include auto-discovered rules directory files so cache invalidates
@@ -395,22 +388,19 @@ pub(crate) fn project_context_cache_candidate_paths(
     paths
 }
 
-fn global_context_relative_paths() -> [&'static [&'static str]; 6] {
+fn global_context_relative_paths() -> [&'static [&'static str]; 4] {
     [
         GLOBAL_AGENTS_RELATIVE_PATH,
         GLOBAL_AGENTS_VENDOR_NEUTRAL_PATH,
-        GLOBAL_AGENTS_LEGACY_PATH,
         GLOBAL_INSTRUCTIONS_RELATIVE_PATH,
         GLOBAL_INSTRUCTIONS_VENDOR_NEUTRAL_PATH,
-        GLOBAL_INSTRUCTIONS_LEGACY_PATH,
     ]
 }
 
-fn legacy_global_whale_relative_paths() -> [&'static [&'static str]; 3] {
+fn legacy_global_whale_relative_paths() -> [&'static [&'static str]; 2] {
     [
         GLOBAL_WHALE_RELATIVE_PATH,
         GLOBAL_WHALE_VENDOR_NEUTRAL_PATH,
-        GLOBAL_WHALE_LEGACY_PATH,
     ]
 }
 
@@ -586,10 +576,8 @@ fn load_global_agents_context(workspace: &Path, home_dir: Option<&Path>) -> Opti
     // Priority order (AGENTS.md preferred; instructions.md next, #3012):
     // 1. ~/.hakus/AGENTS.md       (canonical)
     // 2. ~/.agents/AGENTS.md          (vendor-neutral fallback)
-    // 3. ~/.deepseek/AGENTS.md        (legacy fallback)
-    // 4. ~/.hakus/instructions.md (canonical)
-    // 5. ~/.agents/instructions.md    (vendor-neutral fallback)
-    // 6. ~/.deepseek/instructions.md  (legacy fallback)
+    // 3. ~/.hakus/instructions.md (canonical)
+    // 4. ~/.agents/instructions.md    (vendor-neutral fallback)
     // Global WHALE.md files are ignored and reported as migration-only
     // diagnostics, never loaded as fallback law.
     let mut warnings = ignored_global_whale_warnings(home);
@@ -801,8 +789,8 @@ fn check_trust_status(workspace: &Path) -> bool {
 
     // Check for trust markers
     let trust_markers = [
-        workspace.join(".deepseek").join("trusted"),
-        workspace.join(".deepseek").join("trust.json"),
+        workspace.join(".hakus").join("trusted"),
+        workspace.join(".hakus").join("trust.json"),
     ];
 
     for marker in &trust_markers {

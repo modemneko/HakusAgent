@@ -24,3 +24,5 @@ rand.workspace = true
 thiserror.workspace = true
 rustls.workspace = true
 dirs.workspace = true
+uuid.workspace = true
+hakus-paths = { path = "../paths", version = "0.9.10" }

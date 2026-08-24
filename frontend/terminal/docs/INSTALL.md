@@ -73,5 +73,15 @@ hakuscli            # 交互 TUI
 hakuscli exec "..." # 非交互
 ```
 
+## 数据位置
+
+HakusCLI 默认是免安装便携模式：所有运行数据写入当前工作目录的
+`.hakus/`，包括配置、会话、日志、缓存和凭据。这样删除程序目录即可一并
+管理这份数据，不会偷偷写入用户目录。
+
+需要安装到系统路径时，设置 `HAKUS_INSTALL_MODE=installed`；安装模式把数据
+写入用户 HOME 下的 `.hakus/`。也可以用绝对路径 `HAKUS_HOME` 指定独立数据根。
+程序不读取、不迁移、不回退到旧的 `.deepseek/` 目录。
+
 上游更详尽的历史参考（npm/FreeBSD 等）保留在
 [INSTALL.upstream-reference.md](INSTALL.upstream-reference.md)。

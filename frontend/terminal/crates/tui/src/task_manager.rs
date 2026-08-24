@@ -2529,11 +2529,10 @@ fn default_auto_approve() -> bool {
     true
 }
 
-/// Default task manager data location (`~/.hakus/tasks`, or legacy
-/// `~/.deepseek/tasks` when only the legacy directory exists).
+/// Default task manager data location under the canonical Hakus home.
 #[must_use]
 pub fn default_tasks_dir() -> PathBuf {
-    for var in ["HAKUS_TASKS_DIR", "DEEPSEEK_TASKS_DIR"] {
+    for var in ["HAKUS_TASKS_DIR"] {
         if let Ok(path) = std::env::var(var)
             && !path.trim().is_empty()
         {
@@ -2549,15 +2548,7 @@ pub fn default_tasks_dir() -> PathBuf {
 }
 
 fn default_tasks_dir_for_home(home: &Path) -> PathBuf {
-    let primary = home.join(".hakus").join("tasks");
-    if primary.is_dir() {
-        return primary;
-    }
-    let legacy = home.join(".deepseek").join("tasks");
-    if legacy.is_dir() {
-        return legacy;
-    }
-    primary
+    home.join(".hakus").join("tasks")
 }
 
 /// Wait for a task to reach a terminal status (tests and API helpers).
@@ -3271,13 +3262,16 @@ mod tests {
     }
 
     #[test]
-    fn default_tasks_dir_falls_back_to_legacy_deepseek_tasks() {
+    fn default_tasks_dir_ignores_legacy_deepseek_tasks() {
         let temp_home = tempfile::tempdir().unwrap();
         let home = temp_home.path();
         let legacy_tasks = home.join(".deepseek").join("tasks");
         std::fs::create_dir_all(&legacy_tasks).unwrap();
 
-        assert_eq!(default_tasks_dir_for_home(home), legacy_tasks);
+        assert_eq!(
+            default_tasks_dir_for_home(home),
+            home.join(".hakus").join("tasks")
+        );
     }
 
     #[test]
@@ -3293,7 +3287,7 @@ mod tests {
     }
 
     #[test]
-    fn default_tasks_dir_falls_back_to_legacy_when_primary_is_file() {
+    fn default_tasks_dir_uses_primary_when_primary_is_file() {
         let temp_home = tempfile::tempdir().unwrap();
         let home = temp_home.path();
         let primary_tasks = home.join(".hakus").join("tasks");
@@ -3302,7 +3296,10 @@ mod tests {
         std::fs::write(&primary_tasks, "not a directory").unwrap();
         std::fs::create_dir_all(&legacy_tasks).unwrap();
 
-        assert_eq!(default_tasks_dir_for_home(home), legacy_tasks);
+        assert_eq!(
+            default_tasks_dir_for_home(home),
+            home.join(".hakus").join("tasks")
+        );
     }
 
     #[test]
@@ -3358,12 +3355,10 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_hakus_home_keeps_ambient_legacy_task_and_runtime_fallbacks() {
+    fn whitespace_hakus_home_uses_canonical_task_and_runtime_roots() {
         let _lock = lock_test_env();
         let temp_root = tempfile::tempdir().unwrap();
         let ambient_home = temp_root.path().join("ambient-home");
-        let legacy_tasks = ambient_home.join(".deepseek").join("tasks");
-        std::fs::create_dir_all(&legacy_tasks).unwrap();
         let _home = EnvVarGuard::set("HOME", &ambient_home);
         let _userprofile = EnvVarGuard::set("USERPROFILE", &ambient_home);
         let _hakus_home = EnvVarGuard::set("HAKUS_HOME", " \t ");
@@ -3377,7 +3372,7 @@ mod tests {
             TaskManagerConfig::from_runtime(&Config::default(), PathBuf::from("."), None, None);
         let runtime = RuntimeThreadManagerConfig::from_task_data_dir(task_manager.data_dir.clone());
 
-        assert_eq!(task_root, legacy_tasks);
+        assert_eq!(task_root, ambient_home.join(".hakus").join("tasks"));
         assert_eq!(task_manager.data_dir, task_root);
         assert_eq!(runtime.task_data_dir, task_root);
         assert_eq!(runtime.data_dir, task_root.join("runtime"));

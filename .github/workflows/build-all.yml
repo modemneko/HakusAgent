@@ -96,13 +96,6 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross == true && matrix.android != true
-        env:
-          # Cross compiles inside a container. Native system libraries must be
-          # installed inside that container via CROSS_APT_DEPS, otherwise
-          # libdbus-sys fails to find `dbus-1`. Only linux targets pull in
-          # dbus; aarch64-unknown-linux-gnu additionally needs a cross C
-          # toolchain (gcc-aarch64-linux-gnu).
-          CROSS_APT_DEPS: ${{ matrix.os == 'ubuntu-22.04' && 'libdbus-1-dev,gcc-aarch64-linux-gnu' || '' }}
         run: |
           cargo install cross --locked
           cross build --release --locked --target ${{ matrix.target }} --bin hakuscli
@@ -173,7 +166,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-x64
+          name: desktop-windows-latest
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/msi/*.msi
@@ -183,7 +176,7 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-${{ matrix.platform == 'macos-latest' && 'arm64' || 'x64' }}
+          name: desktop-${{ matrix.platform }}
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/dmg/*.dmg
             HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/macos/*.app
@@ -193,7 +186,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-linux-x64
+          name: desktop-ubuntu-22.04
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage

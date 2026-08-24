@@ -1,6 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
 
-mod cloud;
 mod credential_handoff;
 mod metrics;
 #[cfg(not(target_env = "ohos"))]
@@ -386,9 +385,6 @@ New integrations should prefer `hakus app-server`.")]
     Logout,
     /// Manage authentication credentials and provider mode.
     Auth(AuthArgs),
-    /// Sign in to your Hakus account and manage account-scoped provider keys.
-    #[command(visible_alias = "cloud")]
-    Account(cloud::CloudArgs),
     /// Run MCP server mode over stdio.
     McpServer,
     /// Read/write/list config values.
@@ -1830,10 +1826,6 @@ fn run() -> Result<()> {
                 outcome
             }
         },
-        Some(Commands::Account(args)) => {
-            cloud::reject_inline_api_key(cli.api_key.as_deref())?;
-            cloud::run(args, cli.profile.as_deref(), &store)
-        }
         Some(Commands::McpServer) => {
             // `hakus serve --mcp` delegates to the TUI and arms there, so
             // without this the same user action reported differently depending
@@ -3161,20 +3153,6 @@ fn auth_diagnostic_lines(store: &ConfigStore, provider: Option<ProviderKind>) ->
             secret_backend_presence_label(backend.presence),
         ));
     }
-    if let Some(path) = backend.legacy_path.as_ref() {
-        lines.push(format!(
-            "legacy secret store: {} ({})",
-            hakus_config::quote_os_path(path),
-            secret_backend_presence_label(backend.legacy_presence),
-        ));
-    } else if explicit_home {
-        lines.push(
-            "legacy secret store: suppressed by explicit HAKUS_HOME isolation".to_string(),
-        );
-    } else {
-        lines.push("legacy secret store: unavailable (not probed)".to_string());
-    }
-
     lines.push(String::new());
     // Diagnostic mode answers "which sources will this shell use?" for one
     // route. Ordinary `auth status` remains the all-provider inventory; a

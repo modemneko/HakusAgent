@@ -23,23 +23,18 @@ export function LoadingScreen({ status }: LoadingScreenProps) {
   }, [status])
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-6 bg-background">
-      {/* Animated orb */}
-      <div className="relative flex h-20 w-20 items-center justify-center">
-        <div className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
-        <div className="absolute inset-2 animate-pulse rounded-full bg-primary/10" />
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+    <div className="flex h-full w-full flex-col items-center justify-center gap-5 bg-background">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-2xl font-semibold tracking-[0.16em] text-primary">
+        H
       </div>
-
-      {/* Logo text */}
       <div className="text-center">
-        <h1 className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-xl font-semibold tracking-tight text-transparent">
-          HakusAI
-        </h1>
+        <h1 className="text-xl font-semibold tracking-[0.16em] text-foreground">HAKUS</h1>
+        <p className="mt-1 text-[10px] uppercase tracking-[0.28em] text-muted-foreground">workspace</p>
       </div>
 
       {/* Status text */}
-      <p className="animate-pulse text-sm text-muted-foreground">
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
         {status || STATUS_MESSAGES[messageIndex]}
       </p>
     </div>

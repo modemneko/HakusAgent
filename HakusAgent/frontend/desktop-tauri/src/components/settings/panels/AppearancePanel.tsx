@@ -64,7 +64,7 @@ export function AppearancePanel() {
           step={1}
           value={settings.fontSize}
           onChange={(e) => settings.update({ fontSize: Number(e.target.value) })}
-          className="w-full accent-blue-500"
+          className="w-full accent-primary"
         />
         <div className="flex justify-between text-[10px] text-muted-foreground">
           <span>12px</span>

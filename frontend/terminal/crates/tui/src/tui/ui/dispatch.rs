@@ -885,7 +885,6 @@ pub(crate) fn build_dispatch_error_closure(
               _engine_handle: &EngineHandle,
               _config: &Config|
               -> anyhow::Result<()> {
-            app.remote_control.fail_active_dispatch(&error);
             app.dispatch_in_flight = false;
             // Roll back the optimistic sync prepare mutations.
             app.is_loading = prepare.snapshot.is_loading;
@@ -1171,16 +1170,6 @@ pub(crate) async fn dispatch_composer_message(
     recovery: DispatchRecovery,
     action: ComposerSubmitAction,
 ) -> Result<()> {
-    if app.remote_control.blocks_local_input() {
-        app.input = message.display;
-        app.cursor_position = app.input.chars().count();
-        let status =
-            "Web remote control owns prompts. Use /rc stop to return input to this terminal."
-                .to_string();
-        app.status_message = Some(status.clone());
-        app.push_status_toast(status, StatusToastLevel::Warning, Some(6_000));
-        return Ok(());
-    }
     // Agent focus: the composer addresses one child's fork, not the main
     // session. The follow-up is real runtime work (Op::FollowUpSubAgent); the
     // main transcript keeps a receipt line and the focused view echoes the

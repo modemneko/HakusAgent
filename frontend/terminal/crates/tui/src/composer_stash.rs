@@ -70,14 +70,9 @@ pub struct StashedDraft {
 }
 
 fn default_stash_path() -> Option<PathBuf> {
-    crate::config::effective_home_dir().map(|home| {
-        let primary = home.join(".hakus").join(STASH_FILE_NAME);
-        let legacy = home.join(".deepseek").join(STASH_FILE_NAME);
-        if primary.exists() || !legacy.exists() {
-            return primary;
-        }
-        legacy
-    })
+    crate::config::hakus_home()
+        .ok()
+        .map(|home| home.join(STASH_FILE_NAME))
 }
 
 /// Inspect the composer stash for `doctor` without changing product state.
@@ -86,7 +81,7 @@ fn default_stash_path() -> Option<PathBuf> {
 /// Diagnostics follow the same behavior only when no explicit
 /// `HAKUS_HOME` is configured; an explicit home is an isolation boundary
 /// and must not cause doctor to inspect an ambient `$HOME/.hakus` or
-/// `$HOME/.deepseek` stash.
+/// The active Hakus data-root stash.
 pub(crate) fn diagnostic_stash_report() -> DiagnosticStashReport {
     let primary = match hakus_config::hakus_home() {
         Ok(home) => home.join(STASH_FILE_NAME),
@@ -102,26 +97,7 @@ pub(crate) fn diagnostic_stash_report() -> DiagnosticStashReport {
         }
     };
 
-    let explicit_home = hakus_config::hakus_home_is_explicit();
-    let legacy = if explicit_home {
-        None
-    } else {
-        match hakus_config::legacy_deepseek_home() {
-            Ok(home) => Some(home.join(STASH_FILE_NAME)),
-            Err(error) => {
-                return DiagnosticStashReport {
-                    path: Some(primary),
-                    present: false,
-                    count: 0,
-                    error: Some(format!(
-                        "could not resolve the legacy composer stash path: {error}"
-                    )),
-                };
-            }
-        }
-    };
-
-    diagnostic_stash_report_from_paths(primary, legacy, explicit_home)
+    diagnostic_stash_report_from_paths(primary, None, true)
 }
 
 fn diagnostic_stash_report_from_paths(

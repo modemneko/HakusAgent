@@ -12,7 +12,9 @@ use std::path::PathBuf;
 /// Canonical Hakus app directory name under the user home.
 pub const HAKUS_APP_DIR: &str = ".hakus";
 
-/// Legacy DeepSeek-branded directory retained for compatibility reads.
+/// Historical name kept only for source compatibility with old test fixtures.
+/// Runtime path resolution never uses this directory.
+#[deprecated(note = "legacy path is not read or written by Hakus")]
 pub const LEGACY_APP_DIR: &str = ".deepseek";
 
 /// An environment-provided runtime path was not safe to use as a global path.
@@ -61,20 +63,18 @@ pub fn hakus_home_override() -> Result<Option<PathBuf>, PathOverrideError> {
     absolute_path_env("HAKUS_HOME")
 }
 
+/// Historical environment accessor retained for downstream compilation only.
+/// Hakus runtime code does not consult this value.
+#[deprecated(note = "DEEPSEEK_HOME is no longer used by Hakus")]
+#[must_use]
+pub fn legacy_deepseek_home_override() -> Option<PathBuf> {
+    path_env("DEEPSEEK_HOME")
+}
+
 /// Whether `HAKUS_HOME` establishes an explicit isolation boundary.
 #[must_use]
 pub fn hakus_home_is_explicit() -> bool {
     path_env("HAKUS_HOME").is_some()
-}
-
-/// Return the legacy `DEEPSEEK_HOME` compatibility override, if configured.
-///
-/// New state must use [`hakus_home`]. This resolver exists only for readers
-/// whose persisted format still explicitly supports the legacy environment
-/// alias.
-#[must_use]
-pub fn legacy_deepseek_home_override() -> Option<PathBuf> {
-    path_env("DEEPSEEK_HOME")
 }
 
 /// Resolve the user's platform home, preferring `HOME` before `USERPROFILE`.
@@ -108,7 +108,19 @@ fn windows_home_from_environment() -> Option<PathBuf> {
 /// A valid explicit `HAKUS_HOME` is returned after `~` expansion. Otherwise
 /// this is `<user home>/.hakus`.
 pub fn hakus_home() -> Result<Option<PathBuf>, PathOverrideError> {
-    Ok(hakus_home_override()?.or_else(|| user_home().map(|home| home.join(HAKUS_APP_DIR))))
+    if let Some(path) = hakus_home_override()? {
+        return Ok(Some(path));
+    }
+    if std::env::var("HAKUS_INSTALL_MODE")
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("installed"))
+    {
+        return Ok(user_home().map(|home| home.join(HAKUS_APP_DIR)));
+    }
+    let root = path_env("HAKUS_DATA_DIR")
+        .or_else(|| std::env::current_dir().ok())
+        .or_else(|| user_home());
+    Ok(root.map(|path| path.join(HAKUS_APP_DIR)))
 }
 
 /// Return the explicit config-file override, preferring the Hakus name.
@@ -117,10 +129,15 @@ pub fn hakus_home() -> Result<Option<PathBuf>, PathOverrideError> {
 /// validated. All other relative paths are rejected so a process working in a
 /// repository can never turn a global config override into a repo-local file.
 pub fn config_path_override() -> Result<Option<PathBuf>, PathOverrideError> {
-    if let Some(path) = absolute_path_env("HAKUS_CONFIG_PATH")? {
-        return Ok(Some(path));
-    }
-    absolute_path_env("DEEPSEEK_CONFIG_PATH")
+    absolute_path_env("HAKUS_CONFIG_PATH")
+}
+
+/// Historical path helper retained for source compatibility only. Runtime
+/// resolvers never call it.
+#[deprecated(note = "the .deepseek compatibility root is no longer used")]
+#[must_use]
+pub fn legacy_deepseek_home() -> Option<PathBuf> {
+    user_home().map(|home| home.join(".deepseek"))
 }
 
 /// Read an optional path environment variable and require a global path.
@@ -173,15 +190,6 @@ pub fn validate_absolute_path(
             kind: PathOverrideErrorKind::Relative,
         })
     }
-}
-
-/// Resolve the ambient legacy DeepSeek home used for compatibility reads.
-///
-/// This never follows `HAKUS_HOME`: callers must suppress legacy fallback
-/// whenever [`hakus_home_is_explicit`] is true.
-#[must_use]
-pub fn legacy_deepseek_home() -> Option<PathBuf> {
-    user_home().map(|home| home.join(LEGACY_APP_DIR))
 }
 
 fn path_env(name: &str) -> Option<PathBuf> {

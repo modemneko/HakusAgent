@@ -88,17 +88,12 @@ fn whitespace_override_uses_home_before_userprofile_and_allows_legacy_fallback()
     let state = StateStore::open(None).expect("default state store");
     assert_eq!(state.db_path(), legacy.join("state.db"));
 
-    let (primary_secrets, legacy_secrets) =
-        FileKeyringStore::default_paths_read_only().expect("secret paths");
+    let primary_secrets = FileKeyringStore::default_path().expect("secret path");
     assert_eq!(
         primary_secrets,
         home.join(HAKUS_APP_DIR)
             .join("secrets")
             .join("secrets.json")
-    );
-    assert_eq!(
-        legacy_secrets,
-        Some(legacy.join("secrets").join("secrets.json"))
     );
 }
 
@@ -130,11 +125,9 @@ fn non_unicode_override_is_one_explicit_isolation_boundary() {
 
     assert_eq!(default_state_db_path(), explicit.join("state.db"));
 
-    let (primary_secrets, legacy_secrets) =
-        FileKeyringStore::default_paths_read_only().expect("secret paths");
+    let primary_secrets = FileKeyringStore::default_path().expect("secret path");
     assert_eq!(
         primary_secrets,
         explicit.join("secrets").join("secrets.json")
     );
-    assert_eq!(legacy_secrets, None);
 }

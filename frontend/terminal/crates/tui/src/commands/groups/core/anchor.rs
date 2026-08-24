@@ -69,11 +69,7 @@ pub fn anchor(app: &mut App, content: Option<&str>) -> CommandResult {
 }
 
 fn anchors_path(app: &App) -> std::path::PathBuf {
-    let primary = app.workspace.join(".hakus").join("anchors.md");
-    if primary.exists() {
-        return primary;
-    }
-    app.workspace.join(".deepseek").join("anchors.md")
+    app.workspace.join(".hakus").join("anchors.md")
 }
 
 /// Read and split anchors from the file. Each anchor is separated by "\n---\n".

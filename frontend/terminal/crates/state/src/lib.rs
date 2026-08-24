@@ -22,7 +22,7 @@ static SESSION_INDEX_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(())
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use hakus_paths::{HAKUS_APP_DIR, LEGACY_APP_DIR, hakus_home_override};
+use hakus_paths::{HAKUS_APP_DIR, hakus_home_override};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -289,7 +289,7 @@ impl StateStore {
     /// Open (or create) a state store at the given database path.
     ///
     /// If `path` is `None`, the default location (`~/.hakus/state.db`, with
-    /// `~/.deepseek/state.db` as a legacy fallback) is used.
+    /// `~/.hakus/state.db` is used.
     /// The database schema is created automatically if it does not exist.
     pub fn open(path: Option<PathBuf>) -> Result<Self> {
         let db_path = path.unwrap_or_else(default_state_db_path);
@@ -1849,28 +1849,18 @@ impl StateStore {
 /// Resolve the default SQLite state path without opening or creating it.
 ///
 /// An explicit `HAKUS_HOME` always yields `<override>/state.db` and blocks
-/// ambient legacy fallback. Without an override, an existing legacy database
-/// remains readable until it is migrated.
+/// canonical state root. No legacy product directory is consulted.
 #[must_use]
 pub fn default_state_db_path() -> PathBuf {
-    // $HAKUS_HOME is a hard override of the base data directory
-    // (docs/CONFIGURATION.md): when set, the state DB lives under it and we do
-    // NOT fall back to the legacy ~/.deepseek path — silent fallback would
-    // defeat the isolation the override promises (CI, containers, multi-project,
-    // test harnesses). Legacy ~/.deepseek migration only applies to the default
-    // home location.
+    // $HAKUS_HOME is a hard override of the base data directory.
     if let Some(overridden) = hakus_home_override().ok().flatten() {
         return overridden.join("state.db");
     }
-    let home = hakus_paths::user_home().unwrap_or_else(|| PathBuf::from("."));
-    // Prefer the CodeWhale directory, falling back to legacy DeepSeek path
-    // so existing installs don't lose their session history.
-    let primary = home.join(HAKUS_APP_DIR).join("state.db");
-    if primary.exists() || !home.join(LEGACY_APP_DIR).join("state.db").exists() {
-        primary
-    } else {
-        home.join(LEGACY_APP_DIR).join("state.db")
-    }
+    hakus_paths::hakus_home()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| PathBuf::from(HAKUS_APP_DIR))
+        .join("state.db")
 }
 
 fn bool_to_i64(value: bool) -> i64 {
@@ -2586,8 +2576,7 @@ mod tests {
         ));
         let _g = CodeWhaleHomeGuard::set(dir.to_str().unwrap());
         // Hard override: the DB is <HAKUS_HOME>/state.db, NOT
-        // <HAKUS_HOME>/.hakus/state.db, and the legacy ~/.deepseek
-        // fallback is bypassed entirely.
+        // <HAKUS_HOME>/state.db is used exactly as configured.
         assert_eq!(default_state_db_path(), dir.join("state.db"));
     }
 

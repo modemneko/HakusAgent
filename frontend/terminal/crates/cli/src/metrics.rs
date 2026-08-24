@@ -823,15 +823,10 @@ fn print_human(rollup: &Rollup) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn deepseek_home() -> PathBuf {
-    // This reader preserves the legacy DEEPSEEK_HOME/default-root precedence,
-    // but delegates every environment and platform-home decision to the shared
-    // runtime path authority.
-    hakus_paths::hakus_home_override()
+    hakus_paths::hakus_home()
         .ok()
         .flatten()
-        .or_else(hakus_paths::legacy_deepseek_home_override)
-        .or_else(hakus_paths::legacy_deepseek_home)
-        .unwrap_or_else(|| PathBuf::from(hakus_paths::LEGACY_APP_DIR))
+        .unwrap_or_else(|| PathBuf::from(".hakus"))
 }
 
 /// Parse a timestamp from a JSON value field (tries RFC3339).

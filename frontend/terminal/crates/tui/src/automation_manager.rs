@@ -2,7 +2,7 @@
 //!
 //! Automations are local-first recurring jobs that enqueue standard background
 //! tasks. This module stores automation definitions and run history under
-//! `~/.hakus/automations` (or `DEEPSEEK_AUTOMATIONS_DIR` override).
+//! `$HAKUS_HOME/automations` (or `HAKUS_AUTOMATIONS_DIR` override).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -1875,7 +1875,7 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
 pub fn default_automations_dir() -> PathBuf {
     // Most-specific override: an explicit automations dir.
-    for var in ["HAKUS_AUTOMATIONS_DIR", "DEEPSEEK_AUTOMATIONS_DIR"] {
+    for var in ["HAKUS_AUTOMATIONS_DIR"] {
         if let Ok(path) = std::env::var(var) {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
@@ -1883,23 +1883,10 @@ pub fn default_automations_dir() -> PathBuf {
             }
         }
     }
-    // $HAKUS_HOME is a hard override of the base data directory
-    // (docs/CONFIGURATION.md): when SET, automations live under it and we do
-    // NOT fall back to the legacy ~/.deepseek path — silent fallback would
-    // defeat the isolation the override promises. Check the env var directly
-    // (not hakus_home()'s Ok/Err, which succeeds for the default home too).
-    if let Some(home) = hakus_paths::hakus_home_override().ok().flatten() {
-        return home.join("automations");
-    }
-    hakus_paths::user_home()
-        .map(|home| {
-            let primary = home.join(".hakus").join("automations");
-            let legacy = home.join(".deepseek").join("automations");
-            if primary.exists() || !legacy.exists() {
-                return primary;
-            }
-            legacy
-        })
+    hakus_paths::hakus_home()
+        .ok()
+        .flatten()
+        .map(|home| home.join("automations"))
         .unwrap_or_else(|| PathBuf::from(".hakus").join("automations"))
 }
 

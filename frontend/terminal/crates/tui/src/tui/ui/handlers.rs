@@ -1612,9 +1612,6 @@ pub(crate) async fn handle_view_events(
                         Some("Config view opened from /setup runtime posture.".to_string());
                 }
             }
-            ViewEvent::SetupOpenRemoteControlRequested => {
-                start_remote_control_session(app);
-            }
             ViewEvent::HotbarDisableRequested => {
                 disable_hotbar(app, config);
             }

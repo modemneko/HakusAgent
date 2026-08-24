@@ -1,0 +1,28 @@
+# `cross` build configuration for cross-compiling HakusCLI.
+#
+# Two Linux ARM targets are built with `cross` in CI:
+#   - aarch64-unknown-linux-gnu (linux-arm64 asset) — Ubuntu container
+#   - aarch64-linux-android  (android asset, handled by cargo-ndk, NOT cross)
+#
+# Why pre-build: the `libdbus-sys` crate (pulled in by the opt-in OS keyring,
+# keyring -> secret-service -> dbus) needs the native `dbus-1` library at
+# compile time. The cross container is a bare Ubuntu image with no dbus dev
+# headers, so `libdbus-sys`'s build script fails with
+# "Package dbus-1 was not found in the pkg-config search path".
+#
+# The `pre-build` hook runs inside the container *before* the build, so we
+# install the headers there. This is the documented cross mechanism — a job
+# level `CROSS_APT_DEPS` env var is NOT honored by cross, so it must live here.
+#
+# `gcc-aarch64-linux-gnu` is an extra host-side cross C toolchain; `cross`
+# usually bundles one, but installing it explicitly removes a failure mode on
+# the ubuntu-22.04 runner.
+#
+# Note: Mac x64 (`x86_64-apple-darwin` on macos-14) also sets `cross: true` in
+# the workflow but has no pre-build here — cross on macOS uses the host clang,
+# so no container apt packages are needed.
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "apt-get update",
+    "apt-get install -y libdbus-1-dev pkg-config gcc-aarch64-linux-gnu",
+]

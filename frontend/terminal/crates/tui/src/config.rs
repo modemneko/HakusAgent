@@ -3995,14 +3995,9 @@ fn allow_shell_env_is_set() -> bool {
 }
 
 fn project_config_root_bool(workspace: &Path, key: &str) -> Option<bool> {
-    [
-        workspace
-            .join(hakus_config::HAKUS_APP_DIR)
-            .join("config.toml"),
-        workspace
-            .join(hakus_config::LEGACY_APP_DIR)
-            .join("config.toml"),
-    ]
+    [workspace
+        .join(hakus_config::HAKUS_APP_DIR)
+        .join("config.toml")]
     .into_iter()
     .find(|path| path.exists())
     .and_then(|path| std::fs::read_to_string(path).ok())
@@ -7529,10 +7524,7 @@ pub(crate) fn workspace_trust_config_candidate_paths() -> Vec<PathBuf> {
     let Some(home) = effective_home_dir() else {
         return Vec::new();
     };
-    vec![
-        home.join(".hakus").join("config.toml"),
-        home.join(".deepseek").join("config.toml"),
-    ]
+    vec![home.join(".hakus").join("config.toml")]
 }
 
 #[must_use]

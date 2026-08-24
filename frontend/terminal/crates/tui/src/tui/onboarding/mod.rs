@@ -147,10 +147,6 @@ fn action_hints(app: &App) -> Vec<ActionHint> {
         ],
         OnboardingState::Ready => vec![
             ActionHint::new("Enter", app.tr(MessageId::OnboardReadyStart).to_string()),
-            ActionHint::new(
-                "/rc",
-                app.tr(MessageId::CmdRemoteControlDescription).to_string(),
-            ),
             ActionHint::new("C", app.tr(MessageId::OnboardReadyCustomize).to_string()),
         ],
         OnboardingState::None => Vec::new(),
@@ -233,38 +229,12 @@ pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
 }
 
 pub fn default_marker_path() -> Option<PathBuf> {
-    let primary_home = hakus_config::hakus_home().ok()?;
-    let legacy_home = if hakus_config::hakus_home_is_explicit() {
-        None
-    } else {
-        hakus_config::legacy_deepseek_home().ok()
-    };
-    Some(marker_path_with_roots(
-        &primary_home,
-        legacy_home.as_deref(),
-    ))
+    Some(hakus_config::hakus_home().ok()?.join(ONBOARDED_MARKER_FILE))
 }
 
 #[cfg(test)]
 fn marker_path_with_home(home: &Path) -> PathBuf {
-    marker_path_with_roots(
-        &home.join(".hakus"),
-        Some(home.join(".deepseek").as_path()),
-    )
-}
-
-fn marker_path_with_roots(primary_home: &Path, legacy_home: Option<&Path>) -> PathBuf {
-    let primary = primary_home.join(ONBOARDED_MARKER_FILE);
-    if primary.exists() {
-        return primary;
-    }
-    if let Some(legacy_home) = legacy_home {
-        let legacy = legacy_home.join(ONBOARDED_MARKER_FILE);
-        if legacy.exists() {
-            return legacy;
-        }
-    }
-    primary
+    home.join(".hakus").join(ONBOARDED_MARKER_FILE)
 }
 
 pub fn is_onboarded() -> bool {
@@ -301,8 +271,8 @@ pub fn needs_trust(workspace: &Path) -> bool {
     }
 
     let markers = [
-        workspace.join(".deepseek").join("trusted"),
-        workspace.join(".deepseek").join("trust.json"),
+        workspace.join(".hakus").join("trusted"),
+        workspace.join(".hakus").join("trust.json"),
     ];
     !markers.iter().any(|path| path.exists())
 }
@@ -766,16 +736,17 @@ mod tests {
     }
 
     #[test]
-    fn existing_legacy_marker_is_preserved() {
+    fn legacy_marker_is_ignored_and_new_marker_is_canonical() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let legacy = tmp.path().join(".deepseek").join(ONBOARDED_MARKER_FILE);
         std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("mkdir legacy");
         std::fs::write(&legacy, "").expect("seed legacy marker");
 
-        assert_eq!(marker_path_with_home(tmp.path()), legacy);
+        let expected = tmp.path().join(".hakus").join(ONBOARDED_MARKER_FILE);
+        assert_eq!(marker_path_with_home(tmp.path()), expected);
         assert_eq!(
             mark_onboarded_at_home(tmp.path()).expect("mark onboarded"),
-            legacy
+            expected
         );
     }
 
@@ -845,7 +816,6 @@ mod tests {
                 MessageId::OnboardReadyLead,
                 MessageId::OnboardReadyStart,
                 MessageId::OnboardReadyCustomize,
-                MessageId::CmdRemoteControlDescription,
                 MessageId::OnboardSeedCodeProject,
                 MessageId::OnboardSeedFolder,
             ] {

@@ -170,7 +170,8 @@ pub fn spawn_backend(app: &AppHandle) -> Result<u16, String> {
         .shell()
         .command("python")
         .args(["-m", "hakusai_server.server"])
-        .env("PYTHONUTF8", "1");
+        .env("PYTHONUTF8", "1")
+        .env("HAKUS_INSTALL_MODE", "installed");
 
     let (rx, child) = backend_cmd
         .spawn()

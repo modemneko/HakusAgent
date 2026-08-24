@@ -4305,28 +4305,9 @@ impl SubAgentManager {
         };
         let path = checked_subagent_state_path(&self.state_root, path)?;
 
-        // If canonical path doesn't exist, try legacy .deepseek/ path for one-time
-        // migration. The next persist will write to the canonical .hakus/ path.
-        let path = if path.exists() {
-            path
-        } else {
-            let legacy = checked_subagent_state_path(
-                &self.state_root,
-                &Path::new(".deepseek")
-                    .join("state")
-                    .join(SUBAGENT_STATE_FILE),
-            )?;
-            if legacy.exists() {
-                tracing::info!(
-                    target: "subagent",
-                    "loading sub-agent state from legacy path for migration: {}",
-                    legacy.display()
-                );
-                legacy
-            } else {
-                return Ok(());
-            }
-        };
+        if !path.exists() {
+            return Ok(());
+        }
 
         let raw = read_subagent_state_file(&self.state_root, &path)?;
         let state = serde_json::from_str::<PersistedSubAgentState>(&raw)?;
@@ -7657,9 +7638,8 @@ pub(crate) fn write_subagent_transcript_artifact_for_test(
 
 fn default_state_path(state_root: &Path) -> Result<PathBuf> {
     let state_root = normalize_subagent_workspace(state_root);
-    // Canonical post-rebrand state path. On first run the file won't exist yet;
-    // write_json_atomic creates parent directories. Legacy .deepseek/state/ data
-    // is migrated on load (see load_state).
+    // Canonical state path. On first run the file won't exist yet;
+    // write_json_atomic creates parent directories.
     checked_subagent_state_path(
         &state_root,
         &Path::new(".hakus")

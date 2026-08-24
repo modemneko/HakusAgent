@@ -745,7 +745,7 @@ export function ChatView() {
             className={cn(
               'flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium',
               conversationState === 'listening' && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-              conversationState === 'speaking' && 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+              conversationState === 'speaking' && 'bg-primary/15 text-primary',
               conversationState === 'connecting' && 'bg-primary/15 text-primary',
               (conversationState === 'transcribing' || conversationState === 'thinking') &&
                 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
@@ -782,8 +782,8 @@ export function ChatView() {
             {conversationState === 'speaking' && (
               <>
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
                 </span>
                 <Volume2 className="h-3 w-3" />
                 AI 播报中…说话可打断

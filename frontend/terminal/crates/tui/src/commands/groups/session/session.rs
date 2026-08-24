@@ -14,8 +14,7 @@ use super::CommandResult;
 ///
 /// When an explicit path is given, the session is exported there
 /// (user-visible explicit export).  Without a path, v0.8.44 saves
-/// into the managed session directory (`~/.hakus/sessions`
-/// or legacy `~/.deepseek/sessions`) so repo-local `session_*.json`
+/// into the managed session directory (`~/.hakus/sessions`) so repo-local `session_*.json`
 /// artifacts are no longer created by default.
 pub fn save(app: &mut App, path: Option<&str>) -> CommandResult {
     let explicit_save_path = path.map(PathBuf::from);
@@ -517,7 +516,7 @@ fn set_archived(app: &mut App, session_id: Option<&str>, archived: bool) -> Comm
 }
 
 /// Prune persisted sessions older than `<days>` from
-/// `~/.deepseek/sessions/`. Wraps
+/// `~/.hakus/sessions/`. Wraps
 /// [`crate::session_manager::SessionManager::prune_sessions_older_than`]
 /// so users can run a safe cleanup without leaving the TUI. Skips
 /// the checkpoint subdirectory (the helper guarantees that already).

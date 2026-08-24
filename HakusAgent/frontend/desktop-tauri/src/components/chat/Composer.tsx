@@ -1018,11 +1018,11 @@ export function Composer({
             <svg viewBox="0 0 640 24" preserveAspectRatio="none" focusable="false">
               <defs>
                 <linearGradient id="wave-gradient" x1="0" x2="1">
-                  <stop offset="0" stopColor="#60a5fa" stopOpacity="0" />
-                  <stop offset=".2" stopColor="#60a5fa" />
-                  <stop offset=".55" stopColor="#60a5fa" />
-                  <stop offset=".8" stopColor="#60a5fa" />
-                  <stop offset="1" stopColor="#60a5fa" stopOpacity="0" />
+                  <stop offset="0" stopColor="#c7a6f7" stopOpacity="0" />
+                  <stop offset=".2" stopColor="#c7a6f7" />
+                  <stop offset=".55" stopColor="#f1b7e7" />
+                  <stop offset=".8" stopColor="#c7a6f7" />
+                  <stop offset="1" stopColor="#c7a6f7" stopOpacity="0" />
                 </linearGradient>
               </defs>
               <path className="voice-waveform-path voice-waveform-path-back" d="M0 12 C40 12 48 12 72 12 S105 12 120 12 S150 12 168 12 S200 12 224 12 S256 12 280 12 S320 12 344 12 S376 12 400 12 S432 12 456 12 S488 12 512 12 S544 12 568 12 S608 12 640 12" />
@@ -1460,7 +1460,7 @@ export function Composer({
                         'h-8 w-8 rounded-xl',
                         conversationState === 'connecting' && 'bg-primary text-white hover:bg-primary/90',
                         conversationState === 'listening' && 'bg-emerald-500 text-white hover:bg-emerald-600',
-                        conversationState === 'speaking' && 'bg-blue-500 text-white hover:bg-blue-600',
+                        conversationState === 'speaking' && 'bg-primary text-primary-foreground hover:bg-primary/90',
                         (conversationState === 'transcribing' || conversationState === 'thinking') &&
                           'bg-amber-500 text-white hover:bg-amber-600',
                         (conversationState === 'listening' || conversationState === 'speaking') && 'animate-pulse',

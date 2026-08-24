@@ -1427,8 +1427,8 @@ pub(crate) const AMBIENT_MIN_CHAT_WIDTH: u16 = 60;
 /// spelling also tested `height >= 14 && width >= 28`, which was dead: the
 /// tier check already demands 16 rows and 60 columns.)
 #[must_use]
-pub(crate) fn empty_state_mark_visible(area: Rect) -> bool {
-    area.height >= AMBIENT_MIN_CHAT_HEIGHT && area.width >= AMBIENT_MIN_CHAT_WIDTH
+pub(crate) fn empty_state_mark_visible(_area: Rect) -> bool {
+    false
 }
 
 #[must_use]

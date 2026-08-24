@@ -93,13 +93,8 @@ pub fn spillover_root() -> Option<PathBuf> {
         return Some(root);
     }
 
-    let home = crate::config::effective_home_dir()?;
-    let primary = home.join(".hakus").join(SPILLOVER_DIR_NAME);
-    let legacy = home.join(".deepseek").join(SPILLOVER_DIR_NAME);
-    if primary.exists() || !legacy.exists() {
-        return Some(primary);
-    }
-    Some(legacy)
+    let home = hakus_config::hakus_home().ok()?;
+    Some(home.join(SPILLOVER_DIR_NAME))
 }
 
 /// Override the spillover root for tests without mutating `$HOME`.

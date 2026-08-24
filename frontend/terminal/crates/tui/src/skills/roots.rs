@@ -35,7 +35,6 @@ pub enum CompatibleHarness {
     Cursor,
     OpenCode,
     Codex,
-    DeepSeekLegacy,
     /// Flat `<workspace>/skills` layout.
     FlatProjectSkills,
 }
@@ -50,7 +49,6 @@ impl CompatibleHarness {
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
             Self::Codex => "codex",
-            Self::DeepSeekLegacy => "deepseek",
             Self::FlatProjectSkills => "flat-skills",
         }
     }
@@ -266,18 +264,6 @@ impl SkillRootCatalog {
                 true,
                 "global-hakus",
                 true,
-            );
-
-            push_existing(
-                &mut roots,
-                &mut precedence,
-                SkillRootKind::CompatibleGlobal(CompatibleHarness::DeepSeekLegacy),
-                SkillRootAccess::ReadOnlyExternal,
-                SkillScope::Global,
-                home.join(".deepseek").join("skills"),
-                true,
-                true,
-                "global-deepseek",
             );
 
             // Codex global: audit-compatible only.
@@ -618,10 +604,6 @@ fn match_compatible_global(home: &Path, skills_dir: &Path) -> Option<CompatibleH
         (
             CompatibleHarness::Claude,
             home.join(".claude").join("skills"),
-        ),
-        (
-            CompatibleHarness::DeepSeekLegacy,
-            home.join(".deepseek").join("skills"),
         ),
         (CompatibleHarness::Codex, home.join(".codex").join("skills")),
     ];

@@ -2933,7 +2933,7 @@ fn relative_hakus_home_is_a_hard_error() {
 }
 
 #[test]
-fn migrate_config_reports_copied_legacy_path() {
+fn migrate_config_is_disabled_and_does_not_read_legacy_path() {
     let _lock = env_lock();
     struct LegacyConfigGuard {
         path: PathBuf,
@@ -2987,21 +2987,10 @@ fn migrate_config_reports_copied_legacy_path() {
         env::remove_var("HAKUS_HOME");
     }
 
-    let migration = migrate_config_if_needed()
-        .expect("migration")
-        .expect("legacy config should be copied");
-
-    assert_eq!(migration.legacy_path, legacy_config);
-    assert_eq!(migration.primary_path, primary_dir.join(CONFIG_FILE_NAME));
-    let notice = migration.user_notice();
-    assert!(notice.contains(&legacy_dir.join(CONFIG_FILE_NAME).display().to_string()));
-    assert!(notice.contains(&primary_dir.join(CONFIG_FILE_NAME).display().to_string()));
-    assert!(notice.contains(".hakus path for future edits"));
-    assert!(notice.contains(".deepseek file remains only as a compatibility fallback"));
-    assert_eq!(
-        fs::read_to_string(primary_dir.join(CONFIG_FILE_NAME)).expect("primary config"),
-        "provider = \"deepseek\"\n"
-    );
+    assert!(migrate_config_if_needed()
+        .expect("migration check")
+        .is_none());
+    assert!(!primary_dir.join(CONFIG_FILE_NAME).exists());
 
     let _ = fs::remove_dir_all(home);
 }
@@ -3121,7 +3110,7 @@ impl StateDirEnv {
 }
 
 #[test]
-fn ensure_state_dir_relocates_legacy_subdir_on_first_write() {
+fn ensure_state_dir_does_not_read_legacy_subdir_on_first_write() {
     let _lock = env_lock();
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3140,23 +3129,9 @@ fn ensure_state_dir_relocates_legacy_subdir_on_first_write() {
     let (dir, migration) =
         ensure_state_dir_with_migration("slop_ledger").expect("ensure_state_dir");
     assert_eq!(dir, state_env.primary("slop_ledger"));
-    let migration = migration.expect("legacy migration should be reported");
-    assert_eq!(migration.kind, StateMigrationKind::Relocated);
-    assert_eq!(migration.subdir, "slop_ledger");
-    assert_eq!(migration.legacy_path, state_env.legacy("slop_ledger"));
-    assert_eq!(migration.primary_path, state_env.primary("slop_ledger"));
-    // Legacy contents relocated into primary.
-    assert_eq!(
-        fs::read_to_string(state_env.primary("slop_ledger").join("slop_ledger.json"))
-            .expect("migrated file"),
-        "legacy"
-    );
-    // The legacy subdir was relocated (moved), so .deepseek stops growing.
-    assert!(
-        !state_env.legacy("slop_ledger").exists(),
-        "legacy subdir should be removed after relocation"
-    );
-    // Idempotent: a second call is a no-op now that primary exists.
+    assert!(migration.is_none());
+    assert!(!state_env.primary("slop_ledger").join("slop_ledger.json").exists());
+    assert!(state_env.legacy("slop_ledger").exists());
     let (_, repeated_migration) =
         ensure_state_dir_with_migration("slop_ledger").expect("idempotent ensure");
     assert!(repeated_migration.is_none());
@@ -3164,7 +3139,7 @@ fn ensure_state_dir_relocates_legacy_subdir_on_first_write() {
 }
 
 #[test]
-fn state_migration_notice_explains_preserved_data_and_canonical_root() {
+fn state_migration_notice_explains_migration_is_disabled() {
     let migration = StateMigration {
         subdir: "sessions".to_string(),
         legacy_path: PathBuf::from("/home/alice/.deepseek/sessions"),
@@ -3174,16 +3149,12 @@ fn state_migration_notice_explains_preserved_data_and_canonical_root() {
 
     let notice = migration.user_notice();
 
-    assert!(notice.contains("Hakus migrated legacy state"));
-    assert!(notice.contains("/home/alice/.deepseek/sessions"));
     assert!(notice.contains("/home/alice/.hakus/sessions"));
-    assert!(notice.contains("Your data was preserved"));
-    assert!(notice.contains("Use .hakus as the canonical state location"));
-    assert!(notice.contains("remove the legacy .deepseek tree"));
+    assert!(notice.contains("migration is disabled"));
 }
 
 #[test]
-fn copied_state_migration_notice_says_legacy_copy_remains() {
+fn copied_state_migration_notice_is_also_disabled() {
     let migration = StateMigration {
         subdir: "catalog".to_string(),
         legacy_path: PathBuf::from("/home/alice/.deepseek/catalog"),
@@ -3193,8 +3164,7 @@ fn copied_state_migration_notice_says_legacy_copy_remains() {
 
     let notice = migration.user_notice();
 
-    assert!(notice.contains("copied"));
-    assert!(notice.contains("legacy .deepseek copy was left in place"));
+    assert!(notice.contains("migration is disabled"));
 }
 
 #[test]
@@ -3230,21 +3200,20 @@ fn ensure_state_dir_writes_to_primary_when_both_exist() {
 }
 
 #[test]
-fn resolve_state_dir_still_finds_legacy_for_backfill() {
+fn resolve_state_dir_ignores_legacy_for_backfill() {
     let _lock = env_lock();
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let state_env = StateDirEnv::install(unique);
-    // Only legacy exists -> read resolver returns legacy (backfill).
+    // Only legacy exists -> read resolver still returns the canonical path.
     fs::create_dir_all(state_env.legacy("catalog")).expect("legacy dir");
     assert_eq!(
         resolve_state_dir("catalog").expect("resolve"),
-        state_env.legacy("catalog")
+        state_env.primary("catalog")
     );
-    // After the primary is created (e.g. via a write), the read resolver
-    // returns primary — legacy is reachable only while primary is absent.
+    // After the primary is created, the read resolver remains canonical.
     ensure_state_dir("catalog").expect("ensure");
     assert_eq!(
         resolve_state_dir("catalog").expect("resolve after migrate"),
@@ -3339,7 +3308,7 @@ fn project_state_resolvers_reject_path_traversal_subdirs() {
         .1;
     assert_eq!(
         safe,
-        canonical_workspace.join(LEGACY_APP_DIR).join("notes.md")
+        canonical_workspace.join(HAKUS_APP_DIR).join("notes.md")
     );
     let created =
         ensure_project_state_dir(&workspace, "a/b").expect("safe nested project state dir");

@@ -1959,87 +1959,11 @@ fn paths_equivalent(lhs: &Path, rhs: &Path) -> bool {
 
 /// Resolve the default session directory path.
 ///
-/// v0.8.44: prefers `~/.hakus/sessions`, falls back to
-/// `~/.deepseek/sessions` for existing installs. Uses the write-path resolver
-/// so the first access relocates any legacy `~/.deepseek/sessions` into
-/// `~/.hakus/sessions` when the primary directory is missing (#3240).
-/// If an older build already created an empty primary sessions directory, copy
-/// missing legacy entries into it without overwriting newer CodeWhale data.
+/// Resolve the session directory under the canonical Hakus runtime root.
 pub fn default_sessions_dir() -> std::io::Result<PathBuf> {
     let dir = hakus_config::ensure_state_dir("sessions")
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()))?;
-    match merge_missing_legacy_session_entries(&dir) {
-        Ok(0) => {}
-        Ok(count) => {
-            tracing::info!(
-                target: "session::migration",
-                "Copied {count} missing legacy session entries into {}",
-                dir.display()
-            );
-        }
-        Err(err) => {
-            tracing::warn!(
-                target: "session::migration",
-                "Could not copy legacy sessions into {}: {err}",
-                dir.display()
-            );
-        }
-    }
     Ok(dir)
-}
-
-fn merge_missing_legacy_session_entries(primary: &Path) -> io::Result<usize> {
-    if hakus_paths::hakus_home_is_explicit() {
-        return Ok(0);
-    }
-
-    let legacy = hakus_config::legacy_deepseek_home()
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?
-        .join("sessions");
-    if !legacy.is_dir() || paths_equivalent(primary, &legacy) {
-        return Ok(0);
-    }
-
-    copy_missing_dir_entries(&legacy, primary)
-}
-
-fn copy_missing_dir_entries(src: &Path, dst: &Path) -> io::Result<usize> {
-    fs::create_dir_all(dst)?;
-    let mut copied = 0;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let source = entry.path();
-        let target = dst.join(entry.file_name());
-
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            if entry.file_name() == std::ffi::OsStr::new("checkpoints") || target.exists() {
-                continue;
-            }
-            copied += copy_missing_dir_entries(&source, &target)?;
-        } else if file_type.is_file() {
-            copied += usize::from(copy_file_create_new(&source, &target)?);
-        }
-    }
-    Ok(copied)
-}
-
-fn copy_file_create_new(src: &Path, dst: &Path) -> io::Result<bool> {
-    let mut source = fs::File::open(src)?;
-    let mut target = match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dst)
-    {
-        Ok(file) => file,
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
-        Err(err) => return Err(err),
-    };
-    if let Err(err) = io::copy(&mut source, &mut target) {
-        let _ = fs::remove_file(dst);
-        return Err(err);
-    }
-    Ok(true)
 }
 
 /// Prune snapshots older than `max_age` for `workspace`.
@@ -3583,10 +3507,10 @@ mod tests {
         let safe_primary = tmp.path().join("safe-primary");
         fs::create_dir_all(&safe_primary).expect("safe primary");
 
-        assert_eq!(
-            merge_missing_legacy_session_entries(&safe_primary).expect("merge decision"),
-            0
-        );
+        // The active resolver never inspects the old directory, even when the
+        // path contains non-Unicode bytes.
+        let resolved = default_sessions_dir().expect("default session dir");
+        assert_eq!(resolved, explicit_home.join("sessions"));
         assert!(!safe_primary.join("ambient.json").exists());
     }
 

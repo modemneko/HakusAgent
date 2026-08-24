@@ -79,8 +79,6 @@ impl Default for PromptSessionContext<'_> {
 /// it back on startup and prepends it to the system prompt so a fresh agent
 /// doesn't have to re-discover open blockers from scratch.
 pub const HANDOFF_RELATIVE_PATH: &str = ".hakus/handoff.md";
-/// Legacy handoff path for reading from existing installs.
-const LEGACY_HANDOFF_RELATIVE_PATH: &str = ".deepseek/handoff.md";
 
 /// Per-file size cap for `instructions = [...]` entries (#454). Mirrors
 /// the existing project-context cap in `project_context::load_context_file`
@@ -295,12 +293,7 @@ fn render_instructions_block(sources: &[InstructionSource]) -> Option<String> {
 /// system-prompt block. Returns `None` when the file is absent or empty so
 /// callers can keep the default-uncluttered prompt for fresh workspaces.
 fn load_handoff_block(workspace: &Path) -> Option<String> {
-    let primary = workspace.join(HANDOFF_RELATIVE_PATH);
-    let path = if primary.exists() {
-        primary
-    } else {
-        workspace.join(LEGACY_HANDOFF_RELATIVE_PATH)
-    };
+    let path = workspace.join(HANDOFF_RELATIVE_PATH);
     let raw = std::fs::read_to_string(&path).ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -2794,8 +2787,8 @@ mod tests {
     fn project_context_pack_is_before_dynamic_tail() {
         let tmp = tempdir().expect("tempdir");
         std::fs::write(tmp.path().join("README.md"), "# Pack test").expect("write readme");
-        std::fs::create_dir_all(tmp.path().join(".deepseek")).expect("mkdir");
-        std::fs::write(tmp.path().join(".deepseek").join("handoff.md"), "handoff")
+        std::fs::create_dir_all(tmp.path().join(".hakus")).expect("mkdir");
+        std::fs::write(tmp.path().join(".hakus").join("handoff.md"), "handoff")
             .expect("handoff");
         let prompt =
             system_prompt_flat_text(&system_prompt_for_mode_with_context_skills_and_session(
@@ -2829,7 +2822,7 @@ mod tests {
     fn handoff_artifact_is_prepended_to_system_prompt_when_present() {
         let tmp = tempdir().expect("tempdir");
         let workspace = tmp.path();
-        let handoff_dir = workspace.join(".deepseek");
+        let handoff_dir = workspace.join(".hakus");
         std::fs::create_dir_all(&handoff_dir).unwrap();
         std::fs::write(
             handoff_dir.join("handoff.md"),
@@ -2855,7 +2848,7 @@ mod tests {
     #[test]
     fn empty_handoff_file_does_not_inject_block() {
         let tmp = tempdir().expect("tempdir");
-        let dir = tmp.path().join(".deepseek");
+        let dir = tmp.path().join(".hakus");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("handoff.md"), "   \n\n  ").unwrap();
         let prompt =
@@ -3404,7 +3397,7 @@ mod tests {
 
     #[test]
     fn system_prompt_with_handoff_file_is_byte_stable_when_file_is_unchanged() {
-        // If `.deepseek/handoff.md` hasn't moved between two builds, the
+        // If `.hakus/handoff.md` is unchanged between two builds, the
         // rendered prompt must produce identical bytes. The relay block
         // lands below the static boundary in
         // `system_prompt_for_mode_with_context_and_skills`.
@@ -3415,7 +3408,7 @@ mod tests {
         let _userprofile = EnvVarGuard::set("USERPROFILE", home_tmp.path().as_os_str());
         let _skills_dir = EnvVarGuard::remove("DEEPSEEK_SKILLS_DIR");
         let workspace = tmp.path();
-        let handoff_dir = workspace.join(".deepseek");
+        let handoff_dir = workspace.join(".hakus");
         std::fs::create_dir_all(&handoff_dir).unwrap();
         std::fs::write(
             handoff_dir.join("handoff.md"),
@@ -3442,7 +3435,7 @@ mod tests {
         // user metadata, not a system-prompt tail block.
         let tmp = tempdir().expect("tempdir");
         let workspace = tmp.path();
-        let handoff_dir = workspace.join(".deepseek");
+        let handoff_dir = workspace.join(".hakus");
         std::fs::create_dir_all(&handoff_dir).unwrap();
         std::fs::write(handoff_dir.join("handoff.md"), "# handoff body\n").unwrap();
 

@@ -289,14 +289,10 @@ impl SandboxPolicy {
                     .map(|root| {
                         let mut read_only_subpaths = Vec::new();
 
-                        // Protect .hakus/ and .deepseek/ directories from modification
+                        // Protect the Hakus state directory from modification
                         let hakus_dir = root.join(".hakus");
                         if hakus_dir.is_dir() {
                             read_only_subpaths.push(hakus_dir);
-                        }
-                        let deepseek_dir = root.join(".deepseek");
-                        if deepseek_dir.is_dir() {
-                            read_only_subpaths.push(deepseek_dir);
                         }
 
                         WritableRoot {

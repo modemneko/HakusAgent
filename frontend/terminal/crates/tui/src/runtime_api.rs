@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::fs;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,11 +28,6 @@ use hakus_protocol::runtime::{
     DynamicToolCallResult, RUNTIME_API_VERSION, RUNTIME_EVENT_ENVELOPE_SCHEMA_VERSION,
     RuntimeCapabilities, RuntimeEventEnvelope, RuntimeExperimentalCapabilities,
 };
-use hakus_secrets::account::{
-    ACCOUNT_API_BASE_ENV, DEFAULT_ACCOUNT_API_BASE, RuntimeAccountInfo,
-};
-#[cfg(not(test))]
-use hakus_secrets::account::{AccountSessionStore, secure_account_session_secrets};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -93,10 +88,7 @@ mod web;
 mod workspace;
 #[cfg(test)]
 use self::auth::{ResolvedRuntimeAuth, token_from_cookie_header};
-use self::auth::{
-    require_runtime_token, resolve_runtime_auth, runtime_auth_status_lines,
-    runtime_request_is_authorized,
-};
+use self::auth::{require_runtime_token, resolve_runtime_auth, runtime_auth_status_lines};
 use self::sessions::{
     create_session_from_thread, delete_session, get_session, list_sessions, list_sessions_summary,
     patch_session, resume_session_thread, save_current_session,
@@ -517,7 +509,6 @@ struct RuntimeInfoResponse {
     auth_required: bool,
     transports: Vec<&'static str>,
     capabilities: RuntimeCapabilities,
-    account: RuntimeAccountInfo,
     experimental: RuntimeExperimentalCapabilities,
     // Backward-compatible alias kept for existing clients.
     version: &'static str,
@@ -525,7 +516,6 @@ struct RuntimeInfoResponse {
 
 fn default_runtime_capabilities() -> RuntimeCapabilities {
     RuntimeCapabilities {
-        account_session: true,
         threads: true,
         turns: true,
         turn_steer: true,
@@ -988,12 +978,11 @@ fn web_launcher_warning(result: Result<()>) -> Option<String> {
 }
 
 fn fallback_sessions_dir() -> PathBuf {
-    if let Some(home) = hakus_paths::hakus_home_override().ok().flatten() {
-        return home.join("sessions");
-    }
-    hakus_paths::legacy_deepseek_home()
-        .unwrap_or_else(|| PathBuf::from(hakus_paths::LEGACY_APP_DIR))
-        .join("sessions")
+    hakus_paths::hakus_home()
+        .ok()
+        .flatten()
+        .map(|home| home.join("sessions"))
+        .unwrap_or_else(|| PathBuf::from(".hakus").join("sessions"))
 }
 
 pub fn build_router(state: RuntimeApiState) -> Router {
@@ -3088,16 +3077,10 @@ async fn submit_user_input(
 
 async fn runtime_info(
     State(state): State<RuntimeApiState>,
-    request: Request,
+    _request: Request,
 ) -> Json<RuntimeInfoResponse> {
     let version = env!("CARGO_PKG_VERSION");
     let commit = option_env!("HAKUS_BUILD_COMMIT").unwrap_or("unknown");
-    let api_base = runtime_account_api_base();
-    let account = runtime_account_info_for_request(
-        runtime_request_is_authorized(&request, &state),
-        &api_base,
-        || runtime_account_info(state.config_profile.as_deref(), &api_base),
-    );
     Json(RuntimeInfoResponse {
         service: "hakus-runtime-api",
         runtime_api_version: RUNTIME_API_VERSION,
@@ -3108,70 +3091,9 @@ async fn runtime_info(
         auth_required: state.auth_required,
         transports: vec!["http", "sse"],
         capabilities: default_runtime_capabilities(),
-        account,
         experimental: RuntimeExperimentalCapabilities::default(),
         version,
     })
-}
-
-fn runtime_account_info(profile: Option<&str>, api_base: &str) -> RuntimeAccountInfo {
-    #[cfg(test)]
-    {
-        let _ = profile;
-        RuntimeAccountInfo::signed_out(api_base.to_string())
-    }
-
-    #[cfg(not(test))]
-    {
-        secure_account_session_secrets()
-            .and_then(|secrets| {
-                AccountSessionStore::new(secrets, profile, api_base).runtime_info_at(Utc::now())
-            })
-            .unwrap_or_else(|_| RuntimeAccountInfo::signed_out(api_base.to_string()))
-    }
-}
-
-fn runtime_account_info_for_request(
-    authorized: bool,
-    api_base: &str,
-    load: impl FnOnce() -> RuntimeAccountInfo,
-) -> RuntimeAccountInfo {
-    if authorized {
-        load()
-    } else {
-        RuntimeAccountInfo::signed_out(api_base.to_string())
-    }
-}
-
-fn runtime_account_api_base() -> String {
-    std::env::var(ACCOUNT_API_BASE_ENV)
-        .ok()
-        .and_then(|value| normalize_runtime_account_api_base(&value))
-        .unwrap_or_else(|| DEFAULT_ACCOUNT_API_BASE.to_string())
-}
-
-fn normalize_runtime_account_api_base(value: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(value.trim()).ok()?;
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
-        return None;
-    }
-    let host = url.host_str()?;
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback());
-    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        return None;
-    }
-    url.set_path("/");
-    Some(url.as_str().trim_end_matches('/').to_string())
 }
 
 async fn list_mcp_servers(

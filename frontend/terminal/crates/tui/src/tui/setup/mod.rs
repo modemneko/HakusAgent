@@ -239,7 +239,6 @@ struct SetupRuntimeFacts {
     remote_mode_result: String,
     remote_command_provider: String,
     remote_result: String,
-    remote_control_result: String,
     /// The four observed remote modes (#3409). Empty only before facts load.
     remote_modes: Vec<remote::RemoteModeFact>,
     /// True when a mode is missing a token or config. Recorded as
@@ -299,7 +298,6 @@ impl Default for SetupRuntimeFacts {
             remote_mode_result: "remote setup mode not loaded".to_string(),
             remote_command_provider: "deepseek".to_string(),
             remote_result: "remote runtime not loaded".to_string(),
-            remote_control_result: "off".to_string(),
             remote_modes: Vec::new(),
             remote_needs_action: false,
             persistence: SetupPersistenceFacts::default(),
@@ -526,21 +524,6 @@ impl SetupRuntimeFacts {
             remote_mode_result: remote.mode_result,
             remote_command_provider: remote.command_provider,
             remote_result: remote.result,
-            remote_control_result: {
-                let status = app.remote_control.status_line();
-                let message = if status.starts_with("Remote control: connected") {
-                    MessageId::SetupRemoteStatusReady
-                } else if status.starts_with("Remote control: connecting")
-                    || status.starts_with("Remote control: stopping")
-                {
-                    MessageId::SetupStatusInProgress
-                } else if status.starts_with("Remote control: disconnected") {
-                    MessageId::SetupRemoteStatusNeedsAction
-                } else {
-                    MessageId::SetupRemoteStatusDisabled
-                };
-                tr(app.ui_locale, message).into_owned()
-            },
             remote_needs_action,
             remote_modes: remote.modes,
             persistence,
@@ -3100,15 +3083,6 @@ impl ModalView for SetupWizardView {
             KeyCode::Char('s') => {
                 self.commit_selected_status(StepStatus::Skipped, MessageId::SetupStepSkipped, true)
             }
-            KeyCode::Char('r')
-                if self.progressive_guide
-                    && matches!(
-                        self.selected_step(),
-                        SetupStep::RemoteRuntime | SetupStep::Verification
-                    ) =>
-            {
-                ViewAction::EmitAndClose(ViewEvent::SetupOpenRemoteControlRequested)
-            }
             KeyCode::Char('p')
                 if self.progressive_guide && self.selected_step() == SetupStep::Verification =>
             {
@@ -3291,10 +3265,6 @@ impl ModalView for SetupWizardView {
                     tr(self.locale, MessageId::SetupStepTrustSandboxTitle).into_owned(),
                     tr(self.locale, MessageId::SetupRuntimePostureReviewHint).into_owned(),
                 ),
-                SetupStep::RemoteRuntime => (
-                    "/rc".to_string(),
-                    tr(self.locale, MessageId::CmdRemoteControlDescription).into_owned(),
-                ),
                 SetupStep::Verification => (
                     tr(self.locale, MessageId::OnboardReadyTitle).into_owned(),
                     tr(self.locale, MessageId::OnboardReadyLead).into_owned(),
@@ -3385,8 +3355,8 @@ impl SetupWizardView {
             ],
             SetupStep::RemoteRuntime => vec![
                 ActionHint::new(
-                    "R",
-                    tr(self.locale, MessageId::CmdRemoteControlDescription).to_string(),
+                    "Enter",
+                    tr(self.locale, MessageId::SetupActionContinue).to_string(),
                 ),
                 skip(),
                 details(),
@@ -3515,10 +3485,7 @@ impl SetupWizardView {
                 }
                 lines
             }
-            SetupStep::RemoteRuntime => vec![self.detail_row(
-                MessageId::SetupRemoteModeLabel,
-                &self.facts.remote_control_result,
-            )],
+            SetupStep::RemoteRuntime => self.remote_runtime_detail_lines(),
             SetupStep::ToolsMcp => {
                 let status = tr(
                     self.locale,
@@ -3585,7 +3552,7 @@ impl SetupWizardView {
             self.detail_row(MessageId::SetupStepTrustSandboxTitle, &permissions),
             self.detail_row(
                 MessageId::SetupStepRemoteRuntimeTitle,
-                &self.facts.remote_control_result,
+                &self.facts.remote_result,
             ),
         ];
         if self.tools_relevant() {
@@ -5462,8 +5429,6 @@ mod progressive_tests {
             runtime_result: "approval=ask; sandbox=workspace; network=prompt".to_string(),
             tools_mcp_result: "mcp=off, skills=off, tools=off, plugins=off, overall=off"
                 .to_string(),
-            remote_control_result: tr(Locale::En, MessageId::SetupRemoteStatusDisabled)
-                .into_owned(),
             ..SetupRuntimeFacts::default()
         }
     }
@@ -5591,7 +5556,7 @@ mod progressive_tests {
     }
 
     #[test]
-    fn account_action_uses_the_real_remote_control_handoff() {
+    fn remote_runtime_step_previews_the_ramp_in_memory() {
         let facts = facts(true);
         let state = complete_state(&facts.runtime_result);
         let mut view = SetupWizardView::new_with_facts(state, Locale::En, facts);
@@ -5602,7 +5567,7 @@ mod progressive_tests {
                 &mut view,
                 KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
             ),
-            ViewAction::EmitAndClose(ViewEvent::SetupOpenRemoteControlRequested)
+            ViewAction::Emit(ViewEvent::OpenTextPager { .. })
         ));
     }
 

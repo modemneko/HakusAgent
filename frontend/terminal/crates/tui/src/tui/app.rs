@@ -1133,9 +1133,6 @@ pub struct App {
     pub next_history_revision: u64,
     pub api_messages: Vec<Message>,
     pub(crate) context_token_cache: RefCell<ContextTokenCache>,
-    /// Typed account-owned browser relay for this exact TUI session.
-    pub remote_control: crate::remote_control::RemoteControlController,
-    pub start_remote_control_on_launch: bool,
     pub is_loading: bool,
     /// Sender for spawned dispatch tasks to report completion back to the
     /// event loop. The closure is called with `&mut App` so the async phase

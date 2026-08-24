@@ -43,25 +43,8 @@ type PendingUserInputAnswers = Vec<UserInputAnswerEvent>;
 
 mod chat_completions;
 
-/// Legacy DeepSeek-era naming kept for external compatibility.
-///
-/// CodeWhale began life as a DeepSeek CLI; existing health probes, SDK
-/// harnesses, and on-disk layouts still key off these names. Every remaining
-/// legacy reference in this crate routes through this shim so a future
-/// coordinated migration touches exactly one place (repo policy: preserve
-/// legacy migration care).
-mod legacy_deepseek_compat {
-    use std::path::PathBuf;
-
-    /// Service name advertised by the HTTP and stdio health probes.
-    pub(crate) const SERVICE_NAME: &str = "deepseek-app-server";
-
-    /// Fallback hook-event log location used when no config path is
-    /// provided (legacy `.deepseek/` dot-directory layout).
-    pub(crate) fn default_events_log_path() -> PathBuf {
-        PathBuf::from(".deepseek/events.jsonl")
-    }
-}
+/// Service name advertised by the HTTP and stdio health probes.
+const SERVICE_NAME: &str = "hakus-app-server";
 
 /// Upper bound on JSON request bodies accepted by the HTTP app-server.
 const MAX_HTTP_BODY_BYTES: usize = 16 * 1024 * 1024;
@@ -492,7 +475,7 @@ async fn healthz() -> Json<Value> {
     Json(json!({
         "status": "ok",
         "protocol": "v2",
-        "service": legacy_deepseek_compat::SERVICE_NAME
+        "service": SERVICE_NAME
     }))
 }
 
@@ -642,10 +625,13 @@ fn build_state_with_transport(
     if transport == AppTransport::Http {
         hooks.add_sink(Arc::new(StdoutHookSink));
     }
-    let hook_log_path = config_path
-        .as_ref()
-        .and_then(|p| p.parent().map(|parent| parent.join("events.jsonl")))
-        .unwrap_or_else(legacy_deepseek_compat::default_events_log_path);
+    let hook_log_path = match config_path.as_ref() {
+        Some(path) => path
+            .parent()
+            .map(|parent| parent.join("events.jsonl"))
+            .unwrap_or_else(|| PathBuf::from("events.jsonl")),
+        None => hakus_config::hakus_home()?.join("events.jsonl"),
+    };
     hooks.add_sink(Arc::new(JsonlHookSink::new(hook_log_path)));
 
     if let Some(socket_path) = config
@@ -1467,7 +1453,7 @@ async fn dispatch_stdio_request_with_writer<W: AsyncWrite + Unpin>(
         "healthz" | "app/healthz" => StdioDispatchResult {
             result: json!({
                 "status": "ok",
-                "service": legacy_deepseek_compat::SERVICE_NAME,
+                "service": SERVICE_NAME,
                 "transport": "stdio"
             }),
             should_exit: false,
@@ -2591,17 +2577,14 @@ mod tests {
             .await
             .expect("response");
         let body = response_body_json(response).await;
-        assert_eq!(body["service"], legacy_deepseek_compat::SERVICE_NAME);
-        assert_eq!(body["service"], "deepseek-app-server");
+        assert_eq!(body["service"], SERVICE_NAME);
+        assert_eq!(body["service"], "hakus-app-server");
 
         let (state, _tmp) = capability_test_state();
         let stdio = dispatch_stdio_request(&state, "healthz", json!({}))
             .await
             .expect("stdio healthz");
-        assert_eq!(
-            stdio.result["service"],
-            legacy_deepseek_compat::SERVICE_NAME
-        );
+        assert_eq!(stdio.result["service"], SERVICE_NAME);
     }
 
     #[test]

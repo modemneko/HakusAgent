@@ -1866,7 +1866,6 @@ impl RuntimeThreadManagerConfig {
     #[must_use]
     pub fn from_task_data_dir(task_data_dir: PathBuf) -> Self {
         let data_dir = std::env::var("HAKUS_RUNTIME_DIR")
-            .or_else(|_| std::env::var("DEEPSEEK_RUNTIME_DIR"))
             .ok()
             .filter(|override_dir| !override_dir.trim().is_empty())
             .map_or_else(|| task_data_dir.join("runtime"), PathBuf::from);

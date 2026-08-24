@@ -64,8 +64,7 @@ pub(crate) fn hakus_home_dir() -> Result<Option<PathBuf>, hakus_paths::PathOverr
 }
 
 /// The user-global config document: `$HAKUS_HOME/config.toml` when an
-/// explicit home is set, otherwise `~/.hakus/config.toml` (falling back to
-/// the legacy `~/.deepseek/config.toml` only when that file already exists).
+/// explicit home is set, otherwise the canonical Hakus home config.
 ///
 /// Credential writes are rerouted here when the ambient config path resolves
 /// to a workspace-scoped document (#5045, #5193); non-credential settings keep
@@ -98,17 +97,7 @@ fn home_config_path_from_environment() -> Option<PathBuf> {
         }
     }
 
-    effective_home_dir().map(|home| {
-        let primary = home.join(".hakus").join("config.toml");
-        if primary.exists() {
-            return primary;
-        }
-        let legacy = home.join(".deepseek").join("config.toml");
-        if legacy.exists() {
-            return legacy;
-        }
-        primary
-    })
+    effective_home_dir().map(|home| home.join(".hakus").join("config.toml"))
 }
 
 pub(crate) fn workspace_config_key(workspace: &Path) -> String {
@@ -146,34 +135,22 @@ pub(crate) fn expand_pathbuf(path: PathBuf) -> PathBuf {
 pub(crate) fn default_managed_config_path() -> Option<PathBuf> {
     #[cfg(unix)]
     {
-        Some(PathBuf::from("/etc/deepseek/managed_config.toml"))
+        Some(PathBuf::from("/etc/hakus/managed_config.toml"))
     }
     #[cfg(not(unix))]
     {
-        effective_home_dir().map(|home| {
-            let primary = home.join(".hakus").join("managed_config.toml");
-            if primary.exists() {
-                return primary;
-            }
-            home.join(".deepseek").join("managed_config.toml")
-        })
+        effective_home_dir().map(|home| home.join(".hakus").join("managed_config.toml"))
     }
 }
 
 pub(crate) fn default_requirements_path() -> Option<PathBuf> {
     #[cfg(unix)]
     {
-        Some(PathBuf::from("/etc/deepseek/requirements.toml"))
+        Some(PathBuf::from("/etc/hakus/requirements.toml"))
     }
     #[cfg(not(unix))]
     {
-        effective_home_dir().map(|home| {
-            let primary = home.join(".hakus").join("requirements.toml");
-            if primary.exists() {
-                return primary;
-            }
-            home.join(".deepseek").join("requirements.toml")
-        })
+        effective_home_dir().map(|home| home.join(".hakus").join("requirements.toml"))
     }
 }
 
@@ -234,15 +211,5 @@ fn default_user_state_path_from_environment(name: &str) -> Option<PathBuf> {
             return None;
         }
     }
-    effective_home_dir().map(|home| {
-        let primary = home.join(".hakus").join(name);
-        if primary.exists() {
-            return primary;
-        }
-        let legacy = home.join(".deepseek").join(name);
-        if legacy.exists() {
-            return legacy;
-        }
-        primary
-    })
+    effective_home_dir().map(|home| home.join(".hakus").join(name))
 }

@@ -69,17 +69,17 @@ pub enum QrLoginStatus {
 /// Request body for `POST /ilink/bot/getupdates`.
 #[derive(Debug, Clone, Serialize)]
 pub struct GetUpdatesRequest {
-    /// Always `"getupdates"`.
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_token: Option<String>,
+    /// Opaque cursor returned by the previous response.
+    pub get_updates_buf: String,
+    /// Required protocol metadata.
+    pub base_info: BaseInfo,
 }
 
 impl Default for GetUpdatesRequest {
     fn default() -> Self {
         Self {
-            method: "getupdates".into(),
-            context_token: None,
+            get_updates_buf: String::new(),
+            base_info: BaseInfo::default(),
         }
     }
 }
@@ -89,23 +89,26 @@ impl Default for GetUpdatesRequest {
 pub struct GetUpdatesResponse {
     #[serde(default)]
     pub msgs: Vec<WeixinMessage>,
-    /// Updated context token for the next poll (pagination / cursor).
-    #[serde(default, rename = "context_token")]
-    pub context_token: Option<String>,
+    /// Opaque cursor for the next poll.
+    #[serde(default)]
+    pub get_updates_buf: Option<String>,
 }
 
 /// A single inbound WeChat message from iLink.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WeixinMessage {
-    /// Message type: `"text"`, `"image"`, etc.
-    #[serde(default, rename = "type")]
-    pub msg_type: String,
+    /// Numeric iLink message type. `2` is a normal user message.
+    #[serde(default, alias = "type")]
+    pub message_type: i32,
     /// Sender user ID (string in iLink).
-    #[serde(default, rename = "from_user")]
-    pub from_user: Option<String>,
-    /// Text content for text messages.
+    #[serde(default, alias = "from_user")]
+    pub from_user_id: Option<String>,
+    /// iLink content items.
     #[serde(default)]
-    pub text: Option<String>,
+    pub item_list: Vec<MessageItem>,
+    /// Conversation token required when replying to this message.
+    #[serde(default)]
+    pub context_token: Option<String>,
     /// Image URL for image messages.
     #[serde(default)]
     pub image: Option<String>,
@@ -129,11 +132,42 @@ impl WeixinMessage {
                 return format!("msg_id:{id}");
             }
         }
-        let user = self.from_user.as_deref().unwrap_or("");
+        let user = self.from_user_id.as_deref().unwrap_or("");
         let ts = self.create_time.unwrap_or(0);
-        let text = self.text.as_deref().unwrap_or("");
+        let text = self.text();
         format!("cmp:{user}:{ts}:{text}")
     }
+
+    /// Sender id.
+    pub fn sender_id(&self) -> Option<&str> {
+        self.from_user_id.as_deref()
+    }
+
+    /// Extract concatenated text items from the message.
+    pub fn text(&self) -> String {
+        self.item_list
+            .iter()
+            .filter_map(|item| item.text_item.as_ref())
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
+/// One item in an iLink message body.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageItem {
+    #[serde(default, rename = "type")]
+    pub item_type: i32,
+    #[serde(default)]
+    pub text_item: Option<TextItem>,
+}
+
+/// Text payload inside a message item.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TextItem {
+    #[serde(default)]
+    pub text: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,25 +177,55 @@ impl WeixinMessage {
 /// Request body for `POST /ilink/bot/sendmessage`.
 #[derive(Debug, Clone, Serialize)]
 pub struct SendMessageRequest {
-    /// Always `"sendmessage"`.
-    pub method: String,
-    /// Target user ID.
-    pub to_user: String,
-    /// Text content to send.
-    pub text: String,
+    /// Complete outbound message envelope.
+    pub msg: OutboundMessage,
     /// Required base_info wrapper.
     pub base_info: BaseInfo,
 }
 
 impl SendMessageRequest {
-    pub fn new(to_user: &str, text: &str) -> Self {
+    pub fn new(from_user: &str, to_user: &str, text: &str, context_token: &str) -> Self {
         Self {
-            method: "sendmessage".into(),
-            to_user: to_user.into(),
-            text: text.into(),
+            msg: OutboundMessage {
+                from_user_id: from_user.into(),
+                to_user_id: to_user.into(),
+                client_id: uuid::Uuid::new_v4().to_string(),
+                message_type: 2,
+                message_state: 2,
+                item_list: vec![MessageItemOut {
+                    item_type: 1,
+                    text_item: TextItemOut { text: text.into() },
+                }],
+                context_token: context_token.into(),
+            },
             base_info: BaseInfo::default(),
         }
     }
+}
+
+/// iLink outbound message envelope.
+#[derive(Debug, Clone, Serialize)]
+pub struct OutboundMessage {
+    pub from_user_id: String,
+    pub to_user_id: String,
+    pub client_id: String,
+    pub message_type: i32,
+    pub message_state: i32,
+    pub item_list: Vec<MessageItemOut>,
+    pub context_token: String,
+}
+
+/// Outbound text item.
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageItemOut {
+    #[serde(rename = "type")]
+    pub item_type: i32,
+    pub text_item: TextItemOut,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TextItemOut {
+    pub text: String,
 }
 
 // ---------------------------------------------------------------------------

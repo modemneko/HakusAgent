@@ -16,11 +16,9 @@
 //! Workspace-local directories shadow user-global by name:
 //!
 //! 1. `<workspace>/.hakus/commands/` (project-local, highest)
-//! 2. `<workspace>/.deepseek/commands/`  (legacy project-local)
-//! 3. `<workspace>/.claude/commands/`    (Claude Code interop)
-//! 4. `<workspace>/.cursor/commands/`    (Cursor interop)
-//! 5. `~/.hakus/commands/`           (user-global)
-//! 6. `~/.deepseek/commands/`            (legacy user-global)
+//! 2. `<workspace>/.claude/commands/`    (Claude Code interop)
+//! 3. `<workspace>/.cursor/commands/`    (Cursor interop)
+//! 4. `$HAKUS_HOME/commands/`             (user-global)
 //!
 //! ## Permanent Role
 //!
@@ -41,13 +39,8 @@ use super::CommandResult;
 
 /// Path to the global user commands directory: `~/.hakus/commands/`.
 fn global_commands_dir() -> PathBuf {
-    let home = crate::config::effective_home_dir().unwrap_or_else(|| PathBuf::from("~"));
-    home.join(".hakus").join("commands")
-}
-
-fn legacy_global_commands_dir() -> PathBuf {
-    let home = crate::config::effective_home_dir().unwrap_or_else(|| PathBuf::from("~"));
-    home.join(".deepseek").join("commands")
+    crate::config::hakus_home().unwrap_or_else(|_| PathBuf::from(".hakus"))
+        .join("commands")
 }
 
 /// Return all candidate commands directories in precedence order.
@@ -55,12 +48,10 @@ pub(crate) fn commands_dirs(workspace: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(ws) = workspace {
         dirs.push(ws.join(".hakus").join("commands"));
-        dirs.push(ws.join(".deepseek").join("commands"));
         dirs.push(ws.join(".claude").join("commands"));
         dirs.push(ws.join(".cursor").join("commands"));
     }
     dirs.push(global_commands_dir());
-    dirs.push(legacy_global_commands_dir());
     dirs
 }
 

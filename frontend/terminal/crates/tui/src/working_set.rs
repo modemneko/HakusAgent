@@ -216,7 +216,7 @@ impl Workspace {
                 if total >= FILE_INDEX_MAX_ENTRIES {
                     break;
                 }
-                // Exclude machine-generated bulk (e.g. .deepseek/snapshots/).
+                // Exclude machine-generated bulk (e.g. .hakus/snapshots/).
                 if path_is_excluded_from_discovery(&self.root, entry.path()) {
                     continue;
                 }
@@ -237,7 +237,7 @@ impl Workspace {
         // Beyond the curated dot-dir whitelist above, also index any explicit
         // hidden/ignored path the user might `@`-mention (e.g. a project's
         // own `.generated/specs/`). `local_reference_paths` walks with
-        // gitignore disabled but still honors `.deepseekignore`.
+        // gitignore disabled but still honors `.hakusignore`.
         for path in local_reference_paths(
             &self.root,
             LOCAL_REFERENCE_SCAN_LIMIT,
@@ -272,7 +272,7 @@ impl Workspace {
     /// Tab-completes matches what their shell would have shown them.
     ///
     /// Honors `.gitignore`, `.git/info/exclude`, `.ignore`, and
-    /// `.deepseekignore`. Capped at `limit` results.
+    /// `.hakusignore`. Capped at `limit` results.
     #[must_use]
     #[cfg(test)]
     pub fn completions(&self, partial: &str, limit: usize) -> Vec<String> {
@@ -504,7 +504,7 @@ impl Workspace {
             .hidden(!show_hidden)
             .follow_links(self.follow_links)
             .max_depth(Some(1));
-        let _ = builder.add_custom_ignore_filename(".deepseekignore");
+        let _ = builder.add_custom_ignore_filename(".hakusignore");
 
         let mut visited = 0usize;
         for entry in builder.build().flatten() {
@@ -581,7 +581,7 @@ fn child_completion_walk_depth(depth: Option<usize>) -> Option<usize> {
 const FILE_INDEX_MAX_ENTRIES: usize = 50_000;
 
 /// Configure a `WalkBuilder` for workspace discovery: hidden files,
-/// depth-limited, custom `.deepseekignore` honored, and gitignore overrides
+/// depth-limited, custom `.hakusignore` honored, and gitignore overrides
 /// for AI-tool dot-directories so `@`-completion finds them even when
 /// they're gitignored. Symlink following is controlled by `follow_links`.
 fn discovery_walk_builder(
@@ -594,11 +594,11 @@ fn discovery_walk_builder(
     if let Some(depth) = max_depth {
         builder.max_depth(Some(depth));
     }
-    let _ = builder.add_custom_ignore_filename(".deepseekignore");
+    let _ = builder.add_custom_ignore_filename(".hakusignore");
     builder
 }
 
-/// Walk the AI-tool dot-directories (`.deepseek/`, `.cursor/`, `.claude/`,
+/// Walk the AI-tool dot-directories (`.hakus/`, `.cursor/`, `.claude/`,
 /// `.agents/`) with gitignore disabled so their contents are discoverable
 /// even when the project's `.gitignore` / `.ignore` excludes them.
 fn walk_always_discoverable_dirs(
@@ -630,7 +630,7 @@ fn walk_always_discoverable_dirs(
                 break;
             }
             let path = entry.path();
-            // Exclude machine-generated bulk (e.g. .deepseek/snapshots/)
+            // Exclude machine-generated bulk (e.g. .hakus/snapshots/)
             // even though gitignore is disabled for this walk.
             if path_is_excluded_from_discovery(walk_root, path) {
                 continue;
@@ -694,7 +694,7 @@ fn walk_for_completions(
     }
 
     // Also walk the AI-tool dot-directories with gitignore disabled so
-    // `.deepseek/`, `.cursor/`, etc. are always discoverable.
+    // `.hakus/`, `.cursor/`, etc. are always discoverable.
     walk_always_discoverable_dirs(walk_root, display_root, ctx, max_depth, follow_links);
 }
 

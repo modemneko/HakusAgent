@@ -435,11 +435,7 @@ pub(crate) fn is_hakus_credential_path(path: &Path) -> bool {
         return true;
     }
 
-    let roots = [
-        hakus_config::hakus_home(),
-        hakus_config::legacy_deepseek_home(),
-    ];
-    for root in roots.into_iter().flatten() {
+    if let Ok(root) = hakus_config::hakus_home() {
         if is_config_or_backup(&candidate, &root.join(hakus_config::CONFIG_FILE_NAME)) {
             return true;
         }

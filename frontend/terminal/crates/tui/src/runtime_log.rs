@@ -209,28 +209,7 @@ pub fn init() -> Result<TuiLogGuard> {
 }
 
 pub(crate) fn log_directory() -> Option<PathBuf> {
-    // $HAKUS_HOME is a hard override of the base data directory
-    // (docs/CONFIGURATION.md): when SET, logs live under it and we do NOT fall
-    // back to the legacy ~/.deepseek path — silent fallback would defeat the
-    // isolation the override promises (CI, containers, test harnesses). We
-    // check the env var directly rather than hakus_home()'s Ok/Err because
-    // that helper succeeds (returns $HOME/.hakus) even when the override is
-    // unset, which would short-circuit the legacy fallback below.
-    if let Some(home) = hakus_paths::hakus_home_override().ok().flatten() {
-        return Some(home.join("logs"));
-    }
-    let resolve = |base: PathBuf| -> Option<PathBuf> {
-        let primary = base.join(".hakus").join("logs");
-        if primary.exists() {
-            return Some(primary);
-        }
-        let legacy = base.join(".deepseek").join("logs");
-        if legacy.exists() {
-            return Some(legacy);
-        }
-        Some(primary)
-    };
-    hakus_paths::user_home().and_then(resolve)
+    hakus_config::hakus_home().ok().map(|home| home.join("logs"))
 }
 
 fn log_file_name(date: &str, pid: u32) -> String {
@@ -378,7 +357,7 @@ mod tests {
             crate::config::workspace_trust_config_candidate_paths(),
             vec![
                 primary.join("config.toml"),
-                home.join(".deepseek").join("config.toml")
+                primary.join("config.toml")
             ]
         );
         assert_eq!(log_directory(), Some(primary.join("logs")));
@@ -427,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn log_directory_uses_existing_legacy_deepseek_logs() {
+    fn log_directory_ignores_existing_legacy_deepseek_logs() {
         let _lock = crate::test_support::lock_test_env();
         let tmp = tempfile::TempDir::new().unwrap();
         let legacy = tmp.path().join(".deepseek").join("logs");
@@ -441,7 +420,7 @@ mod tests {
         }
 
         let resolved = log_directory().expect("log_directory should resolve");
-        assert_eq!(resolved, legacy);
+        assert_eq!(resolved, tmp.path().join(".hakus").join("logs"));
 
         // SAFETY: cleanup under the same lock.
         unsafe {
@@ -526,8 +505,7 @@ mod tests {
         unsafe {
             std::env::set_var("HAKUS_HOME", tmp.path());
         }
-        // $HAKUS_HOME IS the home dir (no ".hakus" appended), and the
-        // legacy ~/.deepseek fallback is bypassed entirely.
+        // $HAKUS_HOME is the home dir (no ".hakus" appended).
         let resolved = log_directory().expect("log_directory should resolve");
         assert_eq!(resolved, tmp.path().join("logs"));
         // SAFETY: cleanup under the same lock.

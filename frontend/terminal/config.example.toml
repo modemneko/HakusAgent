@@ -152,9 +152,9 @@ check_interval_hours = 24
 # ─────────────────────────────────────────────────────────────────────────────────
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────────
-# New installs write product state under ~/.hakus/. Existing ~/.deepseek/
-# files are still read as compatibility fallbacks when the .hakus file is
-# absent.
+# Portable launches write product state under the current directory's .hakus/.
+# Installed launches use HOME/.hakus/ when HAKUS_INSTALL_MODE=installed.
+# HAKUS_HOME can point to one explicit absolute data root.
 skills_dir = "~/.hakus/skills"
 mcp_config_path = "~/.hakus/mcp.json"
 notes_path = "~/.hakus/notes.txt"

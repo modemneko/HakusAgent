@@ -236,24 +236,6 @@ fn cjk_composer_cursor_and_mouse_geometry_agree_in_compact_and_wide_frames() {
     }
 }
 
-#[test]
-fn remote_control_escape_commands_match_dispatcher_case_rules() {
-    for input in [
-        "/rc stop",
-        "/RC stop",
-        "/Rc status",
-        "/remote-control stop",
-        "/REMOTE-CONTROL status",
-    ] {
-        assert!(
-            is_remote_control_command(input),
-            "remote control command must remain available during a web-owned lease: {input}"
-        );
-    }
-    assert!(!is_remote_control_command("/run continue"));
-    assert!(!is_remote_control_command("continue locally"));
-}
-
 fn test_mailbox_route(
     provider: ApiProvider,
     model: &str,
@@ -8357,40 +8339,6 @@ async fn immediate_submit_custom_provider_preflight_restores_exact_message() {
 }
 
 #[tokio::test]
-async fn remote_preflight_failure_releases_the_account_owned_run() {
-    let mut config =
-        named_custom_session_config("lm-studio", "http://127.0.0.1:1234/v1", "local-model");
-    config
-        .providers
-        .as_mut()
-        .expect("providers")
-        .custom
-        .get_mut("lm-studio")
-        .expect("lm-studio")
-        .insecure_skip_tls_verify = Some(true);
-    let mut app = create_test_app();
-    app.set_provider_identity(ApiProvider::Custom, "lm-studio");
-    app.set_model_selection("local-model".to_string());
-    app.remote_control
-        .activate_prompt("run_remote_fixture", "turn_remote_fixture");
-    let (_engine, handle) = crate::core::engine::Engine::new(EngineConfig::default(), &config);
-
-    dispatch_user_message(
-        &mut app,
-        &config,
-        &handle,
-        QueuedMessage::new("remote preflight failure".to_string(), None),
-    )
-    .await
-    .expect_err("provider preflight must fail before engine dispatch");
-
-    assert!(
-        !app.remote_control.has_active_run(),
-        "a terminal pre-dispatch failure must not strand the remote run"
-    );
-}
-
-#[tokio::test]
 async fn immediate_submit_custom_provider_missing_key_preflight_shows_auth_next_step() {
     let _lock = crate::test_support::lock_test_env();
     let _missing_key =
@@ -13189,7 +13137,7 @@ fn visible_slash_menu_starts_with_six_tasks_and_keeps_long_tail_searchable() {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<Vec<_>>(),
-        ["/help", "/setup", "/model", "/settings", "/resume", "/rc"]
+        ["/help", "/setup", "/model", "/settings", "/resume"]
     );
     assert!(!entries.iter().any(|entry| entry.name == "/set"));
     assert!(!entries.iter().any(|entry| entry.name == "/hakus"));

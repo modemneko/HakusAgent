@@ -42,7 +42,8 @@ impl RegisterCommand for WeChatCmd {
 // ---------------------------------------------------------------------------
 
 pub fn wechat(app: &mut App, arg: Option<&str>) -> CommandResult {
-    let sub = arg.unwrap_or("").trim();
+    let raw = arg.unwrap_or("").trim();
+    let (sub, rest) = raw.split_once(' ').map_or((raw, ""), |(head, tail)| (head, tail.trim()));
 
     match sub {
         "" | "help" => {
@@ -69,12 +70,21 @@ pub fn wechat(app: &mut App, arg: Option<&str>) -> CommandResult {
             CommandResult::action(AppAction::WeChat(WeChatAction::Logout))
         }
         "send" => {
-            // The arg after "send" is expected as: <user_id> <text>
-            // But since execute() only receives the first arg token,
-            // we emit an action that the UI layer can handle with full context.
+            let Some((to_user, text)) = rest.split_once(' ') else {
+                return CommandResult::error(
+                    "Usage: /wechat send <user_id> <text>".to_string(),
+                );
+            };
+            let to_user = to_user.trim();
+            let text = text.trim();
+            if to_user.is_empty() || text.is_empty() {
+                return CommandResult::error(
+                    "Usage: /wechat send <user_id> <text>".to_string(),
+                );
+            }
             CommandResult::action(AppAction::WeChat(WeChatAction::Send {
-                to_user: String::new(),
-                text: String::new(),
+                to_user: to_user.to_string(),
+                text: text.to_string(),
             }))
         }
         "poll" => {

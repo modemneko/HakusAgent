@@ -3,12 +3,13 @@
 use crate::models::*;
 use crate::state::{AccountState, WechatState};
 use crate::{
-    AUTH_TYPE, ILINK_APP_ID, ILINK_BASE, ILINK_CLIENT_VERSION,
-    MAX_MSG_LENGTH, POLL_TIMEOUT_SECS, QR_EXPIRY_CHECK_SECS,
-    USER_AGENT,
+    AUTH_TYPE, ILINK_APP_ID, ILINK_BASE, ILINK_CLIENT_VERSION, MAX_MSG_LENGTH, POLL_TIMEOUT_SECS,
+    QR_EXPIRY_CHECK_SECS, USER_AGENT,
 };
 use base64::Engine;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT as UA_HEADER};
+use reqwest::header::{
+    AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT as UA_HEADER,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +24,8 @@ pub struct IlLinkClient {
     account: Arc<RwLock<Option<AccountState>>>,
     /// Memoized per-user context tokens (for getupdates pagination).
     user_contexts: Arc<RwLock<HashMap<String, String>>>,
+    /// Opaque pagination cursor for the account-wide update stream.
+    updates_buf: Arc<RwLock<String>>,
 }
 
 impl IlLinkClient {
@@ -38,18 +41,16 @@ impl IlLinkClient {
             .expect("failed to build reqwest client");
 
         let state = WechatState::new(state_dir);
-        let account = Arc::new(RwLock::new(
-            state.load_account().ok().flatten(),
-        ));
-        let user_contexts = Arc::new(RwLock::new(
-            state.load_user_contexts().unwrap_or_default(),
-        ));
+        let account = Arc::new(RwLock::new(state.load_account().ok().flatten()));
+        let user_contexts = Arc::new(RwLock::new(state.load_user_contexts().unwrap_or_default()));
+        let updates_buf = Arc::new(RwLock::new(state.load_updates_buf().unwrap_or_default()));
 
         Self {
             http,
             state: Arc::new(state),
             account,
             user_contexts,
+            updates_buf,
         }
     }
 
@@ -97,12 +98,14 @@ impl IlLinkClient {
         headers.insert("iLink-App-Id", HeaderValue::from_static(ILINK_APP_ID));
         headers.insert(
             "iLink-App-ClientVersion",
-            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string()).map_err(|e| WechatError::Other(e.to_string()))?,
+            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string())
+                .map_err(|e| WechatError::Other(e.to_string()))?,
         );
         headers.insert("AuthorizationType", HeaderValue::from_static(AUTH_TYPE));
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", acc.bot_token)).map_err(|e| WechatError::Other(e.to_string()))?,
+            HeaderValue::from_str(&format!("Bearer {}", acc.bot_token))
+                .map_err(|e| WechatError::Other(e.to_string()))?,
         );
         // Random X-WECHAT-UIN: base64(random u32).
         let uin_bytes = rand::random::<u32>().to_le_bytes();
@@ -122,7 +125,8 @@ impl IlLinkClient {
         headers.insert("iLink-App-Id", HeaderValue::from_static(ILINK_APP_ID));
         headers.insert(
             "iLink-App-ClientVersion",
-            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
+            HeaderValue::from_str(&ILINK_CLIENT_VERSION.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers
@@ -153,9 +157,7 @@ impl IlLinkClient {
     /// `GET /ilink/bot/get_qrcode_status?qrcode=<token>`
     /// Performs a single (non-polling) status check.
     pub async fn get_qrcode_status(&self, qrcode_token: &str) -> Result<QrStatusResponse> {
-        let url = format!(
-            "{ILINK_BASE}/ilink/bot/get_qrcode_status?qrcode={qrcode_token}"
-        );
+        let url = format!("{ILINK_BASE}/ilink/bot/get_qrcode_status?qrcode={qrcode_token}");
         let resp = self
             .http
             .get(&url)
@@ -176,21 +178,15 @@ impl IlLinkClient {
 
     /// `POST /ilink/bot/getupdates` — long-poll for new messages.
     /// Returns the list of new messages and an updated context token.
-    pub async fn get_updates(&self, user_id: Option<&str>) -> Result<GetUpdatesResponse> {
+    pub async fn get_updates(&self) -> Result<GetUpdatesResponse> {
         let base = self.base_url().await;
         let url = format!("{base}/ilink/bot/getupdates");
         let headers = self.auth_headers().await?;
 
-        // Resolve context_token for this user (if known).
-        let context_token = if let Some(uid) = user_id {
-            self.user_contexts.read().await.get(uid).cloned()
-        } else {
-            None
-        };
-
+        let cursor = self.updates_buf.read().await.clone();
         let body = GetUpdatesRequest {
-            method: "getupdates".into(),
-            context_token,
+            get_updates_buf: cursor,
+            base_info: Default::default(),
         };
         // ensure_ascii=false is the serde default; compact formatting.
         let body_json = serde_json::to_string(&body)?;
@@ -213,15 +209,28 @@ impl IlLinkClient {
 
         let result: GetUpdatesResponse = resp.json().await?;
 
-        // Persist the updated context token.
-        if let (Some(uid), Some(token)) = (user_id, &result.context_token) {
-            if !token.is_empty() {
+        if let Some(next) = result
+            .get_updates_buf
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            *self.updates_buf.write().await = next.to_string();
+            if let Err(error) = self.state.save_updates_buf(next) {
+                tracing::warn!("WeChat: failed to persist update cursor: {error}");
+            }
+        }
+
+        for message in &result.msgs {
+            if let (Some(user), Some(token)) =
+                (message.sender_id(), message.context_token.as_deref())
+                && !token.is_empty()
+            {
                 self.user_contexts
                     .write()
                     .await
-                    .insert(uid.into(), token.clone());
-                if let Err(e) = self.state.save_user_context(uid, token) {
-                    tracing::warn!("WeChat: failed to persist context_token: {e}");
+                    .insert(user.to_string(), token.to_string());
+                if let Err(error) = self.state.save_user_context(user, token) {
+                    tracing::warn!("WeChat: failed to persist context_token: {error}");
                 }
             }
         }
@@ -231,15 +240,13 @@ impl IlLinkClient {
     }
 
     /// Convenience: poll once and extract text messages with sender info.
-    pub async fn poll_text_messages(
-        &self,
-    ) -> Result<Vec<(String, String, String)>> {
-        let resp = self.get_updates(None).await?;
+    pub async fn poll_text_messages(&self) -> Result<Vec<(String, String, String)>> {
+        let resp = self.get_updates().await?;
         let mut out = Vec::new();
         for msg in &resp.msgs {
-            if msg.msg_type == "text" {
-                let user = msg.from_user.clone().unwrap_or_default();
-                let text = msg.text.clone().unwrap_or_default();
+            if !msg.item_list.is_empty() {
+                let user = msg.sender_id().unwrap_or_default().to_string();
+                let text = msg.text();
                 let id = msg.stable_id();
                 out.push((user, text, id));
             }
@@ -254,9 +261,28 @@ impl IlLinkClient {
     pub async fn send_text(&self, to_user: &str, text: &str) -> Result<()> {
         let base = self.base_url().await;
         let headers = self.auth_headers().await?;
+        let context_token = self
+            .user_contexts
+            .read()
+            .await
+            .get(to_user)
+            .cloned()
+            .unwrap_or_default();
+        if context_token.is_empty() {
+            return Err(WechatError::Other(format!(
+                "no context token for {to_user}; run /wechat poll after receiving a message first"
+            )));
+        }
+        let account_id = self
+            .account
+            .read()
+            .await
+            .as_ref()
+            .map(|account| account.account_id.clone())
+            .unwrap_or_default();
 
         if text.len() <= MAX_MSG_LENGTH {
-            let req = SendMessageRequest::new(to_user, text);
+            let req = SendMessageRequest::new(&account_id, to_user, text, &context_token);
             let body = serde_json::to_string(&req)?;
             self.post_json(&format!("{base}/ilink/bot/sendmessage"), &headers, &body)
                 .await?;
@@ -264,7 +290,7 @@ impl IlLinkClient {
             // Chunk the message.
             for (i, chunk) in text.as_bytes().chunks(MAX_MSG_LENGTH).enumerate() {
                 let chunk_str = String::from_utf8_lossy(chunk);
-                let req = SendMessageRequest::new(to_user, &chunk_str);
+                let req = SendMessageRequest::new(&account_id, to_user, &chunk_str, &context_token);
                 let body = serde_json::to_string(&req)?;
                 self.post_json(&format!("{base}/ilink/bot/sendmessage"), &headers, &body)
                     .await?;
@@ -284,12 +310,8 @@ impl IlLinkClient {
         let headers = self.auth_headers().await?;
         let req = SendTypingRequest::new(to_user, typing);
         let body = serde_json::to_string(&req)?;
-        self.post_json(
-            &format!("{base}/ilink/bot/sendtyping"),
-            &headers,
-            &body,
-        )
-        .await
+        self.post_json(&format!("{base}/ilink/bot/sendtyping"), &headers, &body)
+            .await
     }
 
     /// `GET /ilink/bot/getconfig` — retrieve bot configuration.
@@ -310,7 +332,13 @@ impl IlLinkClient {
     // -- Login / logout ------------------------------------------------------
 
     /// Save credentials after a successful QR login.
-    pub async fn save_login(&self, account_id: String, bot_token: String, base_url: String, route_tag: Option<String>) -> Result<()> {
+    pub async fn save_login(
+        &self,
+        account_id: String,
+        bot_token: String,
+        base_url: String,
+        route_tag: Option<String>,
+    ) -> Result<()> {
         let state = AccountState {
             account_id,
             bot_token,
@@ -333,8 +361,10 @@ impl IlLinkClient {
     /// Logout: clear credentials from memory and disk.
     pub async fn logout(&self) -> Result<()> {
         self.state.clear_account()?;
+        self.state.clear_contexts()?;
         *self.account.write().await = None;
         self.user_contexts.write().await.clear();
+        *self.updates_buf.write().await = String::new();
         tracing::info!("WeChat: logged out");
         Ok(())
     }

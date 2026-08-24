@@ -49,32 +49,32 @@
     --card-foreground: 200 6% 11%;
     --popover: 150 6% 98%;
     --popover-foreground: 200 6% 11%;
-    --primary: 211 100% 50%;
+    --primary: 265 74% 68%;
     --primary-foreground: 0 0% 100%;
     --secondary: 210 16% 92%;
     --secondary-foreground: 200 6% 11%;
     --muted: 210 16% 92%;
     --muted-foreground: 220 9% 42%;
-    --accent: 211 100% 96%;
-    --accent-foreground: 211 84% 35%;
+    --accent: 270 48% 96%;
+    --accent-foreground: 265 48% 34%;
     --destructive: 3 85% 52%;
     --destructive-foreground: 0 0% 98%;
     --border: 220 14% 84%;
     --input: 220 14% 78%;
-    --ring: 211 100% 50%;
+    --ring: 265 74% 68%;
     --radius: 0.625rem;
 
     /* 语义色 */
     --success: 152 30% 38%;
     --warning: 41 30% 40%;
-    --info: 205 70% 45%;
+    --info: 42 86% 52%;
 
     /* Diff 语义色 */
     --diff-added: 137 38% 45%;
     --diff-removed: 4 64% 52%;
     --diff-added-bg: 137 38% 95%;
     --diff-removed-bg: 4 64% 96%;
-    --skill: 211 100% 50%;
+    --skill: 265 74% 68%;
 
     /* Layout tokens */
     --titlebar-height: 3rem;
@@ -107,24 +107,24 @@
     --card-foreground: 0 0% 96%;
     --popover: 240 4% 13%;
     --popover-foreground: 0 0% 96%;
-    --primary: 200 28% 60%;
+    --primary: 265 74% 74%;
     --primary-foreground: 0 0% 100%;
     --secondary: 220 12% 16%;
     --secondary-foreground: 0 0% 96%;
     --muted: 220 12% 16%;
     --muted-foreground: 220 8% 66%;
-    --accent: 220 14% 20%;
+    --accent: 270 24% 22%;
     --accent-foreground: 0 0% 96%;
     --destructive: 4 60% 58%;
     --destructive-foreground: 0 0% 98%;
     --border: 220 10% 28%;
     --input: 220 10% 34%;
-    --ring: 200 28% 60%;
+    --ring: 265 74% 74%;
 
     /* 语义色（暗色） */
-    --success: 152 25% 58%;
-    --warning: 41 30% 55%;
-    --info: 205 70% 60%;
+    --success: 162 42% 64%;
+    --warning: 39 74% 68%;
+    --info: 42 86% 68%;
 
     /* Diff 语义色（暗色） */
     --diff-added: 137 38% 58%;
@@ -352,8 +352,8 @@
     border-color: transparent;
     background:
       linear-gradient(hsl(var(--card) / .96), hsl(var(--card) / .96)) padding-box,
-      linear-gradient(115deg, hsl(211 100% 70%), hsl(215 100% 78%), hsl(211 100% 70%)) border-box;
-    box-shadow: 0 0 0 1px hsl(211 100% 60% / .28), 0 0 18px hsl(211 100% 55% / .24), 0 8px 28px hsl(211 80% 50% / .16);
+      linear-gradient(115deg, hsl(265 74% 74%), hsl(315 52% 78%), hsl(265 74% 74%)) border-box;
+    box-shadow: 0 0 0 1px hsl(265 74% 68% / .28), 0 0 18px hsl(265 74% 55% / .24), 0 8px 28px hsl(270 40% 18% / .16);
   }
 }
 
@@ -400,7 +400,7 @@
   @apply text-primary hover:underline;
 }
 .markdown-body blockquote {
-  @apply border-l-4 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
+  @apply border-l-2 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
   @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
@@ -444,18 +444,18 @@
 .hljs-symbol,
 .hljs-bullet,
 .hljs-addition {
-  color: #a5d6ff;
+  color: #f1b7e7;
 }
 .hljs-number,
 .hljs-meta {
-  color: #79c0ff;
+  color: #f4c96b;
 }
 .hljs-title,
 .hljs-section,
 .hljs-built_in,
 .hljs-title.class_,
 .hljs-class .hljs-title {
-  color: #93c5fd;
+  color: #c7a6f7;
 }
 .hljs-variable,
 .hljs-template-variable,
@@ -499,15 +499,15 @@
 /* Base palette overrides */
 @layer base {
   :root {
-    --primary: 211 100% 50%;
-    --ring: 211 100% 50%;
-    --accent: 211 100% 96%;
-    --accent-foreground: 211 84% 35%;
+    --primary: 265 74% 68%;
+    --ring: 265 74% 68%;
+    --accent: 270 48% 96%;
+    --accent-foreground: 265 48% 34%;
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
   }
   .dark {
-    --primary: 211 100% 60%;
-    --ring: 211 100% 60%;
-    --accent: 211 35% 22%;
+    --primary: 265 74% 74%;
+    --ring: 265 74% 74%;
+    --accent: 270 24% 22%;
   }
 }

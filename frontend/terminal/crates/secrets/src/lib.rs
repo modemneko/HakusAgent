@@ -11,9 +11,6 @@
 //! explicit at the call site.
 #![deny(missing_docs)]
 
-/// Shared secure-storage contract for the Hakus account session.
-pub mod account;
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -365,20 +362,10 @@ pub struct FileKeyringStore {
     path: PathBuf,
 }
 
-/// File-backed secret lookup that never migrates or changes either store.
-///
-/// Normal runtime credential resolution keeps its additive legacy migration:
-/// older entries under `~/.deepseek/secrets/` are copied into the Hakus
-/// location before use. Diagnostic commands need the same read precedence
-/// without creating that destination, so this store reads the primary file
-/// first and falls back to the legacy file only when the primary has no entry
-/// and the Hakus home is not explicitly isolated.
+/// Read-only file-backed secret lookup for diagnostics.
 #[derive(Debug, Clone)]
 struct ReadOnlyFileKeyringStore {
     primary: FileKeyringStore,
-    /// The ambient legacy store is unavailable when `HAKUS_HOME` is an
-    /// explicit isolation boundary.
-    legacy: Option<FileKeyringStore>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -394,75 +381,11 @@ impl FileKeyringStore {
         Self { path: path.into() }
     }
 
-    /// Default path: `<home>/.hakus/secrets/secrets.json`. Honours
+    /// Default path: `<home>/.hakus/secrets/secrets.json`. It honors
     /// `HAKUS_HOME`, then `HOME`, `USERPROFILE`, and finally the platform
-    /// home directory from the `dirs` crate. On first use, non-conflicting
-    /// entries from the legacy `<home>/.deepseek/secrets/secrets.json` file are
-    /// copied into the CodeWhale store — unless `HAKUS_HOME` is explicit,
-    /// in which case ambient `$HOME/.deepseek` credentials are never imported.
+    /// home directory from the `dirs` crate. No legacy directory is read.
     pub fn default_path() -> Result<PathBuf, SecretsError> {
-        let primary = default_hakus_secrets_path()?;
-        // Match the diagnostic isolation boundary: an explicit Hakus home
-        // must not silently pull ambient legacy DeepSeek credentials.
-        if !hakus_home_is_explicit() {
-            match legacy_deepseek_secrets_path() {
-                Ok(legacy) => {
-                    if let Err(err) = Self::migrate_legacy_file_if_needed(&primary, &legacy) {
-                        tracing::warn!(
-                            "could not migrate legacy secret store from {} to {}: {err}",
-                            legacy.display(),
-                            primary.display()
-                        );
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!("could not resolve legacy secret store path: {err}");
-                }
-            }
-        }
-        Ok(primary)
-    }
-
-    /// Resolve the primary and legacy secret paths without performing legacy
-    /// migration.
-    ///
-    /// This is intended for diagnostic-only lookup. Runtime and authentication
-    /// flows must keep using [`Self::default_path`] so their existing additive
-    /// migration behavior remains unchanged.
-    pub fn default_paths_read_only() -> Result<(PathBuf, Option<PathBuf>), SecretsError> {
-        let primary = default_hakus_secrets_path()?;
-        let legacy = (!hakus_home_is_explicit())
-            .then(legacy_deepseek_secrets_path)
-            .transpose()?;
-        Ok((primary, legacy))
-    }
-
-    fn migrate_legacy_file_if_needed(primary: &Path, legacy: &Path) -> Result<(), SecretsError> {
-        if !legacy.exists() {
-            return Ok(());
-        }
-
-        let legacy_store = Self::new(legacy.to_path_buf());
-        let legacy_blob = legacy_store.load_unlocked()?;
-        if legacy_blob.entries.is_empty() {
-            return Ok(());
-        }
-
-        let primary_store = Self::new(primary.to_path_buf());
-        let mut primary_blob = primary_store.load_unlocked()?;
-        let mut changed = false;
-        for (key, value) in legacy_blob.entries {
-            if let std::collections::hash_map::Entry::Vacant(entry) =
-                primary_blob.entries.entry(key)
-            {
-                entry.insert(value);
-                changed = true;
-            }
-        }
-        if changed {
-            primary_store.store_unlocked(&primary_blob)?;
-        }
-        Ok(())
+        default_hakus_secrets_path()
     }
 
     /// Path used for storage.
@@ -532,27 +455,19 @@ impl FileKeyringStore {
 
 impl ReadOnlyFileKeyringStore {
     fn default_for_diagnostics() -> Result<Self, SecretsError> {
-        let (primary, legacy) = FileKeyringStore::default_paths_read_only()?;
-        Ok(Self::new(primary, legacy))
+        Ok(Self::new(FileKeyringStore::default_path()?))
     }
 
-    fn new(primary: impl Into<PathBuf>, legacy: Option<PathBuf>) -> Self {
+    fn new(primary: impl Into<PathBuf>) -> Self {
         Self {
             primary: FileKeyringStore::new(primary),
-            legacy: legacy.map(FileKeyringStore::new),
         }
     }
 }
 
 impl KeyringStore for ReadOnlyFileKeyringStore {
     fn get(&self, key: &str) -> Result<Option<String>, SecretsError> {
-        match self.primary.get(key)? {
-            Some(value) => Ok(Some(value)),
-            None => self
-                .legacy
-                .as_ref()
-                .map_or(Ok(None), |legacy| legacy.get(key)),
-        }
+        self.primary.get(key)
     }
 
     fn set(&self, _key: &str, _value: &str) -> Result<(), SecretsError> {
@@ -666,13 +581,6 @@ fn default_hakus_secrets_path() -> Result<PathBuf, SecretsError> {
         .join("secrets.json"))
 }
 
-fn legacy_deepseek_secrets_path() -> Result<PathBuf, SecretsError> {
-    Ok(hakus_paths::legacy_deepseek_home()
-        .ok_or_else(home_resolution_error)?
-        .join("secrets")
-        .join("secrets.json"))
-}
-
 fn home_resolution_error() -> SecretsError {
     SecretsError::Io(std::io::Error::new(
         std::io::ErrorKind::NotFound,
@@ -740,10 +648,6 @@ pub struct SecretBackendDiagnostic {
     pub path: Option<PathBuf>,
     /// Metadata-only presence of the canonical file-store path.
     pub presence: SecretBackendPresence,
-    /// Ambient legacy file-store path, suppressed by explicit `HAKUS_HOME`.
-    pub legacy_path: Option<PathBuf>,
-    /// Metadata-only presence of the legacy file-store path.
-    pub legacy_presence: SecretBackendPresence,
 }
 
 /// Describe the configured credential backend without probing or reading it.
@@ -756,16 +660,12 @@ pub struct SecretBackendDiagnostic {
 pub fn diagnose_secret_backend() -> SecretBackendDiagnostic {
     match secret_backend_selection(configured_secret_backend().as_deref()) {
         SecretBackendSelection::File => {
-            let (path, legacy_path) = FileKeyringStore::default_paths_read_only()
-                .map(|(path, legacy)| (Some(path), legacy))
-                .unwrap_or((None, None));
+            let path = FileKeyringStore::default_path().map(Some).unwrap_or(None);
             SecretBackendDiagnostic {
                 backend: SecretBackendDiagnosticKind::File,
                 inspection: SecretBackendInspection::MetadataOnly,
                 presence: metadata_presence(path.as_deref()),
-                legacy_presence: metadata_presence(legacy_path.as_deref()),
                 path,
-                legacy_path,
             }
         }
         SecretBackendSelection::System => SecretBackendDiagnostic {
@@ -773,16 +673,12 @@ pub fn diagnose_secret_backend() -> SecretBackendDiagnostic {
             inspection: SecretBackendInspection::NotProbed,
             path: None,
             presence: SecretBackendPresence::Unknown,
-            legacy_path: None,
-            legacy_presence: SecretBackendPresence::Unknown,
         },
         SecretBackendSelection::Unknown => SecretBackendDiagnostic {
             backend: SecretBackendDiagnosticKind::Unknown,
             inspection: SecretBackendInspection::NotProbed,
             path: None,
             presence: SecretBackendPresence::Unknown,
-            legacy_path: None,
-            legacy_presence: SecretBackendPresence::Unknown,
         },
     }
 }
@@ -934,10 +830,7 @@ impl Secrets {
     /// or legacy migration.
     ///
     /// The selected backend and lookup precedence match [`Self::auto_detect`],
-    /// but file-backed lookup reads the Hakus location first and the legacy
-    /// location second instead of copying legacy entries into a new file. This
-    /// lets status and doctor reports label a saved credential without changing
-    /// user state.
+    /// but file-backed lookup is read-only and never changes user state.
     #[must_use]
     pub fn auto_detect_read_only() -> Self {
         match secret_backend_selection(configured_secret_backend().as_deref()) {
@@ -1005,14 +898,9 @@ impl Secrets {
         ))))
     }
 
-    /// Construct a file-backed diagnostic store without migration or write
-    /// capability.
-    ///
-    /// This reads the Hakus file first and the legacy file second (unless
-    /// `HAKUS_HOME` is explicit), but never copies legacy entries into a
-    /// primary store. It intentionally bypasses an opted-in OS keyring so
-    /// callers that only need non-secret diagnostics do not cause a platform
-    /// credential prompt.
+    /// Construct a file-backed diagnostic store without write capability.
+    /// It intentionally bypasses an opted-in OS keyring so callers that only
+    /// need non-secret diagnostics do not cause a platform credential prompt.
     #[must_use]
     pub fn file_backed_read_only() -> Self {
         // Fail closed like the writable path in `file_backed_from_default_path`:
@@ -1405,7 +1293,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_auto_detect_reads_legacy_without_migrating_or_allowing_writes() {
+    fn read_only_auto_detect_ignores_legacy_without_allowing_writes() {
         let _lock = env_lock();
         clear_known_envs();
         let tmp = tempfile::tempdir().unwrap();
@@ -1430,7 +1318,7 @@ mod tests {
 
         assert_eq!(
             secrets.get("moonshot").unwrap().as_deref(),
-            Some("fixture-legacy-value")
+            None
         );
         assert!(
             !primary.exists(),
@@ -1618,7 +1506,7 @@ mod tests {
     }
 
     #[test]
-    fn file_default_path_migrates_legacy_entries_to_hakus() {
+    fn file_default_path_does_not_read_legacy_entries() {
         let _lock = env_lock();
         clear_known_envs();
         let tmp = tempfile::tempdir().unwrap();
@@ -1645,11 +1533,11 @@ mod tests {
         );
         assert_eq!(
             primary_store.get("xiaomi-mimo").unwrap().as_deref(),
-            Some("legacy-mimo")
+            None
         );
         assert!(
             legacy.exists(),
-            "migration copies; it does not delete legacy data"
+            "the legacy store is untouched and is not used"
         );
     }
 

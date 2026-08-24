@@ -387,20 +387,13 @@ fn write_atomic_with_permissions(
     Ok(())
 }
 
-/// True when `dir` is under `$HAKUS_HOME` / `~/.hakus`, or the ambient
-/// `~/.deepseek` legacy root when that root is still in play.
+/// True when `dir` is under `$HAKUS_HOME` or the canonical `~/.hakus` root.
 fn is_hakus_owned_state_dir(dir: &Path) -> bool {
     if dir.as_os_str().is_empty() {
         return false;
     }
     let primary = hakus_paths::hakus_home().ok().flatten();
-    let legacy = (!hakus_paths::hakus_home_is_explicit())
-        .then(hakus_paths::legacy_deepseek_home)
-        .flatten();
-    [primary, legacy]
-        .into_iter()
-        .flatten()
-        .any(|root| !root.as_os_str().is_empty() && dir.starts_with(root))
+    primary.is_some_and(|root| !root.as_os_str().is_empty() && dir.starts_with(root))
 }
 
 /// Remove `.tmpXXXXXX` files this writer stranded in `dir` on an earlier run.
@@ -415,7 +408,7 @@ fn is_hakus_owned_state_dir(dir: &Path) -> bool {
 /// Deliberately conservative, because this deletes files under `$HOME`:
 ///
 /// - **Product directories only** — parent must be under `$HAKUS_HOME`
-///   (or `~/.hakus`) or the ambient `~/.deepseek` legacy root. User-chosen
+///   (or `~/.hakus`). User-chosen
 ///   destinations such as `/save <path>` keep the private permission policy
 ///   but are not swept (enforced at the call site).
 /// - **Exact shape only** — `tempfile`'s default naming is the literal prefix
@@ -634,20 +627,9 @@ fn write_panic_dump(
     location: &std::panic::Location<'_>,
     message: &str,
 ) -> std::io::Result<()> {
-    let home = crate::config::effective_home_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not found")
-    })?;
-    // Prefer .hakus, fall back to .deepseek
-    let crash_dir = home.join(".hakus").join("crashes");
-    if !crash_dir.exists() {
-        // Try legacy path for reading, but prefer new for writing
-        let _ = std::fs::create_dir_all(&crash_dir);
-    }
-    let crash_dir = if crash_dir.exists() {
-        crash_dir
-    } else {
-        home.join(".deepseek").join("crashes")
-    };
+    let crash_dir = hakus_config::hakus_home()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::NotFound, error))?
+        .join("crashes");
     write_panic_dump_to(&crash_dir, name, location, message)
 }
 

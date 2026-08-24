@@ -521,7 +521,9 @@ impl McpServer {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    crate::config::effective_home_dir().map(|home| home.join(".deepseek").join("mcp_server.toml"))
+    hakus_config::hakus_home()
+        .ok()
+        .map(|home| home.join("mcp_server.toml"))
 }
 
 fn default_expose_tools() -> Vec<String> {

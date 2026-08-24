@@ -2,7 +2,28 @@
 
 use ratatui::style::Color;
 
-// Hakus Whale palette. Semantic colors own state, never decoration alone.
+// Hakus desktop palette. Semantic colors own state, never decoration alone.
+pub const HAKUS_BG_RGB: (u8, u8, u8) = (18, 15, 25);
+pub const HAKUS_CHROME_RGB: (u8, u8, u8) = (25, 21, 34);
+pub const HAKUS_PANEL_RGB: (u8, u8, u8) = (31, 25, 42);
+pub const HAKUS_COMPOSER_RGB: (u8, u8, u8) = (39, 31, 52);
+pub const HAKUS_ELEVATED_RGB: (u8, u8, u8) = (49, 39, 64);
+pub const HAKUS_SELECTION_RGB: (u8, u8, u8) = (61, 46, 78);
+pub const HAKUS_TEXT_BODY_RGB: (u8, u8, u8) = (246, 242, 255);
+pub const HAKUS_TEXT_SOFT_RGB: (u8, u8, u8) = (218, 207, 232);
+pub const HAKUS_TEXT_MUTED_RGB: (u8, u8, u8) = (174, 158, 196);
+pub const HAKUS_TEXT_HINT_RGB: (u8, u8, u8) = (143, 128, 164);
+pub const HAKUS_TEXT_DIM_RGB: (u8, u8, u8) = (111, 98, 131);
+pub const HAKUS_ACTION_RGB: (u8, u8, u8) = (190, 162, 244);
+pub const HAKUS_ACCENT_SECONDARY_RGB: (u8, u8, u8) = (232, 183, 215);
+pub const HAKUS_HUMAN_RGB: (u8, u8, u8) = (246, 207, 135);
+pub const HAKUS_WORKING_GREEN_RGB: (u8, u8, u8) = (142, 218, 194);
+pub const HAKUS_BORDER_RGB: (u8, u8, u8) = (70, 55, 88);
+pub const HAKUS_ERROR_RGB: (u8, u8, u8) = (244, 126, 157);
+pub const HAKUS_WARNING_RGB: (u8, u8, u8) = (246, 174, 111);
+
+// The old token names remain source-compatible for custom integrations. The
+// default shipped theme below uses the Hakus palette above.
 pub const WHALE_BG_RGB: (u8, u8, u8) = (3, 7, 13); // #03070D Deep field
 pub const WHALE_CHROME_RGB: (u8, u8, u8) = (8, 17, 28); // #08111C Ink / chrome
 pub const WHALE_PANEL_RGB: (u8, u8, u8) = (14, 23, 41); // #0E1729 Panel surface
@@ -233,6 +254,18 @@ pub const MATRIX_BORDER_RGB: (u8, u8, u8) = (0, 204, 0); // #00CC00
 
 // Semantic colors
 pub const BORDER_COLOR_RGB: (u8, u8, u8) = WHALE_BORDER_RGB;
+
+pub const HAKUS_ACTION: Color = Color::Rgb(
+    HAKUS_ACTION_RGB.0,
+    HAKUS_ACTION_RGB.1,
+    HAKUS_ACTION_RGB.2,
+);
+pub const HAKUS_ACCENT_SECONDARY: Color = Color::Rgb(
+    HAKUS_ACCENT_SECONDARY_RGB.0,
+    HAKUS_ACCENT_SECONDARY_RGB.1,
+    HAKUS_ACCENT_SECONDARY_RGB.2,
+);
+pub const HAKUS_HUMAN: Color = Color::Rgb(HAKUS_HUMAN_RGB.0, HAKUS_HUMAN_RGB.1, HAKUS_HUMAN_RGB.2);
 
 pub const WHALE_ACCENT_PRIMARY: Color = Color::Rgb(
     WHALE_ACCENT_PRIMARY_RGB.0,

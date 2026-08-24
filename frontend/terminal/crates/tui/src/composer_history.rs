@@ -1,8 +1,7 @@
 //! Cross-session composer input history (#366).
 //!
-//! Persists user-typed prompts to `~/.hakus/composer_history.txt`
-//! (falling back to a legacy `~/.deepseek/composer_history.txt` only when
-//! one already exists, #3240) so pressing Up-arrow at the composer recalls
+//! Persists user-typed prompts to the active Hakus data root so pressing
+//! Up-arrow at the composer recalls
 //! submissions from previous sessions, not just the current one. One entry
 //! per line, oldest first,
 //! capped at [`MAX_HISTORY_ENTRIES`] entries (older entries are pruned
@@ -37,29 +36,14 @@ pub const MAX_HISTORY_ENTRIES: usize = 1000;
 const HISTORY_FILE_NAME: &str = "composer_history.txt";
 
 fn default_history_path() -> Option<PathBuf> {
-    history_path_with_home(crate::config::effective_home_dir())
+    crate::config::hakus_home()
+        .ok()
+        .map(|root| root.join(HISTORY_FILE_NAME))
 }
 
-/// Resolve the composer-history file under `home`, preferring the CodeWhale
-/// root and only falling back to the legacy `.deepseek` root when a legacy
-/// file already exists.
-///
-/// On a fresh install (neither file present) this returns the `.hakus`
-/// path, so the writer never recreates `~/.deepseek/` at runtime (#3240),
-/// while users who haven't migrated keep reading and appending to their
-/// existing legacy history. Mirrors the primary/legacy resolution used by
-/// `snapshot::paths` and `artifacts`.
+/// Resolve the composer-history file under a user home for isolated tests.
 fn history_path_with_home(home: Option<PathBuf>) -> Option<PathBuf> {
-    let home = home?;
-    let primary = home.join(".hakus").join(HISTORY_FILE_NAME);
-    if primary.exists() {
-        return Some(primary);
-    }
-    let legacy = home.join(".deepseek").join(HISTORY_FILE_NAME);
-    if legacy.exists() {
-        return Some(legacy);
-    }
-    Some(primary)
+    Some(home?.join(".hakus").join(HISTORY_FILE_NAME))
 }
 
 /// Read the persisted history into memory. Returns an empty vec if the

@@ -5,6 +5,9 @@
 # Local agent-debug tooling (dev-only, never commit)
 .dbg/
 
+# ZCode harness local plans workspace (auto-created, never commit)
+.zcode/
+
 # Stray scratch/experiment dirs (not part of project)
 frontier-swe/
 

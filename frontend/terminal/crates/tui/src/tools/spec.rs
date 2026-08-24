@@ -629,7 +629,7 @@ pub struct ToolExecutionState {
     /// use this to keep inline page content below three percent of the route.
     pub route_context_window: Option<u32>,
     /// User-trusted external paths the agent may read/write even when they
-    /// fall outside `workspace`. Loaded from `~/.deepseek/workspace-trust.json`
+    /// fall outside `workspace`. Loaded from `~/.hakus/workspace-trust.json`
     /// and refreshed when the user runs `/trust add <path>`. Distinct from
     /// `trust_mode`, which is the all-or-nothing legacy switch (#29).
     pub trusted_external_paths: Vec<PathBuf>,
@@ -717,7 +717,7 @@ impl ToolContext {
     #[must_use]
     pub fn new(workspace: impl Into<PathBuf>) -> Self {
         let workspace = workspace.into();
-        // Prefer .hakus, fall back to .deepseek for project-local state
+        // Project-local tool state is canonical under .hakus.
         let notes_path = hakus_config::resolve_project_state_dir(&workspace, "notes.md")
             .expect("hardcoded project notes state path is valid")
             .1;
@@ -907,7 +907,7 @@ impl ToolContext {
     }
 
     /// Set the user's trusted external paths (loaded from
-    /// `~/.deepseek/workspace-trust.json`). See [`Self::resolve_path`] for
+    /// `~/.hakus/workspace-trust.json`). See [`Self::resolve_path`] for
     /// how the list is consulted.
     #[must_use]
     pub fn with_trusted_external_paths(mut self, paths: Vec<PathBuf>) -> Self {
@@ -1149,7 +1149,7 @@ impl ToolContext {
 
         // Validate it's under workspace, OR is under a user-trusted external
         // path (`/trust add <path>` from the slash command, persisted in
-        // `~/.deepseek/workspace-trust.json`).
+        // `~/.hakus/workspace-trust.json`).
         if !canonical.starts_with(workspace_canonical)
             && !canonical.starts_with(&workspace_normalized)
             && !self.is_trusted_external_path(&canonical)
