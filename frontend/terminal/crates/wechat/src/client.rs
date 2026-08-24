@@ -35,7 +35,7 @@ impl IlLinkClient {
         // Install ring crypto provider for rustls.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let http = reqwest::Client::builder()
+        let http = http_client_builder()
             .timeout(Duration::from_secs(POLL_TIMEOUT_SECS + 10))
             .build()
             .expect("failed to build reqwest client");
@@ -389,5 +389,25 @@ impl IlLinkClient {
             });
         }
         Ok(())
+    }
+}
+
+fn http_client_builder() -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder();
+
+    #[cfg(target_os = "android")]
+    {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        return builder.tls_backend_preconfigured(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        builder
     }
 }

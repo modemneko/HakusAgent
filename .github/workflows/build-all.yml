@@ -122,26 +122,30 @@ jobs:
 
   # ── 桌面端（Tauri 2，三平台）──────────────────────────────────
   desktop:
-    name: desktop-${{ matrix.platform }}
+    name: desktop-${{ matrix.artifact }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: windows-latest
+            artifact: windows
             args: ""
           - platform: macos-latest # arm64 (M 系列)
+            artifact: macos-arm64
             args: "--target aarch64-apple-darwin"
-          - platform: macos-13 # x64 (Intel)
+          - platform: macos-14 # x64 (Intel)
+            artifact: macos-x64
             args: "--target x86_64-apple-darwin"
           - platform: ubuntu-22.04
+            artifact: linux
             args: ""
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-14' && 'x86_64-apple-darwin' || '' }}
 
       - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
@@ -165,7 +169,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-latest
+          name: desktop-windows
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/msi/*.msi
@@ -175,7 +179,7 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.platform }}
+          name: desktop-${{ matrix.artifact }}
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/dmg/*.dmg
             HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/macos/*.app
@@ -185,7 +189,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-ubuntu-22.04
+          name: desktop-linux
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
