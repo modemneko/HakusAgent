@@ -50,7 +50,7 @@ sh scripts/install.sh        # 自动走 android-arm64 资产或源码编译
 
 ```sh
 curl -L -O https://github.com/modemneko/HakusAgent/releases/latest/download/hakuscli-android-arm64.tar.gz
-tar xzf hakuscli-android-arm64.tar.gz && cp hakuscli-android-arm64/hakuscli $PREFIX/bin/
+tar xzf hakuscli-android-arm64.tar.gz -C "$PREFIX/bin" && chmod +x "$PREFIX/bin/hakuscli"
 ```
 
 平台行为差异与安全模型见 [TERMUX.md](TERMUX.md)。源码编译首次约 20–40 分钟，
