@@ -63,14 +63,6 @@ pub fn hakus_home_override() -> Result<Option<PathBuf>, PathOverrideError> {
     absolute_path_env("HAKUS_HOME")
 }
 
-/// Historical environment accessor retained for downstream compilation only.
-/// Hakus runtime code does not consult this value.
-#[deprecated(note = "DEEPSEEK_HOME is no longer used by Hakus")]
-#[must_use]
-pub fn legacy_deepseek_home_override() -> Option<PathBuf> {
-    path_env("DEEPSEEK_HOME")
-}
-
 /// Whether `HAKUS_HOME` establishes an explicit isolation boundary.
 #[must_use]
 pub fn hakus_home_is_explicit() -> bool {
@@ -130,14 +122,6 @@ pub fn hakus_home() -> Result<Option<PathBuf>, PathOverrideError> {
 /// repository can never turn a global config override into a repo-local file.
 pub fn config_path_override() -> Result<Option<PathBuf>, PathOverrideError> {
     absolute_path_env("HAKUS_CONFIG_PATH")
-}
-
-/// Historical path helper retained for source compatibility only. Runtime
-/// resolvers never call it.
-#[deprecated(note = "the .deepseek compatibility root is no longer used")]
-#[must_use]
-pub fn legacy_deepseek_home() -> Option<PathBuf> {
-    user_home().map(|home| home.join(".deepseek"))
 }
 
 /// Read an optional path environment variable and require a global path.

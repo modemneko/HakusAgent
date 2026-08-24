@@ -5662,13 +5662,6 @@ pub fn hakus_home_is_explicit() -> bool {
     hakus_paths::hakus_home_is_explicit()
 }
 
-/// Deprecated source-compatibility accessor. Runtime path resolution never
-/// calls this helper and never reads or writes the returned directory.
-#[deprecated(note = "Hakus no longer reads or writes the legacy directory")]
-pub fn legacy_deepseek_home() -> Result<PathBuf> {
-    hakus_paths::legacy_deepseek_home().context("failed to resolve home directory")
-}
-
 /// Reject state subdirs that could escape the state root via path injection.
 ///
 /// `ensure_state_dir` / `resolve_state_dir` are public APIs taking an arbitrary

@@ -2897,11 +2897,6 @@ fn app_homes_prefer_home_env_before_platform_home_fallback() {
         hakus_home().expect("hakus home"),
         home.join(HAKUS_APP_DIR)
     );
-    assert_eq!(
-        legacy_deepseek_home().expect("legacy home"),
-        home.join(LEGACY_APP_DIR)
-    );
-
     let explicit = std::env::temp_dir().join(format!(
         "hakus-config-explicit-home-{}",
         std::process::id()
@@ -3072,8 +3067,8 @@ impl Drop for StateEnvRestore {
 }
 
 /// Points `HOME`/`USERPROFILE` at a fresh temp tree and clears
-/// `HAKUS_HOME` so `hakus_home()` -> `<home>/.hakus` and
-/// `legacy_deepseek_home()` -> `<home>/.deepseek`. Env is restored on drop.
+/// `HAKUS_HOME` so `hakus_home()` resolves to `<home>/.hakus`.
+/// Env is restored on drop.
 struct StateDirEnv {
     home: PathBuf,
     _restore: StateEnvRestore,
