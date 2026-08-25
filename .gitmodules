@@ -1,0 +1,3 @@
+[submodule "tts_engines/models/GPT-SoVITS"]
+	path = tts_engines/models/GPT-SoVITS
+	url = https://github.com/RVC-Boss/GPT-SoVITS.git
