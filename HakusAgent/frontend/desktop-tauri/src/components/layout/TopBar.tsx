@@ -180,7 +180,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
           <TooltipContent>切换侧栏</TooltipContent>
         </Tooltip>
 
-        <div className="segment">
+        <div className="segment topbar-mode-segment">
           {MODE_SEGMENTS.map((mode) => {
             const Icon = mode.icon
             const active = agentMode === mode.id
@@ -223,7 +223,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               size="icon"
               variant="ghost"
               className={cn(
-                'topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                'topbar-icon-button topbar-review-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 rightPanelOpen && 'bg-accent/60 text-foreground',
               )}
               onClick={onToggleRightPanel}
@@ -241,7 +241,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
             <Button
               size="icon"
               variant="ghost"
-              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              className="topbar-icon-button topbar-settings-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onOpenSettings}
               title="设置"
               aria-label="设置"
@@ -258,7 +258,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               <Button
                 size="icon"
                 variant="ghost"
-              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              className="topbar-icon-button topbar-clear-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={() => {
                   if (confirm('清空当前会话的所有消息？')) {
                     clearMessages(activeId)

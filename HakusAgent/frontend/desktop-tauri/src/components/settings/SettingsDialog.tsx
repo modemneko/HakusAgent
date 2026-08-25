@@ -124,13 +124,28 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         // into the footer.
         style={{ maxHeight: '90vh', height: 'min(90vh, 720px)' }}
       >
-        <DialogHeader className="shrink-0 border-b border-border/70 bg-card px-6 py-4">
+        <DialogHeader className="settings-dialog-header shrink-0 border-b border-border/70 bg-card px-6 py-4">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ActiveIcon className="h-4 w-4 text-primary" />
             设置 · {activeCat.label}
           </DialogTitle>
           <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
         </DialogHeader>
+
+        <label className="settings-dialog-mobile-picker">
+          <span>设置分类</span>
+          <select
+            value={active}
+            onChange={(event) => setActive(event.target.value as CategoryId)}
+            aria-label="设置分类"
+          >
+            {CATEGORIES.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.label}
+              </option>
+            ))}
+          </select>
+        </label>
 
         {/* Main area: left nav + right panel, flex-1 so it fills available
             space between header and footer. min-h-0 is critical — without
