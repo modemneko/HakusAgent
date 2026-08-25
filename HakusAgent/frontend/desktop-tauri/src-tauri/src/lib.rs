@@ -195,6 +195,11 @@ pub fn run() {
 
     #[cfg(target_os = "android")]
     {
+        // Android uses the dialog plugin only for the explicit project access
+        // confirmation. Folder selection itself is handled by the SAF plugin
+        // below because the official dialog plugin has no folder picker on Android.
+        builder = builder.plugin(tauri_plugin_dialog::init());
+        builder = builder.plugin(hakus_folder_picker::init());
         // Android has no bundled Python interpreter. Start the shared Rust
         // Runtime API in-process and keep all state under app_data_dir().
         builder = builder.setup(|app| {

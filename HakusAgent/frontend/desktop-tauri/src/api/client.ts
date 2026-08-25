@@ -67,6 +67,7 @@ import type {
   SessionLogStats,
 } from './types'
 import { EXPECTED_BACKEND_API_VERSION_INT } from './types'
+import { refreshProjectFolder, syncProjectFolder } from './tauriBridge'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
 
@@ -951,7 +952,7 @@ export class HakusAIClient {
     projectId?: string,
   ): Promise<void> {
     if (this.usesEmbeddedRuntime) {
-      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, provider, runMode)
+      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, provider, runMode, projectId)
       return
     }
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
@@ -1022,7 +1023,24 @@ export class HakusAIClient {
     signal?: AbortSignal,
     provider?: string,
     runMode?: AgentMode,
+    projectId?: string,
   ): Promise<void> {
+    const project = projectId
+      ? (await this.listProjects()).find((candidate) => candidate.id === projectId) || null
+      : null
+    if (project) {
+      await refreshProjectFolder({ path: project.path, sourceUri: project.source_uri })
+      const workspaceUrl = `${this.baseUrl}/v1/threads/${encodeURIComponent(threadId)}`
+      const workspaceResponse = await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: project.path }),
+        signal,
+      })
+      if (!workspaceResponse.ok) {
+        await this._throwForResponse(workspaceResponse, workspaceUrl, 'Set Runtime project workspace failed')
+      }
+    }
     const start = await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}/turns`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1072,6 +1090,15 @@ export class HakusAIClient {
           if (event) onChunk(this.eventToChunk(event), event)
           if (eventName === 'turn.completed') {
             onChunk({ done: true })
+            if (project) {
+              try {
+                await syncProjectFolder({ path: project.path, sourceUri: project.source_uri })
+              } catch (error) {
+                // A completed turn remains visible if the user revoked the
+                // SAF grant while the stream was running.
+                console.warn('[runtime] project sync failed:', error)
+              }
+            }
             return
           }
           if (eventName === 'turn.failed' || eventName === 'turn.canceled' || eventName === 'turn.interrupted') {
@@ -1771,6 +1798,12 @@ export class HakusAIClient {
   // ============ Projects (Codex-style project picker) ============
 
   async listProjects(): Promise<Project[]> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/projects')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/projects`, 'List Runtime projects failed')
+      const data = await res.json() as ProjectsListResponse
+      return data.projects || []
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/projects`, {}, 8000)
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/projects`, 'List projects failed')
@@ -1780,6 +1813,15 @@ export class HakusAIClient {
   }
 
   async createProject(body: ProjectCreateBody): Promise<Project> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/projects`, 'Create Runtime project failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/projects`,
       {
@@ -1796,6 +1838,16 @@ export class HakusAIClient {
   }
 
   async updateProject(projectId: string, body: ProjectUpdateBody): Promise<Project> {
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/projects/${encodeURIComponent(projectId)}`
+      const res = await this.runtimeFetch(`/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Update Runtime project failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}`,
       {
@@ -1812,6 +1864,12 @@ export class HakusAIClient {
   }
 
   async deleteProject(projectId: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/projects/${encodeURIComponent(projectId)}`
+      const res = await this.runtimeFetch(`/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, url, 'Delete Runtime project failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}`,
       { method: 'DELETE' },

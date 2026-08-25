@@ -1044,6 +1044,8 @@ export interface Project {
   created_at: number
   /** Unix ms when the project was last used in a chat turn. */
   last_used_at: number
+  /** Android SAF tree URI; absent on desktop projects. */
+  source_uri?: string
 }
 
 export interface ProjectsListResponse {
@@ -1054,6 +1056,7 @@ export interface ProjectCreateBody {
   name: string
   path: string
   pinned?: boolean
+  source_uri?: string
 }
 
 export interface ProjectUpdateBody {

@@ -580,14 +580,22 @@
   }
 
   .composer-controls {
-    align-items: stretch;
+    align-items: center;
+    flex-wrap: nowrap;
     gap: 0.375rem;
   }
 
   .composer-options {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
     min-width: 0;
     gap: 0.25rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .composer-options::-webkit-scrollbar {
+    display: none;
   }
 
   .composer-options > button,
@@ -605,7 +613,7 @@
   }
 
   .composer-actions > button {
-    min-width: 36px;
+    min-width: 40px;
     min-height: 40px;
   }
 
@@ -684,7 +692,7 @@
   @apply text-primary hover:underline;
 }
 .markdown-body blockquote {
-  @apply border-l-2 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
+  @apply border-l border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
   @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;

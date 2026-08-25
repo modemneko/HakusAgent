@@ -15,6 +15,7 @@ import {
   ListChecks,
   Loader2,
   Mic,
+  MoreHorizontal,
   Paperclip,
   PhoneCall,
   Search,
@@ -43,9 +44,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-  import { apiClient } from '@/api/client'
-  import { pickFolder } from '@/api/tauriBridge'
-  import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment } from '@/api/types'
+import { apiClient } from '@/api/client'
+import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
+import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment } from '@/api/types'
 import {
   REASONING_EFFORTS,
   REASONING_EFFORT_META,
@@ -808,6 +809,30 @@ export function Composer({
     }
   }
 
+  const handleCreateProject = async () => {
+    if (creatingProject) return
+    setCreatingProject(true)
+    try {
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
+      const selected = await pickProjectFolder()
+      if (!selected) return
+      const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
+      const created = await createProject({ name, path: selected.path, source_uri: selected.sourceUri })
+      if (!projectLocked) {
+        setActiveProject(created.id)
+        toast.success(`已添加并切换到项目：${created.name}`)
+      } else {
+        toast.success(`已添加项目：${created.name}（当前会话已锁定，请新建会话后切换）`)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(`新建项目失败：${msg}`)
+    } finally {
+      setCreatingProject(false)
+    }
+  }
+
   const hasExpandedContent = attachments.length > 0 || Boolean(taskProgress) || pendingQueue.length > 0
 
   return (
@@ -880,7 +905,7 @@ export function Composer({
               {attachments.map((att) => (
                 <div
                   key={att.id}
-                  className="group relative flex h-16 min-w-[180px] max-w-[240px] items-center gap-2 rounded-2xl border border-border/75 bg-background/70 p-1.5"
+                  className="group relative flex h-20 min-w-[180px] max-w-[240px] items-center gap-2 rounded-2xl border border-border/75 bg-background/70 p-1.5"
                 >
                   {att.kind === 'image' && att.previewUrl ? (
                     <img
@@ -899,12 +924,15 @@ export function Composer({
                   </div>
                   <button
                     type="button"
-                    onClick={() => removeAttachment(att.id)}
-                    className="absolute right-1 top-1 rounded-full bg-background/85 p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      removeAttachment(att.id)
+                    }}
+                    className="absolute right-1 top-1 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-destructive/10 hover:text-destructive md:h-8 md:w-8"
                     aria-label="移除附件"
                     title="移除附件"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-4 w-4 md:h-3 md:w-3" />
                   </button>
                 </div>
               ))}
@@ -1037,7 +1065,7 @@ export function Composer({
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 rounded-xl text-muted-foreground"
+                    className="h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={disabled}
                     title="添加文件"
@@ -1053,7 +1081,7 @@ export function Composer({
                   <Button
                     size="icon"
                     variant="ghost"
-                    className={cn('h-8 w-8 rounded-xl text-muted-foreground', mentionOpen && 'bg-accent text-foreground')}
+                    className={cn('h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8', mentionOpen && 'bg-accent text-foreground')}
                     onClick={triggerMention}
                     disabled={disabled}
                     title="@ 上下文"
@@ -1063,6 +1091,120 @@ export function Composer({
                 </TooltipTrigger>
                 <TooltipContent>@ 上下文</TooltipContent>
               </Tooltip>
+
+              {/* Phone layout: the input stays uncluttered and the less
+                  frequent project/model/policy controls live in one compact
+                  menu. Tablet and desktop keep their direct controls below. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-11 w-11 rounded-xl text-muted-foreground md:hidden"
+                    disabled={disabled || isStreaming}
+                    title="更多选项"
+                    aria-label="更多选项"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top" className="w-[280px] max-w-[calc(100vw-24px)] p-1.5">
+                  <DropdownMenuLabel className="px-2 py-1 text-[11px] text-muted-foreground">工作设置</DropdownMenuLabel>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="gap-2 py-2">
+                      <FolderOpen className="h-4 w-4 text-primary" />
+                      <span className="flex-1 truncate">项目</span>
+                      <span className="max-w-[120px] truncate text-[11px] text-muted-foreground">
+                        {activeProject?.name || '当前目录'}
+                      </span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-[260px]">
+                      {projects.slice(0, 12).map((project) => (
+                        <DropdownMenuItem
+                          key={project.id}
+                          disabled={projectLocked}
+                          onClick={() => setActiveProject(project.id)}
+                          className="gap-2 py-2"
+                        >
+                          <FolderOpen className={cn('h-4 w-4', activeProjectId === project.id ? 'text-primary' : 'text-muted-foreground')} />
+                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                          {activeProjectId === project.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => void handleCreateProject()} disabled={creatingProject} className="gap-2 py-2">
+                        {creatingProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4 text-primary" />}
+                        新建项目
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={projectLocked || !activeProjectId}
+                        onClick={() => setActiveProject(null)}
+                        className="gap-2 py-2"
+                      >
+                        <X className="h-4 w-4 text-muted-foreground" />
+                        不在项目中工作
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="gap-2 py-2">
+                      <Bot className="h-4 w-4 text-primary" />
+                      <span className="flex-1">模型</span>
+                      <span className="max-w-[120px] truncate text-[11px] text-muted-foreground">{currentProviderLabel}</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-[260px]">
+                      {providers.map((provider) => (
+                        <DropdownMenuItem
+                          key={provider.id}
+                          disabled={switchingProvider || !provider.model_name}
+                          onClick={() => provider.model_name && void handleModelSelect(provider, provider.model_name)}
+                          className="gap-2 py-2"
+                        >
+                          <ProviderLogo providerId={provider.id} size={16} />
+                          <span className="min-w-0 flex-1 truncate">{provider.display_name}</span>
+                          {provider.is_default && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="gap-2 py-2">
+                      <Brain className="h-4 w-4 text-primary" />
+                      <span className="flex-1">思考强度</span>
+                      <span className="text-[11px] text-muted-foreground">{REASONING_EFFORT_META[activeReasoningEffort].label}</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-[190px]">
+                      {REASONING_EFFORTS.map((effort: ReasoningEffort) => (
+                        <DropdownMenuItem key={effort} onClick={() => setReasoningEffort(agentMode, effort)} className="gap-2 py-2">
+                          <Brain className="h-4 w-4 text-muted-foreground" />
+                          <span className="flex-1">{REASONING_EFFORT_META[effort].label}</span>
+                          {activeReasoningEffort === effort && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="gap-2 py-2">
+                      <ActivePermissionIcon className={cn('h-4 w-4', activePermissionMeta.tone)} />
+                      <span className="flex-1">权限</span>
+                      <span className="text-[11px] text-muted-foreground">{activePermissionMeta.label}</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-[210px]">
+                      {availablePermissions.map((mode) => {
+                        const meta = PERMISSION_META[mode]
+                        const Icon = meta.icon
+                        return (
+                          <DropdownMenuItem key={mode} onClick={() => void handlePermissionSwitch(mode)} className="gap-2 py-2">
+                            <Icon className={cn('h-4 w-4', meta.tone)} />
+                            <span className="flex-1">{meta.label}</span>
+                            {permission === mode && <Check className="h-3.5 w-3.5 text-primary" />}
+                          </DropdownMenuItem>
+                        )
+                      })}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
               <DropdownMenu
                 onOpenChange={(open) => {
@@ -1077,7 +1219,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'composer-project-trigger inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      'composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={activeProject ? activeProject.path : '不在项目中工作'}
@@ -1212,27 +1354,7 @@ export function Composer({
                       gated — newly created project just joins the list,
                       user can switch to it in a fresh session. */}
                   <DropdownMenuItem
-                    onClick={async () => {
-                      if (creatingProject) return
-                      setCreatingProject(true)
-                      try {
-                        const folder = await pickFolder()
-                        if (!folder) return
-                        const name = folder.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
-                        const created = await createProject({ name, path: folder })
-                        if (!projectLocked) {
-                          setActiveProject(created.id)
-                          toast.success(`已添加并切换到项目：${created.name}`)
-                        } else {
-                          toast.success(`已添加项目：${created.name}（当前会话已锁定，请新建会话后切换）`)
-                        }
-                      } catch (e) {
-                        const msg = e instanceof Error ? e.message : String(e)
-                        toast.error(`新建项目失败：${msg}`)
-                      } finally {
-                        setCreatingProject(false)
-                      }
-                    }}
+                    onClick={() => void handleCreateProject()}
                     disabled={creatingProject}
                     className="gap-2 py-2"
                   >
@@ -1269,7 +1391,7 @@ export function Composer({
                     type="button"
                     disabled={providersLoading || switchingProvider || isStreaming}
                     className={cn(
-                      'inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      'hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
                     )}
                     title="Choose model"
@@ -1370,7 +1492,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title="思考强度"
@@ -1405,7 +1527,7 @@ export function Composer({
                     type="button"
                     disabled={permissionLoading}
                     className={cn(
-                      'inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       permissionLoading && 'cursor-not-allowed opacity-60',
                     )}
                     title="Permission mode"

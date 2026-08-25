@@ -31,9 +31,11 @@ import { Separator } from '@/components/ui/separator'
 import { useProjectsStore } from '@/store/projects'
 import { useSessionStore } from '@/store/session'
 import { useToast } from '@/components/ui/toast'
-import { pickFolder } from '@/api/tauriBridge'
+import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/api/types'
+
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
 export function ProjectsPanel() {
   const projects = useProjectsStore((s) => s.projects)
@@ -73,10 +75,12 @@ export function ProjectsPanel() {
     if (adding) return
     setAdding(true)
     try {
-      const folder = await pickFolder()
-      if (!folder) return
-      const name = folder.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
-      const created = await create({ name, path: folder })
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
+      const selected = await pickProjectFolder()
+      if (!selected) return
+      const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
+      const created = await create({ name, path: selected.path, source_uri: selected.sourceUri })
       toast.success(`已添加项目：${created.name}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -135,6 +139,7 @@ export function ProjectsPanel() {
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           项目是磁盘上的一个文件夹。注册后，AI 在该文件夹内执行 read / write / bash
           等操作时不需要再拼绝对路径。移除项目只删除注册表条目，不会动磁盘上的文件夹。
+          {IS_ANDROID && ' Android 会在应用私有工作区建立镜像，任务结束后同步回你授权的文件夹。'}
         </p>
         {projectLocked && (
           <p className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
@@ -372,7 +377,10 @@ export function ProjectsPanel() {
 
       <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-        项目数据存储在 <code className="rounded bg-muted px-1 py-0.5 text-[10px]">~/.hakus/projects.json</code>，
+        项目注册表存储在{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
+          {IS_ANDROID ? 'Android 应用私有 workspace/projects.json' : '~/.hakus/projects.json'}
+        </code>，
         可手动备份或迁移。
       </p>
     </div>

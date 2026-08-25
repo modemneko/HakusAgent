@@ -1418,6 +1418,7 @@ dependencies = [
 name = "desktop-tauri"
 version = "0.3.0"
 dependencies = [
+ "hakus-folder-picker",
  "hakus-tui",
  "reqwest 0.12.28",
  "serde",
@@ -2516,6 +2517,16 @@ dependencies = [
  "anyhow",
  "hakus-protocol",
  "serde",
+]
+
+[[package]]
+name = "hakus-folder-picker"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

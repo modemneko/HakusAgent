@@ -17,7 +17,7 @@ use axum::middleware;
 use axum::response::Html;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use hakus_protocol::agent_mail::{
@@ -83,6 +83,7 @@ use hakus_protocol::fleet::{
 };
 
 mod auth;
+mod projects;
 mod sessions;
 mod web;
 mod workspace;
@@ -1003,6 +1004,14 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             post(resume_session_thread),
         )
         .route("/v1/workspace/status", get(workspace_status))
+        .route(
+            "/v1/projects",
+            get(projects::list_projects).post(projects::create_project),
+        )
+        .route(
+            "/v1/projects/{id}",
+            patch(projects::update_project).delete(projects::delete_project),
+        )
         .route("/v1/agent-runs", get(list_agent_runs))
         .route("/v1/agent-runs/{run_id}", get(get_agent_run))
         .route(
