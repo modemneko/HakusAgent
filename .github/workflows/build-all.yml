@@ -205,8 +205,18 @@ jobs:
   # Android is a network client. It packages the React UI and connects to a
   # separately running HakusAI HTTP server configured in the app settings.
   android:
-    name: android-apk-arm64
+    name: android-apk-${{ matrix.asset }}
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: arm64
+            rust-target: aarch64-linux-android
+            tauri-target: aarch64
+          - asset: x86_64
+            rust-target: x86_64-linux-android
+            tauri-target: x86_64
     steps:
       - uses: actions/checkout@v5
 
@@ -227,7 +237,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: ${{ matrix.rust-target }}
 
       - uses: actions/setup-node@v5
         with:
@@ -267,10 +277,92 @@ jobs:
           BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_android: >-
             --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
             --target=aarch64-linux-android26
-        run: npx tauri android build --ci --apk --target aarch64
+          BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android: >-
+            --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+            --target=x86_64-linux-android26
+          BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_android: >-
+            --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+            --target=x86_64-linux-android26
+        run: npx tauri android build --ci --apk --split-per-abi --target ${{ matrix.tauri-target }}
+
+      - name: Prepare Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/hakusai-release.keystore"
+
+          if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+            : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is required when using a release keystore}"
+            : "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS is required when using a release keystore}"
+            : "${ANDROID_KEY_PASSWORD:?ANDROID_KEY_PASSWORD is required when using a release keystore}"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            signing_password="$ANDROID_KEYSTORE_PASSWORD"
+            key_alias="$ANDROID_KEY_ALIAS"
+            key_password="$ANDROID_KEY_PASSWORD"
+          else
+            echo "::warning::Android signing secrets are not configured; using a temporary CI signing key. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD for upgradeable release APKs."
+            key_alias="hakusai-ci"
+            signing_password="android"
+            key_password="android"
+            keytool -genkeypair -v \
+              -keystore "$keystore" \
+              -storepass "$signing_password" \
+              -alias "$key_alias" \
+              -keypass "$key_password" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=HakusAI CI, OU=Android, O=HakusAI, C=CN"
+          fi
+
+          {
+            echo "ANDROID_KEYSTORE_PATH=$keystore"
+            echo "ANDROID_SIGNING_PASSWORD=$signing_password"
+            echo "ANDROID_KEY_ALIAS=$key_alias"
+            echo "ANDROID_KEY_PASSWORD=$key_password"
+          } >> "$GITHUB_ENV"
+
+      - name: Align and sign Android APK
+        working-directory: HakusAgent/frontend/desktop-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_root="src-tauri/gen/android/app/build/outputs/apk"
+          signed_dir="$apk_root/signed"
+          build_tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p "$signed_dir"
+
+          mapfile -t unsigned_apks < <(find "$apk_root" -type f -name '*-unsigned.apk' -print)
+          if [[ "${#unsigned_apks[@]}" -eq 0 ]]; then
+            echo "No unsigned release APK was produced under $apk_root"
+            find "$apk_root" -type f -name '*.apk' -print || true
+            exit 1
+          fi
+
+          for unsigned_apk in "${unsigned_apks[@]}"; do
+            filename="$(basename "$unsigned_apk")"
+            base="${filename%-unsigned.apk}"
+            aligned_apk="$RUNNER_TEMP/${base}-aligned.apk"
+            signed_apk="$signed_dir/${base}-signed.apk"
+
+            "$build_tools/zipalign" -f -p 4 "$unsigned_apk" "$aligned_apk"
+            "$build_tools/apksigner" sign \
+              --ks "$ANDROID_KEYSTORE_PATH" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass "pass:$ANDROID_SIGNING_PASSWORD" \
+              --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+              --out "$signed_apk" \
+              "$aligned_apk"
+            "$build_tools/apksigner" verify --verbose "$signed_apk"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hakusai-android-arm64-apk
-          path: HakusAgent/frontend/desktop-tauri/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: hakusai-android-${{ matrix.asset }}-apk
+          path: HakusAgent/frontend/desktop-tauri/src-tauri/gen/android/app/build/outputs/apk/signed/*.apk
           if-no-files-found: error
