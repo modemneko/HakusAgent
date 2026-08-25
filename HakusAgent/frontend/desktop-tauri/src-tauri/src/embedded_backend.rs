@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 pub const EMBEDDED_BACKEND_PORT: u16 = 48081;
 
 pub struct EmbeddedBackendState {
-    task: Mutex<Option<tauri::async_runtime::TokioJoinHandle<()>>>,
+    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl EmbeddedBackendState {
