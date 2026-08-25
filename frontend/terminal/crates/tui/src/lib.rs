@@ -168,6 +168,36 @@ use crate::models::{ContentBlock, Message, MessageRequest, SystemPrompt};
 use crate::session_manager::{SessionManager, create_saved_session, truncate_id};
 use crate::tui::history::{summarize_tool_args, summarize_tool_output};
 
+/// Start the Runtime API inside an embedding application such as the Android
+/// Tauri client.
+///
+/// The caller owns the process lifecycle and must set `HAKUS_HOME` before
+/// calling this function. Keeping configuration and plugin discovery here
+/// makes the embedded path use the same runtime as `hakuscli app-server`
+/// without exposing the TUI's internal configuration types to consumers.
+pub async fn run_embedded_runtime_api(workspace: PathBuf, host: String, port: u16) -> Result<()> {
+    let config = Config::load(None, None)?;
+    let plugin_discovery = crate::plugins::PluginDiscoveryContext::capture_pre_dotenv();
+
+    runtime_api::run_http_server(
+        config,
+        workspace,
+        plugin_discovery,
+        runtime_api::RuntimeApiOptions {
+            host,
+            port,
+            workers: 2,
+            cors_origins: vec![
+                "http://tauri.localhost".to_string(),
+                "https://tauri.localhost".to_string(),
+            ],
+            insecure_no_auth: true,
+            ..runtime_api::RuntimeApiOptions::default()
+        },
+    )
+    .await
+}
+
 #[cfg(windows)]
 fn configure_windows_console_utf8() {
     use windows::Win32::System::Console::{SetConsoleCP, SetConsoleOutputCP};

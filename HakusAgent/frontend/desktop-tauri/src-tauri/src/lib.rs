@@ -1,5 +1,7 @@
 #[cfg(not(target_os = "android"))]
 mod backend;
+#[cfg(target_os = "android")]
+mod embedded_backend;
 #[cfg(not(target_os = "android"))]
 mod shortcut_cmds;
 mod store_cmds;
@@ -18,6 +20,9 @@ use tauri::{
 };
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_store::StoreExt;
+
+#[cfg(target_os = "android")]
+use tauri::{Manager, RunEvent};
 
 /// Read (trayEnabled, minimizeToTray) from the persisted settings store.
 /// Defaults to (true, false) when the store is unavailable or keys missing.
@@ -190,9 +195,14 @@ pub fn run() {
 
     #[cfg(target_os = "android")]
     {
-        // Android is a network client. It must never try to spawn the
-        // desktop Python backend or expose desktop lifecycle controls.
-        builder = builder.setup(|_| Ok(()));
+        // Android has no bundled Python interpreter. Start the shared Rust
+        // Runtime API in-process and keep all state under app_data_dir().
+        builder = builder.setup(|app| {
+            let state = embedded_backend::EmbeddedBackendState::start(app.handle())
+                .map_err(std::io::Error::other)?;
+            app.manage(state);
+            Ok(())
+        });
     }
 
     #[cfg(not(target_os = "android"))]
@@ -257,5 +267,11 @@ pub fn run() {
     });
 
     #[cfg(target_os = "android")]
-    app.run(|_, _| {});
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::Exit) {
+            if let Some(state) = app_handle.try_state::<embedded_backend::EmbeddedBackendState>() {
+                state.stop();
+            }
+        }
+    });
 }

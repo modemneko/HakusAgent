@@ -147,9 +147,9 @@ function App() {
     return () => clearTimeout(t)
   }, [IS_TAURI, showSplash, tryDismissSplash])
 
-  // Android has no bundled Python process. Load the local settings store and
-  // probe a previously configured remote server; first launch opens the
-  // connection panel so the user is not left waiting on 127.0.0.1.
+  // Android starts the Rust Runtime API in-process. Keep the loopback default
+  // pointed at that local service, while still allowing a user-configured LAN
+  // URL to act as a remote server.
   useEffect(() => {
     if (!IS_ANDROID) return
     let cancelled = false
@@ -158,11 +158,11 @@ function App() {
       if (cancelled) return
       const url = useSettingsStore.getState().connection.serverUrl
       const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:\d+)?\/?$/i.test(url)
-      if (!isLoopback) {
-        void useConnectionStore.getState().check(url)
-      } else {
-        setSettingsOpen(true)
+      for (let attempt = 0; attempt < (isLoopback ? 20 : 1) && !cancelled; attempt += 1) {
+        if (await useConnectionStore.getState().check(url)) return
+        if (isLoopback) await new Promise((resolve) => setTimeout(resolve, 300))
       }
+      if (!isLoopback && !cancelled) setSettingsOpen(true)
     })()
     return () => { cancelled = true }
   }, [loadSettings, setSettingsOpen])

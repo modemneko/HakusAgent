@@ -66,6 +66,7 @@ import type {
   SessionLogEvent,
   SessionLogStats,
 } from './types'
+import { EXPECTED_BACKEND_API_VERSION_INT } from './types'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
 
@@ -133,6 +134,53 @@ export class HakusAIClient {
   constructor(baseUrl: string = 'http://127.0.0.1:48081', timeout = 30000) {
     this.setBaseUrl(baseUrl)
     this.timeout = timeout
+  }
+
+  /** Android embeds the Rust Runtime API; desktop keeps the Python REST API. */
+  private get usesEmbeddedRuntime(): boolean {
+    return typeof __TAURI_INTERNALS__ !== 'undefined' && /Android/i.test(navigator.userAgent)
+  }
+
+  private async runtimeFetch(path: string, init: RequestInit = {}, timeoutMs = 12000): Promise<Response> {
+    if (timeoutMs === 0) return fetch(`${this.baseUrl}/v1${path}`, init)
+    return this.fetchWithHardTimeout(`${this.baseUrl}/v1${path}`, init, timeoutMs)
+  }
+
+  private runtimeSession(thread: any): ServerSession {
+    const toMillis = (value: unknown) => {
+      if (typeof value === 'number') return value
+      const parsed = Date.parse(String(value || ''))
+      return Number.isFinite(parsed) ? parsed : Date.now()
+    }
+    return {
+      id: String(thread.id),
+      title: String(thread.title || 'New Chat'),
+      remote_session_id: null,
+      provider: thread.model_provider || null,
+      pinned: false,
+      created_at: toMillis(thread.created_at),
+      updated_at: toMillis(thread.updated_at),
+    }
+  }
+
+  private runtimeMessage(sessionId: string, item: any): ServerMessage | null {
+    const kind = String(item?.kind || '')
+    if (kind !== 'user_message' && kind !== 'agent_message') return null
+    const timestamp = Date.parse(String(item.ended_at || item.started_at || ''))
+    return {
+      id: String(item.id),
+      session_id: sessionId,
+      role: kind === 'user_message' ? 'user' : 'assistant',
+      content: String(item.detail || item.summary || ''),
+      reasoning: null,
+      tool_calls: [],
+      input_tokens: null,
+      output_tokens: null,
+      error: null,
+      streaming: false,
+      created_at: Number.isFinite(timestamp) ? timestamp : Date.now(),
+      updated_at: Number.isFinite(timestamp) ? timestamp : Date.now(),
+    }
   }
 
   setBaseUrl(url: string) {
@@ -240,7 +288,16 @@ export class HakusAIClient {
   async health(): Promise<HealthResponse> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/health`, {}, 8000)
     if (!res.ok) throw new HakusAIError(`Health check failed: ${res.status}`)
-    return res.json()
+    const health = await res.json()
+    if (this.usesEmbeddedRuntime) {
+      return {
+        status: health.status || 'ok',
+        version: 'rust-runtime',
+        model_loaded: true,
+        agent_ready: true,
+      }
+    }
+    return health
   }
 
   /**
@@ -250,6 +307,14 @@ export class HakusAIClient {
    * 调用方应该把 null 视为"版本未知"，不阻塞 UI 启动。
    */
   async getBackendVersion(): Promise<BackendVersionInfo | null> {
+    if (this.usesEmbeddedRuntime) {
+      return {
+        backend_api_version: 'runtime-api',
+        backend_api_version_int: EXPECTED_BACKEND_API_VERSION_INT,
+        server_version: 'hakus-tui',
+        endpoints: ['/v1/threads', '/v1/stream', '/v1/user-input'],
+      }
+    }
     try {
       const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/version`, {}, 5000)
       if (!res.ok) return null
@@ -260,12 +325,37 @@ export class HakusAIClient {
   }
 
   async getConfig(): Promise<AppConfig> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/config')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Get config failed')
+      const config = await res.json()
+      return {
+        version: 'runtime-api',
+        character: { name: 'HakusAI', personality: '' },
+        model: {
+          provider: String(config.provider || 'deepseek'),
+          model_name: String(config.model || config.default_model || 'auto'),
+        },
+        voice: { enabled: false, asr_provider: '', tts_provider: '' },
+        avatar: { enabled: false, type: 'none', name: 'HakusAI' },
+      }
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config`, 'Get config failed')
     return res.json()
   }
 
   async getCharacter(): Promise<CharacterInfo> {
+    if (this.usesEmbeddedRuntime) {
+      return {
+        name: 'HakusAI',
+        nickname: 'HakusAI',
+        personality: '',
+        scenario: '',
+        first_message: '',
+        avatar_type: 'none',
+      }
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/character`, 'Get character failed')
     return res.json()
@@ -285,12 +375,46 @@ export class HakusAIClient {
   // ============ Provider / Model 配置 ============
 
   async getProviders(): Promise<ProvidersResponse> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/providers')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers`, 'Get providers failed')
+      const data = await res.json()
+      return {
+        default_model: String(data.current || 'deepseek'),
+        providers: (data.providers || []).map((provider: any) => ({
+          id: String(provider.id),
+          display_name: String(provider.display_name || provider.id),
+          has_url: true,
+          has_api_key: false,
+          masked_api_key: '',
+          model_name: String(provider.default_model || ''),
+          base_url: String(provider.default_base_url || ''),
+          is_default: provider.id === data.current,
+        })),
+      }
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config/providers`, 'Get providers failed')
     return res.json()
   }
 
   async updateProvider(body: UpdateProviderBody): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const updates: Array<{ key: string; value: string }> = []
+      if (body.provider) updates.push({ key: 'provider', value: body.provider })
+      if (body.model_name) updates.push({ key: 'model', value: body.model_name })
+      if (body.base_url) updates.push({ key: 'provider_base_url', value: body.base_url })
+      for (const update of updates) {
+        const res = await this.runtimeFetch('/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...update, persist: true }),
+        })
+        if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Update Runtime provider failed')
+      }
+      if (updates.length) await this.reloadConfig()
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -302,6 +426,16 @@ export class HakusAIClient {
   }
 
   async setDefaultModel(provider: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'provider', value: provider, persist: true }),
+      })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Set Runtime provider failed')
+      await this.reloadConfig()
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/default-model`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -649,6 +783,11 @@ export class HakusAIClient {
   // ============ 配置导出/导入 / 重载 ============
 
   async reloadConfig(): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/config/reload', { method: 'POST' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config/reload`, 'Reload Runtime config failed')
+      return
+    }
     await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/reload`, { method: 'POST' }, 10000)
   }
 
@@ -811,6 +950,10 @@ export class HakusAIClient {
     reasoningEffort?: 'low' | 'high' | 'max',
     projectId?: string,
   ): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, provider, runMode)
+      return
+    }
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
       method: 'POST',
       headers: {
@@ -871,6 +1014,139 @@ export class HakusAIClient {
     }
   }
 
+  /** Start a turn on the existing Runtime thread and consume its replayable SSE stream. */
+  private async chatStreamEmbedded(
+    message: string,
+    threadId: string,
+    onChunk: StreamHandler,
+    signal?: AbortSignal,
+    provider?: string,
+    runMode?: AgentMode,
+  ): Promise<void> {
+    const start = await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}/turns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: message,
+        ...(provider ? { model: provider } : {}),
+        ...(runMode ? { mode: runMode } : {}),
+      }),
+      signal,
+    })
+    if (!start.ok) {
+      await this._throwForResponse(start, `${this.baseUrl}/v1/threads/${threadId}/turns`, 'Start Runtime turn failed')
+    }
+    const started = await start.json()
+    const turnId = started?.turn?.id
+    if (!turnId) throw new HakusAIError('Runtime did not return a turn id')
+
+    const res = await this.runtimeFetch(
+      `/threads/${encodeURIComponent(threadId)}/events?since_seq=0`,
+      { headers: { Accept: 'text/event-stream' }, signal },
+      0,
+    )
+    if (!res.ok || !res.body) {
+      throw new HakusAIError(`Runtime event stream failed: ${res.status} ${await res.text()}`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let eventName = ''
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim()
+            continue
+          }
+          if (!line.startsWith('data:')) continue
+          const envelope = JSON.parse(line.slice(5).trim())
+          if (envelope.turn_id && envelope.turn_id !== turnId) continue
+          const event = this.runtimeEventToAgentEvent(eventName || envelope.event, envelope.payload || envelope)
+          if (event) onChunk(this.eventToChunk(event), event)
+          if (eventName === 'turn.completed') {
+            onChunk({ done: true })
+            return
+          }
+          if (eventName === 'turn.failed' || eventName === 'turn.canceled' || eventName === 'turn.interrupted') {
+            return
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  private runtimeEventToAgentEvent(name: string, payload: any): AgentEvent | null {
+    switch (name) {
+      case 'item.delta':
+        if (payload.kind === 'agent_message') return { event_type: 'text_delta', text: String(payload.delta || '') }
+        if (payload.kind === 'agent_reasoning') return { event_type: 'reasoning_delta', text: String(payload.delta || '') }
+        return null
+      case 'item.started': {
+        const tool = payload.tool || payload
+        return {
+          event_type: 'tool_call_started',
+          call_id: String(tool.id || tool.call_id || ''),
+          name: String(tool.name || ''),
+          arguments: tool.input || tool.arguments || {},
+        }
+      }
+      case 'item.completed':
+      case 'item.failed': {
+        const item = payload.item || payload
+        if (item.kind !== 'tool_call' && item.kind !== 'command_execution' && item.kind !== 'file_change') return null
+        return {
+          event_type: 'tool_call_finished',
+          call_id: String(item.id || ''),
+          name: String(item.name || item.summary || ''),
+          result: String(item.detail || item.summary || ''),
+          success: name === 'item.completed',
+          duration: 0,
+          arguments: item.input || {},
+        }
+      }
+      case 'user_input.required': {
+        const request = payload.request || {}
+        const question = request.questions?.[0]
+        if (!question) return null
+        return {
+          event_type: 'question_asked',
+          question_id: String(payload.input_id || payload.id || question.id),
+          question: String(question.question || ''),
+          options: (question.options || []).map((option: any) => String(option.label || option)),
+          allow_free_text: Boolean(question.allow_free_text),
+        }
+      }
+      case 'user_input.answered':
+        return { event_type: 'question_answered', question_id: String(payload.input_id || payload.id || ''), choice: String(payload.choice || '') }
+      case 'turn.completed': {
+        const usage = payload.usage || payload.turn?.usage || {}
+        return {
+          event_type: 'turn_completed',
+          content: '',
+          tool_calls: [],
+          iterations: 0,
+          total_time: 0,
+          input_tokens: Number(usage.input_tokens || 0),
+          output_tokens: Number(usage.output_tokens || 0),
+          compressed: false,
+        }
+      }
+      case 'turn.failed':
+        return { event_type: 'turn_failed', code: 'RUNTIME_ERROR', error: String(payload.error || payload.message || 'Runtime turn failed') }
+      default:
+        return null
+    }
+  }
+
   /**
    * 把 AgentEvent 转换为简单的 ChatStreamChunk,
    * 这样上层 UI 可以同时处理两种格式.
@@ -902,6 +1178,15 @@ export class HakusAIClient {
   // ============ Interactive question (ask_user tool) ============
 
   async answerQuestion(sessionId: string, questionId: string, choice: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch(`/user-input/${encodeURIComponent(sessionId)}/${encodeURIComponent(questionId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers: [{ id: questionId, label: choice, value: choice }] }),
+      })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/user-input/${sessionId}/${questionId}`, 'Answer Runtime question failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/question/answer`,
       {
@@ -1112,6 +1397,12 @@ export class HakusAIClient {
 
   /** List all sessions (no messages), newest first. */
   async listSessions(): Promise<ServerSession[]> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/threads/summary?limit=500')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/threads/summary`, 'List Runtime threads failed')
+      const threads = await res.json()
+      return (threads || []).map((thread: any) => this.runtimeSession(thread))
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions`, 'List sessions failed')
     const data = await res.json()
@@ -1120,6 +1411,18 @@ export class HakusAIClient {
 
   /** Get one session with all its messages. */
   async getSession(sessionId: string): Promise<ServerSession & { messages: ServerMessage[] }> {
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/threads/${encodeURIComponent(sessionId)}`
+      const res = await this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`)
+      if (!res.ok) await this._throwForResponse(res, url, 'Get Runtime thread failed')
+      const detail = await res.json()
+      return {
+        ...this.runtimeSession(detail.thread),
+        messages: (detail.items || [])
+          .map((item: any) => this.runtimeMessage(sessionId, item))
+          .filter((item: ServerMessage | null): item is ServerMessage => item !== null),
+      }
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
     const res = await this.fetchWithHardTimeout(url, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Get session failed')
@@ -1128,6 +1431,24 @@ export class HakusAIClient {
 
   /** Create a new session. */
   async createSession(body: SessionCreateBody): Promise<ServerSession> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: body.title || 'New Chat',
+          mode: 'agent',
+          archived: false,
+        }),
+      })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/threads`, 'Create Runtime thread failed')
+      const runtimeSession = this.runtimeSession(await res.json())
+      return {
+        ...runtimeSession,
+        id: body.id,
+        remote_session_id: runtimeSession.id,
+      }
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1139,6 +1460,19 @@ export class HakusAIClient {
 
   /** Patch a session's title / pinned / provider / remote_session_id. */
   async updateSession(sessionId: string, body: SessionUpdateBody): Promise<ServerSession> {
+    if (this.usesEmbeddedRuntime) {
+      if (body.title === undefined) return (await this.getSession(sessionId))
+      const url = `${this.baseUrl}/v1/threads/${encodeURIComponent(sessionId)}`
+      const res = await this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(body.title !== undefined ? { title: body.title } : {}),
+        }),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Update Runtime thread failed')
+      return this.runtimeSession(await res.json())
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
     const res = await this.fetchWithHardTimeout(url, {
       method: 'PATCH',
@@ -1151,6 +1485,16 @@ export class HakusAIClient {
 
   /** Delete a session + cascade its messages. */
   async deleteSession(sessionId: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/threads/${encodeURIComponent(sessionId)}`
+      const res = await this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Delete Runtime thread failed')
+      return
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Delete session failed')
@@ -1158,6 +1502,24 @@ export class HakusAIClient {
 
   /** Add a message (user msg, or assistant placeholder before stream starts). */
   async addMessage(sessionId: string, body: MessageCreateBody): Promise<ServerMessage> {
+    if (this.usesEmbeddedRuntime) {
+      // Runtime threads durably record user and assistant items as part of a
+      // turn. The UI still calls this for its optimistic local transcript.
+      return {
+        id: body.id,
+        session_id: sessionId,
+        role: body.role || 'user',
+        content: body.content || '',
+        reasoning: body.reasoning || null,
+        tool_calls: body.tool_calls || [],
+        input_tokens: body.input_tokens ?? null,
+        output_tokens: body.output_tokens ?? null,
+        error: body.error ?? null,
+        streaming: body.streaming ?? false,
+        created_at: body.created_at || Date.now(),
+        updated_at: body.updated_at || Date.now(),
+      }
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages`
     const res = await this.fetchWithHardTimeout(url, {
       method: 'POST',
@@ -1170,6 +1532,22 @@ export class HakusAIClient {
 
   /** Patch a message (used at stream end to write the final content). */
   async updateMessage(sessionId: string, messageId: string, body: MessageUpdateBody): Promise<ServerMessage> {
+    if (this.usesEmbeddedRuntime) {
+      return {
+        id: messageId,
+        session_id: sessionId,
+        role: 'assistant',
+        content: body.content || '',
+        reasoning: body.reasoning || null,
+        tool_calls: body.tool_calls || [],
+        input_tokens: body.input_tokens ?? null,
+        output_tokens: body.output_tokens ?? null,
+        error: body.error ?? null,
+        streaming: body.streaming ?? false,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      }
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
     const res = await this.fetchWithHardTimeout(url, {
       method: 'PATCH',

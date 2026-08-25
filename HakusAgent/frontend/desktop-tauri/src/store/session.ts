@@ -193,12 +193,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
     // Persist to server
     try {
-      await apiClient.createSession({
+      const persisted = await apiClient.createSession({
         id,
         title: session.title,
         created_at: now,
         updated_at: now,
       })
+      // Android creates a Rust Runtime thread with its own durable ID. Keep
+      // the local optimistic ID for the UI, but route turns to that thread.
+      if (persisted.remote_session_id) {
+        set({
+          sessions: get().sessions.map((item) =>
+            item.id === id ? { ...item, remote_session_id: persisted.remote_session_id } : item,
+          ),
+        })
+      }
     } catch (e) {
       console.error('[session] createSession persist failed:', e)
       // Rollback optimistic update
@@ -224,7 +233,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
     set({ sessions, messages, activeSessionId })
     try {
-      await apiClient.deleteSession(id)
+      const remoteId = prev.find((session) => session.id === id)?.remote_session_id || id
+      await apiClient.deleteSession(remoteId)
     } catch (e) {
       // Rollback
       set({ sessions: prev, messages: prevMessages, activeSessionId: get().activeSessionId })
@@ -240,7 +250,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       ),
     })
     try {
-      await apiClient.updateSession(id, { title })
+      const remoteId = prev.find((session) => session.id === id)?.remote_session_id || id
+      await apiClient.updateSession(remoteId, { title })
     } catch (e) {
       set({ sessions: prev })
       throw e
@@ -261,7 +272,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: prev.map((s) => (s.id === id ? { ...s, pinned } : s)),
     })
     try {
-      await apiClient.updateSession(id, { pinned })
+      const remoteId = prev.find((session) => session.id === id)?.remote_session_id || id
+      await apiClient.updateSession(remoteId, { pinned })
     } catch (e) {
       set({ sessions: prev })
       throw e
@@ -271,12 +283,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   hydrateSession: async (id) => {
     if (get().hydratedSessionIds.has(id)) return
     try {
-      const data = await apiClient.getSession(id)
+      const remoteId = get().sessions.find((session) => session.id === id)?.remote_session_id || id
+      const data = await apiClient.getSession(remoteId)
       // Map ServerMessage -> ChatMessage (fields match closely)
       const msgs: ChatMessage[] = (data.messages || []).map((m) => {
         const msg: ChatMessage = {
           id: m.id,
-          session_id: m.session_id,
+          session_id: id,
           role: m.role as ChatMessage['role'],
           content: m.content,
           reasoning: m.reasoning || undefined,
