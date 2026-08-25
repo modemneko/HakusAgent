@@ -259,7 +259,6 @@ class FolderPickerPlugin(private val activity: Activity) : Plugin(activity) {
       "application/octet-stream",
       name,
     )
-  }
 
   private fun safeName(name: String?): String {
     val cleaned = (name ?: "unnamed").replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
