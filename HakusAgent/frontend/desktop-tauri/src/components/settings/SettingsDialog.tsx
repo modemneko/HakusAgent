@@ -105,7 +105,8 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const [active, setActive] = useState<CategoryId>('model')
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+  const [active, setActive] = useState<CategoryId>(isAndroid ? 'connection' : 'model')
   const activeCat = CATEGORIES.find((c) => c.id === active) || CATEGORIES[0]
   const ActiveIcon = activeCat.icon
 

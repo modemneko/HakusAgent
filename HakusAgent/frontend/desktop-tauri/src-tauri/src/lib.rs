@@ -1,19 +1,27 @@
+#[cfg(not(target_os = "android"))]
 mod backend;
-mod store_cmds;
-mod window_cmds;
-mod tray_cmds;
+#[cfg(not(target_os = "android"))]
 mod shortcut_cmds;
+mod store_cmds;
+#[cfg(not(target_os = "android"))]
+mod tray_cmds;
+#[cfg(not(target_os = "android"))]
+mod window_cmds;
 
+#[cfg(not(target_os = "android"))]
 use backend::BackendState;
+#[cfg(not(target_os = "android"))]
 use tauri::{
-    Manager, WindowEvent, RunEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    Manager, RunEvent, WindowEvent,
 };
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_store::StoreExt;
 
 /// Read (trayEnabled, minimizeToTray) from the persisted settings store.
 /// Defaults to (true, false) when the store is unavailable or keys missing.
+#[cfg(not(target_os = "android"))]
 fn read_tray_settings(app: &tauri::AppHandle) -> (bool, bool) {
     let store = match app.store("settings.json") {
         Ok(s) => s,
@@ -33,6 +41,7 @@ fn read_tray_settings(app: &tauri::AppHandle) -> (bool, bool) {
 /// Kill the spawned Python backend child process if it is still running.
 /// Called from every exit path (close button, tray quit, Alt+F4, process kill)
 /// so the backend doesn't linger as an orphan after the UI disappears.
+#[cfg(not(target_os = "android"))]
 fn kill_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<BackendState>() {
         state.kill_child();
@@ -42,6 +51,7 @@ fn kill_backend(app: &tauri::AppHandle) {
 /// Toggle the main window's visibility — used by tray left-click and the
 /// "显示/隐藏窗口" context menu item. If the window is visible, hide it;
 /// if hidden, show + focus it.
+#[cfg(not(target_os = "android"))]
 fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
@@ -55,6 +65,7 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 
 /// Build (or reconfigure) the system tray icon with a context menu and
 /// click handler. Idempotent — safe to call multiple times.
+#[cfg(not(target_os = "android"))]
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Retrieve the tray icon auto-created from tauri.conf.json's `trayIcon`
     // block (id defaults to "main" when not specified). If it isn't there
@@ -103,109 +114,127 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        // ── Plugins ─────────────────────────────────────────────
+    let mut builder = tauri::Builder::default()
+        // The store is also used by Android for the server URL and UI
+        // preferences. Desktop-only plugins are attached below.
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build());
 
-        // ── State ───────────────────────────────────────────────
-        .manage(BackendState::new())
-
-        // ── Setup: auto-start Python backend + tray ─────────────
-        .setup(|app| {
-            // spawn_backend() is non-blocking — it just calls shell.spawn()
-            // and kicks off an async log reader. No need for spawn_blocking.
-            match backend::spawn_backend(app.handle()) {
-                Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
-                Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
-            }
-
-            // Build the system tray icon + menu.
-            if let Err(e) = setup_tray(app.handle()) {
-                eprintln!("[setup] Tray setup failed: {e}");
-            }
-
-            Ok(())
-        })
-
-        // ── Window close interceptor ────────────────────────────
-        // If `trayEnabled && minimizeToTray`, hide the window instead of
-        // closing it so the app keeps running in the tray. Otherwise let the
-        // close go through and kill the backend child process so it doesn't
-        // orphan after the UI exits.
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                let app = window.app_handle();
-                let (tray_enabled, minimize_to_tray) = read_tray_settings(app);
-                if tray_enabled && minimize_to_tray {
-                    // Prevent the window from actually closing — hide it
-                    // instead so the app keeps running in the tray.
-                    api.prevent_close();
-                    let _ = window.hide();
-                    // Make sure the tray icon is visible (it might have been
-                    // hidden if the user previously disabled the tray and
-                    // just re-enabled it).
-                    if let Some(tray) = app.tray_by_id("main") {
-                        let _ = tray.set_visible(true);
-                    }
-                } else {
-                    // Actually closing — kill the backend so it doesn't
-                    // outlive the UI. The RunEvent::Exit handler below is
-                    // a backup, but killing here ensures the backend dies
-                    // even if some other window keeps the app alive.
-                    kill_backend(app);
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder
+            .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            .plugin(tauri_plugin_process::init())
+            .plugin(tauri_plugin_dialog::init())
+            .manage(BackendState::new())
+            // Desktop-only setup: start the bundled Python server and tray.
+            .setup(|app| {
+                // spawn_backend() is non-blocking — it just calls shell.spawn()
+                // and kicks off an async log reader. No need for spawn_blocking.
+                match backend::spawn_backend(app.handle()) {
+                    Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
+                    Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
                 }
-            }
-        })
 
-        // ── Global menu event handler ───────────────────────────
-        // Registering on the app (not the tray) catches menu events from
-        // any source — tray context menu, window menu, etc. This is more
-        // robust than tray.on_menu_event which can be silently overwritten.
-        .on_menu_event(|app, event| {
-            if event.id() == "tray_show" {
-                toggle_main_window(app);
-            } else if event.id() == "tray_quit" {
-                kill_backend(app);
-                app.exit(0);
-            }
-        })
+                // Build the system tray icon + menu.
+                if let Err(e) = setup_tray(app.handle()) {
+                    eprintln!("[setup] Tray setup failed: {e}");
+                }
 
-        // ── Commands (replacing 22 IPC channels) ────────────────
-        .invoke_handler(tauri::generate_handler![
-            // Backend
-            backend::backend_status,
-            backend::backend_logs,
-            backend::backend_start,
-            backend::backend_stop,
-            backend::backend_restart,
-            backend::backend_health,
-            // Store (was electron-store)
-            store_cmds::store_get,
-            store_cmds::store_set,
-            store_cmds::store_get_all,
-            // Window (was BrowserWindow IPC)
-            window_cmds::window_minimize,
-            window_cmds::window_toggle_maximize,
-            window_cmds::window_close,
-            window_cmds::window_is_maximized,
-            // Tray
-            tray_cmds::tray_get_config,
-            tray_cmds::tray_set_enabled,
-            tray_cmds::tray_set_minimize_to_tray,
-            // Shortcuts
-            shortcut_cmds::shortcuts_get_config,
-            shortcut_cmds::shortcuts_set_accelerator,
-            shortcut_cmds::shortcuts_validate,
-        ])
+                Ok(())
+            })
+            // ── Window close interceptor ────────────────────────────
+            // If `trayEnabled && minimizeToTray`, hide the window instead of
+            // closing it so the app keeps running in the tray. Otherwise let the
+            // close go through and kill the backend child process so it doesn't
+            // orphan after the UI exits.
+            .on_window_event(|window, event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let app = window.app_handle();
+                    let (tray_enabled, minimize_to_tray) = read_tray_settings(app);
+                    if tray_enabled && minimize_to_tray {
+                        // Prevent the window from actually closing — hide it
+                        // instead so the app keeps running in the tray.
+                        api.prevent_close();
+                        let _ = window.hide();
+                        // Make sure the tray icon is visible (it might have been
+                        // hidden if the user previously disabled the tray and
+                        // just re-enabled it).
+                        if let Some(tray) = app.tray_by_id("main") {
+                            let _ = tray.set_visible(true);
+                        }
+                    } else {
+                        // Actually closing — kill the backend so it doesn't
+                        // outlive the UI. The RunEvent::Exit handler below is
+                        // a backup, but killing here ensures the backend dies
+                        // even if some other window keeps the app alive.
+                        kill_backend(app);
+                    }
+                }
+            })
+            // ── Global menu event handler ───────────────────────────
+            // Registering on the app (not the tray) catches menu events from
+            // any source — tray context menu, window menu, etc. This is more
+            // robust than tray.on_menu_event which can be silently overwritten.
+            .on_menu_event(|app, event| {
+                if event.id() == "tray_show" {
+                    toggle_main_window(app);
+                } else if event.id() == "tray_quit" {
+                    kill_backend(app);
+                    app.exit(0);
+                }
+            });
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        // Android is a network client. It must never try to spawn the
+        // desktop Python backend or expose desktop lifecycle controls.
+        builder = builder.setup(|_| Ok(()));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        // Backend
+        backend::backend_status,
+        backend::backend_logs,
+        backend::backend_start,
+        backend::backend_stop,
+        backend::backend_restart,
+        backend::backend_health,
+        // Store (was electron-store)
+        store_cmds::store_get,
+        store_cmds::store_set,
+        store_cmds::store_get_all,
+        // Window (was BrowserWindow IPC)
+        window_cmds::window_minimize,
+        window_cmds::window_toggle_maximize,
+        window_cmds::window_close,
+        window_cmds::window_is_maximized,
+        // Tray
+        tray_cmds::tray_get_config,
+        tray_cmds::tray_set_enabled,
+        tray_cmds::tray_set_minimize_to_tray,
+        // Shortcuts
+        shortcut_cmds::shortcuts_get_config,
+        shortcut_cmds::shortcuts_set_accelerator,
+        shortcut_cmds::shortcuts_validate,
+    ]);
+
+    #[cfg(target_os = "android")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        store_cmds::store_get,
+        store_cmds::store_set,
+        store_cmds::store_get_all,
+    ]);
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
+    #[cfg(not(target_os = "android"))]
     // Run loop — handle Exit / ExitRequested to clean up the backend child
     // process for any exit path we didn't catch in on_window_event (e.g.
     // process kill, panic, Alt+F4 when minimizeToTray is on but tray is
@@ -226,4 +255,7 @@ pub fn run() {
             _ => {}
         }
     });
+
+    #[cfg(target_os = "android")]
+    app.run(|_, _| {});
 }

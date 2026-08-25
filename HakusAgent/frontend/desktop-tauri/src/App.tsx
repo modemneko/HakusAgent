@@ -18,13 +18,14 @@ import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
+const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
 const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
 
 function App() {
   const mountedAt = useRef(Date.now())
-  const [showSplash, setShowSplash] = useState(IS_TAURI)
+  const [showSplash, setShowSplash] = useState(IS_TAURI && !IS_ANDROID)
   const [splashExiting, setSplashExiting] = useState(false)
-  const [appReady, setAppReady] = useState(!IS_TAURI)
+  const [appReady, setAppReady] = useState(!IS_TAURI || IS_ANDROID)
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
@@ -61,7 +62,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!IS_TAURI) return
+    if (!IS_TAURI || IS_ANDROID) return
 
     // 1. Listen for backend:port event
     let unlisten: (() => void) | undefined
@@ -127,7 +128,7 @@ function App() {
   // yet. The slow poll (every 2s, no give-up) will eventually connect,
   // and THEN the splash dismisses + data loads in the same tick.
   useEffect(() => {
-    if (!IS_TAURI) return
+    if (!IS_TAURI || IS_ANDROID) return
     if (connState === 'connected') {
       tryDismissSplash()
     }
@@ -139,12 +140,32 @@ function App() {
   // main UI with a "not connected" state and can open settings to debug.
   // 60s is generous — normal cold start is <15s even on slow Windows.
   useEffect(() => {
-    if (!IS_TAURI) return
+    if (!IS_TAURI || IS_ANDROID) return
     const t = setTimeout(() => {
       if (showSplash) tryDismissSplash()
     }, 60000)
     return () => clearTimeout(t)
   }, [IS_TAURI, showSplash, tryDismissSplash])
+
+  // Android has no bundled Python process. Load the local settings store and
+  // probe a previously configured remote server; first launch opens the
+  // connection panel so the user is not left waiting on 127.0.0.1.
+  useEffect(() => {
+    if (!IS_ANDROID) return
+    let cancelled = false
+    void (async () => {
+      await loadSettings()
+      if (cancelled) return
+      const url = useSettingsStore.getState().connection.serverUrl
+      const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:\d+)?\/?$/i.test(url)
+      if (!isLoopback) {
+        void useConnectionStore.getState().check(url)
+      } else {
+        setSettingsOpen(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [loadSettings, setSettingsOpen])
 
   // ── Initialize sessions AFTER backend is connected ─────────────────
   // Depends on both `appReady` (UI is visible) and `connState === 'connected'`
@@ -198,7 +219,8 @@ function App() {
 
   // ── Watch for server URL changes (settings panel) ──────────────────
   useEffect(() => {
-    if (serverUrl && appReady) {
+    const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:\d+)?\/?$/i.test(serverUrl)
+    if (serverUrl && appReady && (!IS_ANDROID || !isLoopback)) {
       useConnectionStore.getState().check(serverUrl)
     }
   }, [serverUrl, appReady])

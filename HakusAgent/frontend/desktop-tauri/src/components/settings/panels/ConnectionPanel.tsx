@@ -74,7 +74,8 @@ export function ConnectionPanel() {
           className="font-mono"
         />
         <p className="text-[11px] text-muted-foreground">
-          指向 HakusAI FastAPI 服务（<code>src/hakusai_server/</code>）。打包版默认指向内嵌 backend。
+          桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，
+          例如 <code>http://192.168.1.20:48081</code>。
         </p>
       </div>
 

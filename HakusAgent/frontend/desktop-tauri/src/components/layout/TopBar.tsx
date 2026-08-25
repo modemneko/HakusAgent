@@ -129,6 +129,8 @@ function WindowButtons() {
   )
 }
 
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
 export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: TopBarProps) {
   const activeId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
@@ -288,7 +290,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
           <TooltipContent>设置</TooltipContent>
         </Tooltip>
 
-        {!isMac && <WindowButtons />}
+        {!isMac && !IS_ANDROID && <WindowButtons />}
       </div>
     </header>
   )
