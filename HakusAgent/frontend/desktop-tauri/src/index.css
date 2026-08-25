@@ -49,32 +49,32 @@
     --card-foreground: 200 6% 11%;
     --popover: 150 6% 98%;
     --popover-foreground: 200 6% 11%;
-    --primary: 265 74% 68%;
+    --primary: 211 100% 50%;
     --primary-foreground: 0 0% 100%;
     --secondary: 210 16% 92%;
     --secondary-foreground: 200 6% 11%;
     --muted: 210 16% 92%;
     --muted-foreground: 220 9% 42%;
-    --accent: 270 48% 96%;
-    --accent-foreground: 265 48% 34%;
+    --accent: 211 100% 96%;
+    --accent-foreground: 211 84% 35%;
     --destructive: 3 85% 52%;
     --destructive-foreground: 0 0% 98%;
     --border: 220 14% 84%;
     --input: 220 14% 78%;
-    --ring: 265 74% 68%;
+    --ring: 211 100% 50%;
     --radius: 0.625rem;
 
     /* 语义色 */
     --success: 152 30% 38%;
     --warning: 41 30% 40%;
-    --info: 42 86% 52%;
+    --info: 205 70% 45%;
 
     /* Diff 语义色 */
     --diff-added: 137 38% 45%;
     --diff-removed: 4 64% 52%;
     --diff-added-bg: 137 38% 95%;
     --diff-removed-bg: 4 64% 96%;
-    --skill: 265 74% 68%;
+    --skill: 211 100% 50%;
 
     /* Layout tokens */
     --titlebar-height: 3rem;
@@ -107,24 +107,24 @@
     --card-foreground: 0 0% 96%;
     --popover: 240 4% 13%;
     --popover-foreground: 0 0% 96%;
-    --primary: 265 74% 74%;
+    --primary: 200 28% 60%;
     --primary-foreground: 0 0% 100%;
     --secondary: 220 12% 16%;
     --secondary-foreground: 0 0% 96%;
     --muted: 220 12% 16%;
     --muted-foreground: 220 8% 66%;
-    --accent: 270 24% 22%;
+    --accent: 220 14% 20%;
     --accent-foreground: 0 0% 96%;
     --destructive: 4 60% 58%;
     --destructive-foreground: 0 0% 98%;
     --border: 220 10% 28%;
     --input: 220 10% 34%;
-    --ring: 265 74% 74%;
+    --ring: 200 28% 60%;
 
     /* 语义色（暗色） */
-    --success: 162 42% 64%;
-    --warning: 39 74% 68%;
-    --info: 42 86% 68%;
+    --success: 152 25% 58%;
+    --warning: 41 30% 55%;
+    --info: 205 70% 60%;
 
     /* Diff 语义色（暗色） */
     --diff-added: 137 38% 58%;
@@ -352,8 +352,8 @@
     border-color: transparent;
     background:
       linear-gradient(hsl(var(--card) / .96), hsl(var(--card) / .96)) padding-box,
-      linear-gradient(115deg, hsl(265 74% 74%), hsl(315 52% 78%), hsl(265 74% 74%)) border-box;
-    box-shadow: 0 0 0 1px hsl(265 74% 68% / .28), 0 0 18px hsl(265 74% 55% / .24), 0 8px 28px hsl(270 40% 18% / .16);
+      linear-gradient(115deg, hsl(211 100% 70%), hsl(215 100% 78%), hsl(211 100% 70%)) border-box;
+    box-shadow: 0 0 0 1px hsl(211 100% 60% / .28), 0 0 18px hsl(211 100% 55% / .24), 0 8px 28px hsl(211 80% 50% / .16);
   }
 }
 
@@ -997,7 +997,7 @@
   @apply text-primary hover:underline;
 }
 .markdown-body blockquote {
-  @apply border-l border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
+  @apply border-l-4 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
   @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
@@ -1041,18 +1041,18 @@
 .hljs-symbol,
 .hljs-bullet,
 .hljs-addition {
-  color: #f1b7e7;
+  color: #a5d6ff;
 }
 .hljs-number,
 .hljs-meta {
-  color: #f4c96b;
+  color: #79c0ff;
 }
 .hljs-title,
 .hljs-section,
 .hljs-built_in,
 .hljs-title.class_,
 .hljs-class .hljs-title {
-  color: #c7a6f7;
+  color: #93c5fd;
 }
 .hljs-variable,
 .hljs-template-variable,
@@ -1096,15 +1096,153 @@
 /* Base palette overrides */
 @layer base {
   :root {
-    --primary: 265 74% 68%;
-    --ring: 265 74% 68%;
-    --accent: 270 48% 96%;
-    --accent-foreground: 265 48% 34%;
+    --primary: 211 100% 50%;
+    --ring: 211 100% 50%;
+    --accent: 211 100% 96%;
+    --accent-foreground: 211 84% 35%;
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
   }
   .dark {
-    --primary: 265 74% 74%;
-    --ring: 265 74% 74%;
-    --accent: 270 24% 22%;
+    --primary: 211 100% 60%;
+    --ring: 211 100% 60%;
+    --accent: 211 35% 22%;
+  }
+}
+
+/* ========================================================================
+ * iOS 26 phone surface
+ *
+ * Desktop keeps the incumbent macOS palette and density. The compact
+ * surface gets its own material layer: safe-area aware, translucent, and
+ * touch-first. This block intentionally stays below the phone breakpoint.
+ * ====================================================================== */
+@media (max-width: 767px) {
+  :root:not(.dark) {
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 221 100% 97%;
+    --accent-foreground: 221 83% 35%;
+    --ring: 221 83% 53%;
+    --border: 220 14% 82%;
+    --input: 220 14% 76%;
+  }
+
+  .dark {
+    --background: 240 10% 8%;
+    --foreground: 220 12% 97%;
+    --card: 240 8% 14%;
+    --card-foreground: 0 0% 97%;
+    --popover: 240 8% 16%;
+    --popover-foreground: 0 0% 97%;
+    --primary: 255 86% 77%;
+    --primary-foreground: 240 15% 10%;
+    --secondary: 240 8% 19%;
+    --secondary-foreground: 0 0% 97%;
+    --muted: 240 8% 19%;
+    --muted-foreground: 230 10% 73%;
+    --accent: 255 30% 24%;
+    --accent-foreground: 255 90% 94%;
+    --border: 230 14% 30%;
+    --input: 230 14% 38%;
+    --ring: 255 88% 78%;
+  }
+
+  .titlebar,
+  .sidebar-wrapper .sidebar,
+  .right-panel-wrapper .right-panel,
+  .composer-shell,
+  .settings-dialog-content {
+    background: hsl(var(--background) / 0.76);
+    -webkit-backdrop-filter: blur(28px) saturate(150%);
+    backdrop-filter: blur(28px) saturate(150%);
+  }
+
+  .titlebar {
+    border-bottom-color: hsl(var(--foreground) / 0.1);
+  }
+
+  .app-panel-scrim {
+    background: hsl(240 14% 5% / 0.42) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(120%);
+    backdrop-filter: blur(18px) saturate(120%);
+  }
+
+  .composer-shell {
+    padding-top: 0.625rem;
+  }
+
+  .composer-box {
+    border-color: hsl(var(--foreground) / 0.14);
+    background: hsl(var(--card) / 0.7);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+    backdrop-filter: blur(24px) saturate(145%);
+    box-shadow: 0 10px 30px hsl(240 20% 4% / 0.24), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  }
+
+  .composer-box:focus-within {
+    border-color: hsl(var(--primary) / 0.58);
+    box-shadow: 0 10px 30px hsl(240 20% 4% / 0.24), 0 0 0 3px hsl(var(--primary) / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.08);
+  }
+
+  .starter-card-grid button {
+    border-color: hsl(var(--foreground) / 0.13);
+    background: hsl(var(--card) / 0.56);
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    backdrop-filter: blur(18px) saturate(135%);
+    box-shadow: 0 8px 22px hsl(240 20% 4% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  .starter-card-grid button:hover,
+  .starter-card-grid button:focus-visible {
+    border-color: hsl(var(--primary) / 0.52);
+    background: hsl(var(--primary) / 0.12);
+  }
+
+  .settings-dialog-content {
+    inset: 0 !important;
+    left: 0 !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    transform: none !important;
+    translate: none !important;
+    border: 0;
+    border-radius: 0 !important;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .settings-dialog-header,
+  .settings-dialog-mobile-picker,
+  .settings-dialog-footer {
+    background: hsl(var(--card) / 0.58);
+    border-color: hsl(var(--foreground) / 0.1);
+  }
+
+  .settings-dialog-mobile-picker select {
+    border-color: hsl(var(--foreground) / 0.16);
+    background: hsl(var(--card) / 0.72);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  .settings-dialog-body,
+  .settings-dialog-panel {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .settings-dialog-footer {
+    justify-content: flex-end;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  .settings-dialog-footer button {
+    border: 1px solid hsl(var(--foreground) / 0.12);
+    background: hsl(var(--card) / 0.58);
+    border-radius: 999px;
   }
 }
