@@ -1,5 +1,6 @@
 [package]
 name = "hakus-folder-picker"
+links = "hakus-folder-picker"
 version = "0.1.0"
 description = "Android SAF folder access for HakusAI projects"
 edition = "2021"
@@ -9,7 +10,7 @@ name = "hakus_folder_picker"
 crate-type = ["rlib"]
 
 [build-dependencies]
-tauri-plugin = "2"
+tauri-plugin = { version = "2", features = ["build"] }
 
 [dependencies]
 tauri = { version = "2" }

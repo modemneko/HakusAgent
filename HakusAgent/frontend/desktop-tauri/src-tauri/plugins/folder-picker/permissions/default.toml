@@ -1,0 +1,9 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "Allows HakusAI to select and synchronize Android project folders."
+permissions = [
+  "allow-pick-folder",
+  "allow-refresh-folder",
+  "allow-sync-folder",
+]
