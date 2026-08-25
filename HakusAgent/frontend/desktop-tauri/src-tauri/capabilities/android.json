@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "android",
+  "description": "HakusAI Android project folder access",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "hakus-folder-picker:default"
+  ]
+}

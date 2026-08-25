@@ -27,7 +27,6 @@
     "global-shortcut:default",
     "process:default",
     "dialog:default",
-    "dialog:allow-open",
-    "hakus-folder-picker:default"
+    "dialog:allow-open"
   ]
 }
