@@ -92,7 +92,7 @@ export const MessageBubble = memo(function MessageBubble({
       data-role={message.role}
       data-message-id={message.id}
       className={cn(
-        'group flex gap-3 px-5 animate-fade-in',
+        'chat-message group flex gap-3 px-5 animate-fade-in',
         verticalGap,
         isUser && 'flex-row-reverse py-3',
       )}
@@ -114,7 +114,7 @@ export const MessageBubble = memo(function MessageBubble({
       )}
 
       {/* Message body */}
-      <div className={cn('flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
+      <div className={cn('chat-message-body flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
         {/* Reasoning (inline, no bubble) — shown above the text bubble.
             Just muted text with a Brain icon; click to expand into full thinking. */}
         {showReasoningBlock && (

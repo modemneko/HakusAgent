@@ -724,7 +724,7 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+    <div className="app-chat flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {/* Connection warning */}
       {connState === 'error' && (
         <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">
@@ -811,7 +811,7 @@ export function ChatView() {
             onPick={(prompt) => setComposerDraft(prompt)}
           />
         ) : (
-          <div className="mx-auto max-w-3xl py-6">
+          <div className="chat-timeline mx-auto w-full max-w-3xl py-6">
             {buildTimeline(activeMessages).map((item, idx, arr) => {
               if (item.kind === 'message') {
                 return (
@@ -906,7 +906,7 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
   }, [])
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+    <div className="empty-state-hero flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
         <Sparkles className="h-5 w-5" />
       </div>
@@ -919,7 +919,7 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
         </p>
       </div>
       {/* ref 容器只用来测宽，本身不可见；内层 flex 真正承载卡片 */}
-      <div ref={containerRef} className="w-full max-w-xl">
+      <div ref={containerRef} className="starter-card-grid w-full max-w-xl">
         <div className="flex justify-center gap-3">
           {STARTER_CARDS.slice(0, visibleCount).map((card) => {
             const Icon = card.icon

@@ -19,9 +19,9 @@ export function RightPanel() {
   const setTab = useAppStore((s) => s.setRightPanelTab)
 
   return (
-    <aside className="right-panel flex h-full w-[var(--right-panel-width)] shrink-0 flex-col">
+    <aside className="right-panel flex h-full w-full min-w-0 shrink-0 flex-col">
       {/* Codex Tab bar — 底部边框激活态 */}
-      <div className="flex shrink-0 items-center gap-0 border-b border-border/60 px-2">
+      <div className="right-panel-tabs flex shrink-0 items-center gap-0 overflow-x-auto border-b border-border/60 px-2">
         {TABS.map((t) => {
           const Icon = t.icon
           const active = tab === t.id
@@ -30,7 +30,7 @@ export function RightPanel() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                'inline-flex h-9 items-center gap-1.5 border-b-2 px-3 text-[12px] font-medium transition-colors',
+                'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-[12px] font-medium transition-colors',
                 active
                   ? 'border-primary text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground',

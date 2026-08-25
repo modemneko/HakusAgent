@@ -18,8 +18,10 @@
  */
 
 import { useCallback, useRef, useEffect, useState } from 'react'
+import { cn } from '@/lib/utils'
 
 interface ResizeHandleProps {
+  className?: string
   cssVar: string
   side: 'left' | 'right'
   minPx?: number
@@ -29,6 +31,7 @@ interface ResizeHandleProps {
 }
 
 export function ResizeHandle({
+  className,
   cssVar,
   side,
   minPx = 180,
@@ -141,7 +144,7 @@ export function ResizeHandle({
 
   return (
     <div
-      className="relative z-20 shrink-0 cursor-col-resize"
+      className={cn('relative z-20 shrink-0 cursor-col-resize', className)}
       style={{ width: dragging ? 5 : 3 }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

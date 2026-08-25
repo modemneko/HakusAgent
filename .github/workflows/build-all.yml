@@ -253,6 +253,17 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: npx tauri android init --ci --skip-targets-install
 
+      - name: Apply branded Android icons
+        working-directory: HakusAgent/frontend/desktop-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_icons="src-tauri/icons/android"
+          generated_resources="src-tauri/gen/android/app/src/main/res"
+          test -f "$source_icons/mipmap-hdpi/ic_launcher.png"
+          test -d "$generated_resources"
+          cp -R "$source_icons/." "$generated_resources/"
+
       - name: Permit LAN HTTP HakusAI servers
         working-directory: HakusAgent/frontend/desktop-tauri
         shell: bash

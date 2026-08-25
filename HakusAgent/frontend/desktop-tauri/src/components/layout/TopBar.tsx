@@ -162,14 +162,14 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   }, [connState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <header className="titlebar flex overflow-hidden">
-      <div className={cn('app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
+    <header className="titlebar flex min-w-0 overflow-hidden">
+      <div className={cn('topbar-leading app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onToggleSidebar}
               title="切换侧栏"
               aria-label="切换侧栏"
@@ -204,7 +204,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
         </div>
       </div>
 
-      <div className="app-region-drag relative z-0 flex min-w-0 flex-1 flex-col items-center justify-center px-2">
+      <div className="topbar-session app-region-drag relative z-0 flex min-w-0 flex-1 flex-col items-center justify-center px-2">
         <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight">
           {activeSession?.title || characterName}
         </span>
@@ -216,14 +216,14 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
         </span>
       </div>
 
-      <div className="app-region-no-drag relative z-10 flex shrink-0 items-center justify-end gap-1 pr-2">
+      <div className="topbar-actions app-region-no-drag relative z-10 flex shrink-0 items-center justify-end gap-1 pr-2">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               size="icon"
               variant="ghost"
               className={cn(
-                'h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                'topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 rightPanelOpen && 'bg-accent/60 text-foreground',
               )}
               onClick={onToggleRightPanel}
@@ -241,7 +241,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onOpenSettings}
               title="设置"
               aria-label="设置"
@@ -258,8 +258,8 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                onClick={() => {
+              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              onClick={() => {
                   if (confirm('清空当前会话的所有消息？')) {
                     clearMessages(activeId)
                   }
@@ -273,22 +273,6 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
             <TooltipContent>清空对话</TooltipContent>
           </Tooltip>
         )}
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              onClick={onOpenSettings}
-              title="设置"
-              aria-label="设置"
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>设置</TooltipContent>
-        </Tooltip>
 
         {!isMac && !IS_ANDROID && <WindowButtons />}
       </div>

@@ -361,6 +361,290 @@
   to { stroke-dashoffset: -44; }
 }
 
+/* ========================================================================
+ * Responsive shell
+ *
+ * The desktop layout keeps resizable side panes in the document flow. On
+ * narrow touch viewports those panes become overlays so the chat column never
+ * loses its usable width. Breakpoints are based on available CSS pixels, not
+ * device names, so Android phones, tablets, resized desktop windows and fold
+ * layouts follow the same rules.
+ * ====================================================================== */
+.app-shell {
+  height: 100dvh;
+  min-height: 100%;
+}
+
+.app-panel-scrim {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .panel-resize-handle-right {
+    display: none;
+  }
+
+  .right-panel-wrapper {
+    position: fixed;
+    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(86vw, 560px) !important;
+    transform: translateX(100%);
+    overflow: visible !important;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .right-panel-wrapper[data-panel-open="true"] {
+    transform: translateX(0);
+  }
+
+  .right-panel-wrapper .right-panel {
+    width: 100%;
+  }
+
+  .app-panel-scrim[data-right-panel-open="true"] {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  :root {
+    --sidebar-width: min(16rem, 29vw);
+  }
+
+  .topbar-leading {
+    width: min(230px, 31vw) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .app-panel-scrim[data-sidebar-open="true"] {
+    display: block;
+  }
+
+  .sidebar-wrapper {
+    position: fixed;
+    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(86vw, 340px) !important;
+    transform: translateX(-100%);
+    overflow: visible !important;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar-wrapper[data-panel-open="true"] {
+    transform: translateX(0);
+  }
+
+  .sidebar-wrapper .sidebar {
+    width: 100%;
+  }
+
+  .titlebar {
+    height: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    min-height: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .topbar-leading {
+    width: auto !important;
+    max-width: 48%;
+    gap: 0.25rem;
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .topbar-session {
+    padding-right: 0.25rem;
+    padding-left: 0.25rem;
+  }
+
+  .topbar-session > span:first-child {
+    font-size: 12px;
+  }
+
+  .topbar-actions {
+    gap: 0;
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+  }
+
+  .topbar-icon-button {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .topbar-actions > .app-region-no-drag {
+    display: none;
+  }
+
+  .segment-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding-right: 0.45rem;
+    padding-left: 0.45rem;
+  }
+
+  .right-panel-wrapper {
+    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    width: min(100vw, 560px) !important;
+  }
+
+  .app-content {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-dialog-content {
+    width: calc(100vw - 1rem);
+    max-width: none;
+    height: min(92dvh, 720px) !important;
+    max-height: 92dvh !important;
+  }
+
+  .settings-dialog-body {
+    flex-direction: column;
+  }
+
+  .settings-dialog-nav {
+    width: 100%;
+    max-height: 56px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border) / 0.7);
+    padding: 0.375rem;
+  }
+
+  .settings-dialog-nav ul {
+    display: flex;
+    min-width: max-content;
+    gap: 0.25rem;
+  }
+
+  .settings-dialog-nav button {
+    width: auto;
+    min-height: 36px;
+    white-space: nowrap;
+  }
+
+  .settings-dialog-panel > div {
+    padding: 1rem;
+  }
+
+  .settings-dialog-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .chat-timeline {
+    width: 100%;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .chat-message,
+  .chat-tool-call {
+    gap: 0.5rem;
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+
+  .chat-message-body,
+  .chat-tool-call-body {
+    max-width: calc(100% - 2.5rem) !important;
+  }
+
+  .composer-shell {
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .composer-inner {
+    width: 100%;
+    max-width: none;
+  }
+
+  .composer-box {
+    border-radius: 18px;
+    padding: 0.5rem;
+  }
+
+  .composer-controls {
+    align-items: stretch;
+    gap: 0.375rem;
+  }
+
+  .composer-options {
+    flex: 1 1 100%;
+    min-width: 0;
+    gap: 0.25rem;
+  }
+
+  .composer-options > button,
+  .composer-options [role="button"] {
+    min-height: 40px;
+  }
+
+  .composer-options .composer-project-trigger {
+    max-width: 42vw;
+  }
+
+  .composer-actions {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .composer-actions > button {
+    min-width: 36px;
+    min-height: 40px;
+  }
+
+  .composer-tip {
+    padding-right: 0.25rem;
+    padding-left: 0.25rem;
+  }
+
+  .empty-state-hero {
+    gap: 1rem;
+    padding-right: 1rem;
+    padding-left: 1rem;
+  }
+
+  .empty-state-hero p {
+    max-width: 34rem;
+  }
+
+  .starter-card-grid {
+    max-width: 100%;
+  }
+
+  .starter-card-grid > div {
+    gap: 0.5rem;
+  }
+
+  .starter-card-grid button {
+    width: min(128px, calc((100vw - 3rem) / 2));
+  }
+
+  .right-panel-tabs {
+    scrollbar-width: none;
+  }
+
+  .right-panel-tabs::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* Markdown rendering styles */
 .markdown-body {
   @apply text-sm leading-6;

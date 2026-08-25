@@ -116,7 +116,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         // Override default `grid` with `flex flex-col` — grid doesn't
         // honor min-h-0 on children, so flex is required for the middle
         // row to shrink and let ScrollArea work (Issue 4 fix).
-        className="flex max-w-4xl flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 shadow-lg sm:rounded-lg"
+        className="settings-dialog-content flex max-w-4xl flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 shadow-lg sm:rounded-lg"
         // Use flex column with explicit max-height so the dialog itself
         // never grows taller than the viewport. The middle row (main
         // content) uses flex-1 + min-h-0 so it shrinks to fit, letting
@@ -136,10 +136,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             space between header and footer. min-h-0 is critical — without
             it, flex children won't shrink below their content's natural
             height, causing overflow into the footer (Issue 4). */}
-        <div className="flex min-h-0 flex-1">
+        <div className="settings-dialog-body flex min-h-0 flex-1">
           {/* Left: categories */}
           <nav
-            className="w-[200px] shrink-0 overflow-y-auto border-r border-border/70 bg-muted/35 p-2"
+            className="settings-dialog-nav w-[200px] shrink-0 overflow-y-auto border-r border-border/70 bg-muted/35 p-2"
             aria-label="设置分类"
           >
             <ul className="space-y-0.5">
@@ -174,7 +174,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {/* Right: panel — flex-1 + min-h-0 so it shrinks; ScrollArea
               with h-full so it actually scrolls when content overflows. */}
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="settings-dialog-panel min-h-0 flex-1 overflow-hidden">
             <ScrollArea className="h-full">
               <div className="p-6">
                 {active === 'model' && <ModelPanel />}
@@ -197,7 +197,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-between border-t border-border/70 bg-card px-6 py-3">
+        <div className="settings-dialog-footer flex shrink-0 items-center justify-between border-t border-border/70 bg-card px-6 py-3">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Info className="h-3 w-3" />
             客户端设置本地持久化；模型/角色/工具配置写入 ~/.hakus/config.yaml

@@ -29,6 +29,8 @@ function App() {
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
+  const setSidebar = useAppStore((s) => s.setSidebar)
+  const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
@@ -225,6 +227,22 @@ function App() {
     }
   }, [serverUrl, appReady])
 
+  // A persisted desktop panel state should never cover the first mobile view.
+  // CSS handles the actual responsive layout; this only resets the initial
+  // preference when the viewport enters the phone breakpoint.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const phoneQuery = window.matchMedia('(max-width: 767px)')
+    const closePhonePanels = () => {
+      if (!phoneQuery.matches) return
+      setSidebar(false)
+      setRightPanelOpen(false)
+    }
+    closePhonePanels()
+    phoneQuery.addEventListener?.('change', closePhonePanels)
+    return () => phoneQuery.removeEventListener?.('change', closePhonePanels)
+  }, [setRightPanelOpen, setSidebar])
+
   return (
     <>
       {/* Splash overlay */}
@@ -233,7 +251,8 @@ function App() {
       {/* Main UI — invisible until appReady, then fades in */}
       <TooltipProvider delayDuration={300}>
         <div
-          className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground"
+          data-testid="app-shell"
+          className="app-shell flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground"
           style={{
             opacity: appReady ? 1 : 0,
             transition: 'opacity 0.3s ease-in',
@@ -241,11 +260,25 @@ function App() {
             visibility: appReady ? 'visible' : 'hidden',
           }}
         >
-          <div className="flex min-h-0 flex-1">
+          <div className="app-main relative flex min-h-0 flex-1">
+            {(sidebarOpen || rightPanelOpen) && (
+              <button
+                type="button"
+                className="app-panel-scrim fixed inset-0 z-20 bg-black/25 backdrop-blur-[1px]"
+                data-sidebar-open={sidebarOpen}
+                data-right-panel-open={rightPanelOpen}
+                aria-label="关闭打开的面板"
+                onClick={() => {
+                  setSidebar(false)
+                  setRightPanelOpen(false)
+                }}
+              />
+            )}
             <div
               data-testid="sidebar-wrapper"
+              data-panel-open={sidebarOpen}
               className={cn(
-                'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
+                'sidebar-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
                 sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
                 'overflow-hidden',
               )}
@@ -256,6 +289,7 @@ function App() {
             {/* Sidebar resize handle — auto-collapses when dragged narrow */}
             {sidebarOpen && (
               <ResizeHandle
+                className="panel-resize-handle panel-resize-handle-left"
                 cssVar="--sidebar-width"
                 side="left"
                 minPx={160}
@@ -265,7 +299,7 @@ function App() {
               />
             )}
 
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div className="app-content flex min-h-0 min-w-0 flex-1 flex-col">
               <TopBar
                 onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
                 onToggleRightPanel={() => useAppStore.getState().toggleRightPanel()}
@@ -276,13 +310,20 @@ function App() {
 
             {/* Right panel resize handle */}
             {rightPanelOpen && (
-              <ResizeHandle cssVar="--right-panel-width" side="right" minPx={240} maxPx={720} />
+              <ResizeHandle
+                className="panel-resize-handle panel-resize-handle-right"
+                cssVar="--right-panel-width"
+                side="right"
+                minPx={240}
+                maxPx={720}
+              />
             )}
 
             <div
               data-testid="right-panel-wrapper"
+              data-panel-open={rightPanelOpen}
               className={cn(
-                'relative z-10 shrink-0 transition-[width] duration-200 ease-out',
+                'right-panel-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
                 rightPanelOpen ? 'w-[var(--right-panel-width)]' : 'w-0',
                 'overflow-hidden',
               )}

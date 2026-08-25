@@ -811,14 +811,14 @@ export function Composer({
   const hasExpandedContent = attachments.length > 0 || Boolean(taskProgress) || pendingQueue.length > 0
 
   return (
-    <div className="bg-transparent px-4 pb-4 pt-2">
-      <div className="mx-auto max-w-4xl">
+    <div className="composer-shell bg-transparent px-4 pb-4 pt-2">
+      <div className="composer-inner mx-auto max-w-4xl">
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            'relative flex flex-col gap-1.5 rounded-[22px] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
+            'composer-box relative flex flex-col gap-1.5 rounded-[22px] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
             'focus-within:border-primary/45 focus-within:ring-1 focus-within:ring-primary/20',
             conversationState !== 'idle' && 'voice-composer-active',
             !hasExpandedContent && 'p-2',
@@ -1030,8 +1030,8 @@ export function Composer({
             </svg>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 px-0.5 pt-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className="composer-controls flex flex-wrap items-center justify-between gap-2 px-0.5 pt-1">
+            <div className="composer-options flex min-w-0 flex-wrap items-center gap-1.5">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1077,7 +1077,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
+                      'composer-project-trigger inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06]',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={activeProject ? activeProject.path : '不在项目中工作'}
@@ -1440,7 +1440,7 @@ export function Composer({
               </DropdownMenu>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="composer-actions flex items-center gap-2">
               <span className="hidden text-[10px] text-muted-foreground/70 sm:inline">
                 {sendOnEnter ? "Enter 发送 · Shift+Enter 换行" : "Ctrl/Cmd+Enter 发送"}
               </span>
@@ -1533,7 +1533,7 @@ export function Composer({
           </div>
         </div>
 
-        <div className="mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground/65">
+        <div className="composer-tip mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground/65">
           <span className="flex items-center gap-1.5">
             <Sparkles className="h-3 w-3" />
             {canUseImages ? "可粘贴图片" : "当前模型仅文本"}

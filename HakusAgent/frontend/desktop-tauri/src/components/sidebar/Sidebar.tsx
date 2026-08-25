@@ -11,6 +11,7 @@ import {
   Smartphone,
 } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
+import { useAppStore } from '@/store/app'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -103,11 +104,18 @@ export function Sidebar() {
   const deleteSession = useSessionStore((s) => s.deleteSession)
   const renameSession = useSessionStore((s) => s.renameSession)
   const pinSession = useSessionStore((s) => s.pinSession)
+  const setSidebar = useAppStore((s) => s.setSidebar)
   const toast = useToast()
 
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+
+  const closeAfterMobileAction = () => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches) {
+      setSidebar(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!search.trim()) return sessions
@@ -127,6 +135,12 @@ export function Sidebar() {
   const handleNew = () => {
     createSession()
     setSearch('')
+    closeAfterMobileAction()
+  }
+
+  const handleSelect = (id: string) => {
+    setActiveSession(id)
+    closeAfterMobileAction()
   }
 
   const handleStartRename = (id: string, currentTitle: string) => {
@@ -151,7 +165,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="sidebar flex h-full w-[var(--sidebar-width)] shrink-0 flex-col">
+    <aside className="sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
       {/* Brand + new chat (Codex 风格品牌区) */}
       <div className="flex items-center justify-between gap-2 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -217,7 +231,7 @@ export function Sidebar() {
                       <div className="flex w-full min-w-0 items-center justify-between gap-1">
                         <div
                           className="flex min-w-0 flex-1 items-center"
-                          onClick={() => setActiveSession(session.id)}
+                          onClick={() => handleSelect(session.id)}
                         >
                           {editingId === session.id ? (
                             <Input
@@ -292,7 +306,7 @@ export function Sidebar() {
                       </div>
                       <div
                         className="truncate text-[11px] text-muted-foreground"
-                        onClick={() => setActiveSession(session.id)}
+                        onClick={() => handleSelect(session.id)}
                       >
                         {preview}
                       </div>
