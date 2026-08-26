@@ -137,11 +137,13 @@ export function WeChatPanel() {
       <Separator />
 
       {/* 连接状态 */}
-      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <StatusIcon className={cn('h-4 w-4', statusColor[status], (status === 'waiting' || status === 'checking') && 'animate-spin')} />
-          <span className={cn('text-sm font-medium', statusColor[status])}>{statusLabel[status]}</span>
-          {accountId && <span className="text-[10px] text-muted-foreground">({accountId})</span>}
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <StatusIcon className={cn('h-4 w-4 shrink-0', statusColor[status], (status === 'waiting' || status === 'checking') && 'animate-spin')} />
+            <span className={cn('text-sm font-medium', statusColor[status])}>{statusLabel[status]}</span>
+          </div>
+          {accountId && <span className="mt-0.5 block truncate pl-6 text-[10px] text-muted-foreground">({accountId})</span>}
         </div>
         <div className="flex gap-2">
           {status !== 'connected' && status !== 'checking' && (
@@ -155,7 +157,7 @@ export function WeChatPanel() {
               <Unplug className="mr-1 h-3 w-3" /> 断开
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={refreshStatus}>
+          <Button size="sm" variant="ghost" onClick={refreshStatus} title="刷新微信状态" aria-label="刷新微信状态">
             <RefreshCw className="h-3 w-3" />
           </Button>
         </div>
@@ -206,7 +208,7 @@ export function WeChatPanel() {
                 className="text-xs"
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
-              <Button size="sm" onClick={handleSend} disabled={sending || !testUserId || !testText}>
+              <Button size="sm" onClick={handleSend} disabled={sending || !testUserId || !testText} title="发送测试消息" aria-label="发送测试消息">
                 {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
               </Button>
             </div>

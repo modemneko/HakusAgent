@@ -1000,7 +1000,7 @@
   @apply text-primary hover:underline;
 }
 .markdown-body blockquote {
-  @apply border-l-4 border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
+  @apply border-l border-muted-foreground/20 pl-4 italic text-muted-foreground my-3;
 }
 .markdown-body code:not(pre code) {
   @apply bg-muted px-1.5 py-0.5 rounded-md text-[0.85em] font-mono;
@@ -1304,5 +1304,242 @@
     max-height: calc(100dvh - 1rem) !important;
     overflow-x: hidden;
     overflow-y: auto;
+  }
+}
+
+/* ========================================================================
+ * Mobile interaction pass
+ *
+ * These rules finish the touch composition after the desktop controls have
+ * been progressively disclosed. They are intentionally isolated from the
+ * desktop surface and use the available viewport instead of device names.
+ * ====================================================================== */
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+  .topbar-review-button {
+    display: inline-flex !important;
+  }
+
+  .empty-state-hero > div:first-child {
+    flex: 0 0 auto;
+  }
+
+  .mobile-settings-sheet {
+    display: flex !important;
+    flex-direction: column;
+    left: 0 !important;
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: min(82dvh, 640px) !important;
+    transform: none !important;
+    translate: none !important;
+    gap: 0 !important;
+    overflow: hidden;
+    border: 1px solid hsl(var(--foreground) / 0.12);
+    border-bottom: 0;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    background: hsl(var(--card) / 0.94);
+    -webkit-backdrop-filter: blur(28px) saturate(150%);
+    backdrop-filter: blur(28px) saturate(150%);
+    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28);
+    padding: 0 !important;
+  }
+
+  .mobile-settings-sheet > button[aria-label="Close"] {
+    top: 0.75rem;
+    right: 0.75rem;
+    z-index: 2;
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: hsl(var(--foreground) / 0.06);
+    opacity: 1;
+  }
+
+  .mobile-settings-header {
+    position: relative;
+    flex: 0 0 auto;
+    min-height: 5.25rem;
+    justify-content: center;
+    border-bottom: 1px solid hsl(var(--foreground) / 0.1);
+    background: hsl(var(--card) / 0.76);
+    padding: 1.125rem 4rem 1rem 1.25rem;
+  }
+
+  .mobile-settings-header:has(.mobile-settings-back) {
+    padding-left: 3.5rem;
+  }
+
+  .mobile-settings-header h2 {
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+
+  .mobile-settings-header p {
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+
+  .mobile-settings-back {
+    position: absolute;
+    top: 1rem;
+    left: 0.75rem;
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .mobile-settings-back:active,
+  .mobile-settings-sheet > button[aria-label="Close"]:active {
+    background: hsl(var(--foreground) / 0.1);
+  }
+
+  .mobile-settings-body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1rem 1rem max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .mobile-settings-list {
+    overflow: hidden;
+    border: 1px solid hsl(var(--foreground) / 0.1);
+    border-radius: 1rem;
+    background: hsl(var(--background) / 0.36);
+  }
+
+  .mobile-settings-row {
+    display: flex;
+    width: 100%;
+    min-height: 4.25rem;
+    align-items: center;
+    gap: 0.75rem;
+    border-bottom: 1px solid hsl(var(--foreground) / 0.08);
+    padding: 0.75rem 0.875rem;
+    text-align: left;
+    transition: background-color 150ms ease, opacity 150ms ease;
+  }
+
+  .mobile-settings-row:last-child {
+    border-bottom: 0;
+  }
+
+  .mobile-settings-row:active,
+  .mobile-settings-row:focus-visible {
+    background: hsl(var(--primary) / 0.12);
+    outline: none;
+  }
+
+  .mobile-settings-row:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+  }
+
+  .mobile-settings-row-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 auto;
+  }
+
+  .mobile-settings-row-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-settings-row-copy strong,
+  .mobile-settings-row-copy small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-settings-row-copy strong {
+    color: hsl(var(--foreground));
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .mobile-settings-row-copy small {
+    margin-top: 0.2rem;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
+    line-height: 1.25;
+  }
+
+  .mobile-settings-row-chevron,
+  .mobile-settings-row-check {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .mobile-settings-row-check {
+    color: hsl(var(--primary));
+  }
+
+  .mobile-settings-note {
+    margin: 0.75rem 0.25rem 0;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
+    line-height: 1.45;
+  }
+
+  .settings-dialog-panel input:not([type="range"]),
+  .settings-dialog-panel textarea,
+  .settings-dialog-panel select,
+  .mobile-settings-sheet button,
+  .mobile-settings-sheet input {
+    font-size: 1rem;
+  }
+
+  .settings-dialog-panel button.h-7.w-7 {
+    width: 2.75rem;
+    min-width: 2.75rem;
+    height: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .empty-state-hero {
+    gap: 0.625rem;
+    padding-top: 0.75rem;
+    padding-bottom: 1rem;
+  }
+
+  .empty-state-hero > div:first-child {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .empty-state-hero p:first-child {
+    font-size: 0.95rem;
+  }
+
+  .empty-state-hero p:last-child {
+    max-width: 18rem;
+    line-height: 1.35;
+  }
+
+  .starter-card-grid > div {
+    gap: 0.5rem;
+  }
+
+  .starter-card-grid button {
+    min-height: 5.5rem;
+    padding: 0.625rem;
   }
 }

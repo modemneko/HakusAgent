@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import {
   AtSign,
+  ArrowLeft,
   Bot,
   Brain,
   Check,
   ChevronDown,
+  ChevronRight,
   Clipboard,
   Code2,
   FileText,
@@ -36,14 +38,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { apiClient } from '@/api/client'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
@@ -105,6 +111,15 @@ export interface QueuedComposerMessage {
   id: string
   text: string
   createdAt: number
+}
+
+type MobileSettingsSection = 'root' | 'project' | 'model' | 'reasoning' | 'permission'
+
+const MOBILE_SETTINGS_LABELS: Record<Exclude<MobileSettingsSection, 'root'>, string> = {
+  project: '项目',
+  model: '模型',
+  reasoning: '思考强度',
+  permission: '权限',
 }
 
 const TEXT_EXTENSIONS: Record<string, string> = {
@@ -374,6 +389,8 @@ export function Composer({
   const [projectSearch, setProjectSearch] = useState('')
   const [creatingProject, setCreatingProject] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false)
+  const [mobileSettingsSection, setMobileSettingsSection] = useState<MobileSettingsSection>('root')
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
@@ -1119,11 +1136,17 @@ export function Composer({
                 <TooltipContent>@ 上下文</TooltipContent>
               </Tooltip>
 
-              {/* Phone layout: the input stays uncluttered and the less
-                  frequent project/model/policy controls live in one compact
-                  menu. Tablet and desktop keep their direct controls below. */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              {/* Mobile work settings use a bottom sheet. Radix submenus open
+                  sideways, which is reliable with a mouse but can be clipped
+                  on narrow touch viewports. */}
+              <Dialog
+                open={mobileSettingsOpen}
+                onOpenChange={(open) => {
+                  setMobileSettingsOpen(open)
+                  if (!open) setMobileSettingsSection('root')
+                }}
+              >
+                <DialogTrigger asChild>
                   <Button
                     size="icon"
                     variant="ghost"
@@ -1134,104 +1157,136 @@ export function Composer({
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[280px] max-w-[calc(100vw-24px)] p-1.5">
-                  <DropdownMenuLabel className="px-2 py-1 text-[11px] text-muted-foreground">工作设置</DropdownMenuLabel>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="gap-2 py-2">
-                      <FolderOpen className="h-4 w-4 text-primary" />
-                      <span className="flex-1 truncate">项目</span>
-                      <span className="max-w-[120px] truncate text-[11px] text-muted-foreground">
-                        {activeProject?.name || '当前目录'}
-                      </span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-[260px]">
-                      {projects.slice(0, 12).map((project) => (
-                        <DropdownMenuItem
-                          key={project.id}
-                          disabled={projectLocked}
-                          onClick={() => setActiveProject(project.id)}
-                          className="gap-2 py-2"
-                        >
-                          <FolderOpen className={cn('h-4 w-4', activeProjectId === project.id ? 'text-primary' : 'text-muted-foreground')} />
-                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                          {activeProjectId === project.id && <Check className="h-3.5 w-3.5 text-primary" />}
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => void handleCreateProject()} disabled={creatingProject} className="gap-2 py-2">
-                        {creatingProject ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4 text-primary" />}
-                        新建项目
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={projectLocked || !activeProjectId}
-                        onClick={() => setActiveProject(null)}
-                        className="gap-2 py-2"
+                </DialogTrigger>
+                <DialogContent className="mobile-settings-sheet md:hidden">
+                  <DialogHeader className="mobile-settings-header">
+                    {mobileSettingsSection !== 'root' && (
+                      <button
+                        type="button"
+                        className="mobile-settings-back"
+                        onClick={() => setMobileSettingsSection('root')}
+                        aria-label="返回工作设置"
                       >
-                        <X className="h-4 w-4 text-muted-foreground" />
-                        不在项目中工作
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="gap-2 py-2">
-                      <Bot className="h-4 w-4 text-primary" />
-                      <span className="flex-1">模型</span>
-                      <span className="max-w-[120px] truncate text-[11px] text-muted-foreground">{currentProviderLabel}</span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-[260px]">
-                      {providers.map((provider) => (
-                        <DropdownMenuItem
-                          key={provider.id}
-                          disabled={switchingProvider || !provider.model_name}
-                          onClick={() => provider.model_name && void handleModelSelect(provider, provider.model_name)}
-                          className="gap-2 py-2"
-                        >
-                          <ProviderLogo providerId={provider.id} size={16} />
-                          <span className="min-w-0 flex-1 truncate">{provider.display_name}</span>
-                          {provider.is_default && <Check className="h-3.5 w-3.5 text-primary" />}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="gap-2 py-2">
-                      <Brain className="h-4 w-4 text-primary" />
-                      <span className="flex-1">思考强度</span>
-                      <span className="text-[11px] text-muted-foreground">{REASONING_EFFORT_META[activeReasoningEffort].label}</span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-[190px]">
-                      {REASONING_EFFORTS.map((effort: ReasoningEffort) => (
-                        <DropdownMenuItem key={effort} onClick={() => setReasoningEffort(agentMode, effort)} className="gap-2 py-2">
-                          <Brain className="h-4 w-4 text-muted-foreground" />
-                          <span className="flex-1">{REASONING_EFFORT_META[effort].label}</span>
-                          {activeReasoningEffort === effort && <Check className="h-3.5 w-3.5 text-primary" />}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="gap-2 py-2">
-                      <ActivePermissionIcon className={cn('h-4 w-4', activePermissionMeta.tone)} />
-                      <span className="flex-1">权限</span>
-                      <span className="text-[11px] text-muted-foreground">{activePermissionMeta.label}</span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-[210px]">
-                      {availablePermissions.map((mode) => {
-                        const meta = PERMISSION_META[mode]
-                        const Icon = meta.icon
-                        return (
-                          <DropdownMenuItem key={mode} onClick={() => void handlePermissionSwitch(mode)} className="gap-2 py-2">
-                            <Icon className={cn('h-4 w-4', meta.tone)} />
-                            <span className="flex-1">{meta.label}</span>
-                            {permission === mode && <Check className="h-3.5 w-3.5 text-primary" />}
-                          </DropdownMenuItem>
-                        )
-                      })}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                    )}
+                    <DialogTitle>
+                      {mobileSettingsSection === 'root' ? '工作设置' : MOBILE_SETTINGS_LABELS[mobileSettingsSection]}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {mobileSettingsSection === 'root' ? '随时调整本次对话的工作上下文' : '选择后返回工作设置'}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="mobile-settings-body">
+                    {mobileSettingsSection === 'root' && (
+                      <div className="mobile-settings-list">
+                        <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('project')}>
+                          <FolderOpen className="mobile-settings-row-icon text-primary" />
+                          <span className="mobile-settings-row-copy"><strong>项目</strong><small>{activeProject?.name || '当前目录'}</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
+                        <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('model')}>
+                          <Bot className="mobile-settings-row-icon text-primary" />
+                          <span className="mobile-settings-row-copy"><strong>模型</strong><small>{currentProviderLabel}</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
+                        <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('reasoning')}>
+                          <Brain className="mobile-settings-row-icon text-primary" />
+                          <span className="mobile-settings-row-copy"><strong>思考强度</strong><small>{REASONING_EFFORT_META[activeReasoningEffort].label}</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
+                        <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('permission')}>
+                          <ActivePermissionIcon className={cn('mobile-settings-row-icon', activePermissionMeta.tone)} />
+                          <span className="mobile-settings-row-copy"><strong>权限</strong><small>{activePermissionMeta.label}</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
+                      </div>
+                    )}
+
+                    {mobileSettingsSection === 'project' && (
+                      <div className="mobile-settings-list">
+                        {projects.slice(0, 12).map((project) => (
+                          <button
+                            type="button"
+                            key={project.id}
+                            className="mobile-settings-row"
+                            disabled={projectLocked}
+                            onClick={() => {
+                              setActiveProject(project.id)
+                              setMobileSettingsOpen(false)
+                            }}
+                          >
+                            <FolderOpen className={cn('mobile-settings-row-icon', activeProjectId === project.id ? 'text-primary' : 'text-muted-foreground')} />
+                            <span className="mobile-settings-row-copy"><strong>{project.name}</strong><small>{project.path}</small></span>
+                            {activeProjectId === project.id ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
+                          </button>
+                        ))}
+                        <button type="button" className="mobile-settings-row" disabled={creatingProject} onClick={() => { setMobileSettingsOpen(false); void handleCreateProject() }}>
+                          {creatingProject ? <Loader2 className="mobile-settings-row-icon animate-spin text-primary" /> : <FolderPlus className="mobile-settings-row-icon text-primary" />}
+                          <span className="mobile-settings-row-copy"><strong>新建项目</strong><small>选择一个文件夹作为工作区</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
+                        <button type="button" className="mobile-settings-row" disabled={projectLocked || !activeProjectId} onClick={() => { setActiveProject(null); setMobileSettingsOpen(false) }}>
+                          <X className="mobile-settings-row-icon text-muted-foreground" />
+                          <span className="mobile-settings-row-copy"><strong>不在项目中工作</strong><small>使用当前应用目录</small></span>
+                        </button>
+                        {projectLocked && <p className="mobile-settings-note">当前会话已经开始，项目已锁定。请新建会话后切换工作区。</p>}
+                      </div>
+                    )}
+
+                    {mobileSettingsSection === 'model' && (
+                      <div className="mobile-settings-list">
+                        {providers.map((provider) => (
+                          <button
+                            type="button"
+                            key={provider.id}
+                            className="mobile-settings-row"
+                            disabled={switchingProvider || !provider.model_name}
+                            onClick={() => {
+                              if (!provider.model_name) return
+                              setMobileSettingsOpen(false)
+                              void handleModelSelect(provider, provider.model_name)
+                            }}
+                          >
+                            <ProviderLogo providerId={provider.id} size={20} />
+                            <span className="mobile-settings-row-copy"><strong>{provider.display_name}</strong><small>{provider.model_name || '未配置模型'}</small></span>
+                            {provider.is_default ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {mobileSettingsSection === 'reasoning' && (
+                      <div className="mobile-settings-list">
+                        {REASONING_EFFORTS.map((effort: ReasoningEffort) => (
+                          <button type="button" key={effort} className="mobile-settings-row" onClick={() => { setReasoningEffort(agentMode, effort); setMobileSettingsOpen(false) }}>
+                            <Brain className="mobile-settings-row-icon text-muted-foreground" />
+                            <span className="mobile-settings-row-copy"><strong>{REASONING_EFFORT_META[effort].label}</strong><small>{effort}</small></span>
+                            {activeReasoningEffort === effort ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {mobileSettingsSection === 'permission' && (
+                      <div className="mobile-settings-list">
+                        {availablePermissions.map((mode) => {
+                          const meta = PERMISSION_META[mode]
+                          const Icon = meta.icon
+                          return (
+                            <button type="button" key={mode} className="mobile-settings-row" disabled={permissionLoading} onClick={() => { setMobileSettingsOpen(false); void handlePermissionSwitch(mode) }}>
+                              <Icon className={cn('mobile-settings-row-icon', meta.tone)} />
+                              <span className="mobile-settings-row-copy"><strong>{meta.label}</strong><small>{meta.hint}</small></span>
+                              {permission === mode ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
 
               <DropdownMenu
                 onOpenChange={(open) => {
