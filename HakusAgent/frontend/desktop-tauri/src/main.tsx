@@ -3,6 +3,15 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
+// Android WebView can expose a different layout viewport to fixed-position
+// portal content than it does to the application shell. Mark the platform
+// before React mounts so the Android overlay contract is active on first paint.
+const isAndroidRuntime =
+  typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+if (isAndroidRuntime) {
+  document.documentElement.dataset.platform = "android";
+}
+
 // ── Tauri Bridge: wire window.electron to tauriBridge.invoke() ──────
 // In Tauri desktop mode, legacy components reference window.electron.
 // We bridge them to the Tauri invoke() API so everything works unchanged.
@@ -10,7 +19,7 @@ import "./index.css";
 // a white flash. Instead, fire-and-forget the dynamic import.
 if (typeof __TAURI_INTERNALS__ !== "undefined") {
   import("@/api/tauriBridge").then((mod) => {
-    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isAndroid = isAndroidRuntime;
     const {
       store: tauriStore,
       window: tauriWindow,

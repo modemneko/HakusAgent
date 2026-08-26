@@ -18,6 +18,7 @@ const DropdownMenuContent = React.forwardRef<
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
+      collisionPadding={8}
       className={cn(
         // macOS-style: larger radius, frosted glass, soft shadow.
         // backdrop-blur-2xl + bg-popover/70 gives the translucent look
@@ -27,6 +28,7 @@ const DropdownMenuContent = React.forwardRef<
         className,
       )}
       {...props}
+      data-hakus-overlay="menu-content"
     />
   </DropdownMenuPrimitive.Portal>
 ))
@@ -102,11 +104,13 @@ const DropdownMenuSubContent = React.forwardRef<
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.SubContent
       ref={ref}
+      collisionPadding={8}
       className={cn(
         'z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] max-h-[min(70vh,32rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0',
         className,
       )}
       {...props}
+      data-hakus-overlay="menu-sub-content"
     />
   </DropdownMenuPrimitive.Portal>
 ))

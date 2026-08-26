@@ -352,7 +352,7 @@
   }
 
   /* Voice composer active state */
-  .voice-composer-active {
+.voice-composer-active {
     border-color: transparent;
     background:
       linear-gradient(hsl(var(--card) / .96), hsl(var(--card) / .96)) padding-box,
@@ -566,6 +566,11 @@
   .right-panel-tabs::-webkit-scrollbar {
     display: none;
   }
+}
+
+.composer-mention-menu {
+  width: min(340px, calc(100% - 1rem));
+  max-width: calc(100% - 1rem);
 }
 
 /* ========================================================================
@@ -1542,4 +1547,77 @@
     min-height: 5.5rem;
     padding: 0.625rem;
   }
+}
+
+/* ========================================================================
+ * Android WebView portal positioning
+ *
+ * Radix portals use fixed positioning. Some Android WebView/window-scale
+ * combinations give fixed descendants a stale or zero-width containing
+ * block, which makes centered dialogs render half off-screen to the left.
+ * Android marks the document before React mounts; these rules move portal
+ * direct dialog surfaces into the body's stable viewport coordinate space.
+ * Popper menus and tooltips keep fixed positioning because Radix's collision
+ * engine uses that coordinate system.
+ * ====================================================================== */
+html[data-platform="android"] body {
+  position: relative;
+}
+
+html[data-platform="android"] [data-hakus-overlay="dialog-overlay"],
+html[data-platform="android"] [data-hakus-overlay="dialog-content"] {
+  position: absolute !important;
+}
+
+html[data-platform="android"] [data-hakus-overlay="dialog-overlay"] {
+  inset: 0 !important;
+}
+
+html[data-platform="android"] .settings-dialog-content {
+  inset: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: none !important;
+  translate: none !important;
+}
+
+html[data-platform="android"] .mobile-settings-sheet {
+  inset: auto 0 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  translate: none !important;
+}
+
+html[data-platform="android"] [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
+  inset: 0 !important;
+  width: min(32rem, calc(100% - 1rem)) !important;
+  max-width: calc(100% - 1rem) !important;
+  height: fit-content !important;
+  max-height: calc(100% - 1rem) !important;
+  margin: auto !important;
+  transform: none !important;
+  translate: none !important;
+}
+
+html[data-platform="android"] [data-hakus-overlay="menu-content"],
+html[data-platform="android"] [data-hakus-overlay="menu-sub-content"],
+html[data-platform="android"] [data-hakus-overlay="tooltip-content"] {
+  box-sizing: border-box;
+  max-width: calc(100dvw - 1rem) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+
+html[data-platform="android"] .hakus-toast-root {
+  position: absolute !important;
+  inset: auto 1rem 1rem !important;
+  width: auto !important;
+  max-width: none !important;
 }

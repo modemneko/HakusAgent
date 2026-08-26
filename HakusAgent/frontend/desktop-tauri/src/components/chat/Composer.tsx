@@ -908,7 +908,7 @@ export function Composer({
           {mentionOpen && (
             <div
               ref={menuRef}
-              className="absolute bottom-full left-2 z-50 mb-2 max-h-72 w-[340px] overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
+              className="composer-mention-menu absolute bottom-full left-2 z-50 mb-2 max-h-72 overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
             >
               <div className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground">
                 <span>@ 上下文与 Skills</span>
