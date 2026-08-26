@@ -9,7 +9,7 @@ HakusCLI 有两个实现：
 
 ## Rust 版（推荐）
 
-需要 Rust 工具链（1.85+，edition 2024）：
+需要 Rust 工具链（1.88+，edition 2024）：
 
 ```sh
 cd frontend/terminal

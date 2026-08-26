@@ -117,7 +117,7 @@ export interface BackendVersionInfo {
  *   v3 (0.3.0): + 提供商配置 API (test/fetch-models/multi-key/headers)
  *   v2 (0.2.0): + /api/version 端点本身
  */
-export const EXPECTED_BACKEND_API_VERSION_INT = 12
+export const EXPECTED_BACKEND_API_VERSION_INT = 13
 
 export interface AppConfig {
   version: string
@@ -247,6 +247,37 @@ export interface ToolInfo {
 
 export interface ToolsResponse {
   tools: ToolInfo[]
+}
+
+// ========== Skills ==========
+
+export interface SkillInfo {
+  name: string
+  description: string
+  path: string | null
+  source: string
+  scope?: 'project' | 'global' | 'logical'
+  enabled: boolean
+  writable?: boolean
+  is_bundled: boolean
+  plugin_id?: string | null
+  plugin_generation?: number | null
+  plugin_content_hash?: string | null
+}
+
+export interface SkillsResponse {
+  directory: string
+  directories: string[]
+  warnings: string[]
+  skills: SkillInfo[]
+}
+
+export interface SkillMutationReceipt {
+  name: string
+  outcome: string
+  scope: string
+  safe_target_path: string
+  trust_note?: string
 }
 
 // ========== Session Log (v0.12.0+, DeepSeek-Harness-style append-only JSONL) ==========

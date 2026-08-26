@@ -1,21 +1,22 @@
 /**
  * Settings Dialog — 左侧分类列表 + 右侧表单的现代留白布局.
  *
- * 14 个分类:
+ * 15 个分类:
  *   1. 模型配置 (Bot)
  *   2. 角色 (User)
  *   3. 对话 (MessageSquare)
  *   4. 语音 TTS (Volume2)
  *   5. 记忆 (Brain)
  *   6. 工具与权限 (Shield)
- *   7. 外观 (Palette)
- *   8. 托盘与快捷键 (LayoutGrid) — Phase 3 round 1
- *   9. MCP 服务器 (Plug) — Phase 2 round 3
- *  10. 微信 (MessageSquare)
- *  11. 项目 (FolderOpen) — Codex-style project registry
- *  12. 连接 (Server)
- *  13. 高级 (Settings)
- *  14. 关于与更新 (Sparkles) — Phase 3 round 2
+ *   7. Skills (WandSparkles)
+ *   8. 外观 (Palette)
+ *   9. 托盘与快捷键 (LayoutGrid) — Phase 3 round 1
+ *  10. MCP 服务器 (Plug) — Phase 2 round 3
+ *  11. 微信 (MessageSquare)
+ *  12. 项目 (FolderOpen) — Codex-style project registry
+ *  13. 连接 (Server)
+ *  14. 高级 (Settings)
+ *  15. 关于与更新 (Sparkles) — Phase 3 round 2
  */
 
 import { useState } from 'react'
@@ -34,6 +35,7 @@ import {
   Sparkles,
   FolderOpen,
   Info,
+  WandSparkles,
 } from 'lucide-react'
 import { WeChatPanel } from './panels/WeChatPanel'
 import {
@@ -58,6 +60,7 @@ import { ConnectionPanel } from './panels/ConnectionPanel'
 import { AdvancedPanel } from './panels/AdvancedPanel'
 import { AboutPanel } from './panels/AboutPanel'
 import { ProjectsPanel } from './panels/ProjectsPanel'
+import { SkillsPanel } from './panels/SkillsPanel'
 
 type CategoryId =
   | 'model'
@@ -66,6 +69,7 @@ type CategoryId =
   | 'tts'
   | 'memory'
   | 'tools'
+  | 'skills'
   | 'appearance'
   | 'tray'
   | 'mcp'
@@ -89,6 +93,7 @@ const CATEGORIES: Category[] = [
   { id: 'tts', label: '语音通话与播报', desc: 'Celia 通话、任务播报与提示音', icon: Volume2 },
   { id: 'memory', label: '记忆', desc: '短期与长期记忆', icon: Brain },
   { id: 'tools', label: '工具与权限', desc: '工具开关与权限模式', icon: Shield },
+  { id: 'skills', label: 'Skills', desc: '安装、启用与管理任务能力', icon: WandSparkles },
   { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
   { id: 'tray', label: '托盘与快捷键', desc: '任务栏图标与全局快捷键', icon: LayoutGrid },
   { id: 'mcp', label: 'MCP 服务器', desc: '外部 MCP server 接入与工具调用', icon: Plug },
@@ -198,6 +203,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {active === 'tts' && <TtsPanel />}
                 {active === 'memory' && <MemoryPanel />}
                 {active === 'tools' && <ToolsPanel />}
+                {active === 'skills' && <SkillsPanel />}
                 {active === 'appearance' && <AppearancePanel />}
                 {active === 'tray' && <TrayPanel />}
                 {active === 'mcp' && <McpPanel />}

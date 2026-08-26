@@ -54,8 +54,10 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.12.0"
-SIDECAR_API_VERSION_INT = 12  # 整数版本，便于客户端比较
+SIDECAR_API_VERSION = "0.13.0"
+SIDECAR_API_VERSION_INT = 13  # 整数版本，便于客户端比较
+# v0.13.0: + User-managed Skills API (/api/skills*) and explicit
+#          @skill:<name> prompt injection for desktop conversations.
 # v0.12.0: + DeepSeek-Harness-inspired architecture:
 #          - Append-only session log (JSONL) at ~/.hakus/sessions/<id>/
 #            session_log.jsonl. Records every turn_start, text_delta,
@@ -185,6 +187,17 @@ class ConfigUpdateRequest(BaseModel):
     section: str
     key: str
     value: Any
+
+
+class SkillToggleRequest(BaseModel):
+    enabled: bool
+    project_id: Optional[str] = None
+
+
+class SkillInstallRequest(BaseModel):
+    source: str
+    scope: str = "global"
+    project_id: Optional[str] = None
 
 
 # ========== Session persistence (SQLite) 请求模型 ==========
@@ -1110,6 +1123,8 @@ class HakusAIServer:
                     "/api/character",
                     "/api/memory/details",
                     "/api/tools",
+                    "/api/skills",
+                    "/api/skills/install",
                     "/api/permission",
                     "/api/config/export",
                     "/api/diagnostics",
@@ -1127,6 +1142,72 @@ class HakusAIServer:
                     "/api/long-running/health",
                 ],
             }
+
+        def _skill_project_dir(project_id: Optional[str]) -> Optional[Path]:
+            from . import projects as _projects
+            resolved = _projects.resolve_working_dir(project_id)
+            return Path(resolved) if resolved else None
+
+        def _message_with_selected_skills(
+            message: str,
+            working_dir: Optional[str],
+        ) -> str:
+            from .skills import SkillError, expand_skill_mentions
+            try:
+                project_dir = Path(working_dir) if working_dir else None
+                return expand_skill_mentions(message, project_dir=project_dir)
+            except SkillError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        @app.get("/api/skills")
+        async def list_desktop_skills(project_id: Optional[str] = None):
+            """List user-installed Skills visible to the active project."""
+            from .skills import SkillError, discover_skills
+            try:
+                return discover_skills(project_dir=_skill_project_dir(project_id))
+            except SkillError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        @app.post("/api/skills/install")
+        async def install_desktop_skill(request: SkillInstallRequest):
+            """Install one Skill from an explicit local or remote source."""
+            from .skills import SkillError, install_skill
+            try:
+                return install_skill(
+                    request.source,
+                    scope=request.scope,
+                    project_dir=_skill_project_dir(request.project_id),
+                )
+            except SkillError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        @app.post("/api/skills/{name}")
+        async def toggle_desktop_skill(name: str, request: SkillToggleRequest):
+            from .skills import SkillError, set_enabled
+            try:
+                return set_enabled(
+                    name,
+                    request.enabled,
+                    project_dir=_skill_project_dir(request.project_id),
+                )
+            except SkillError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        @app.delete("/api/skills/{name}")
+        async def remove_desktop_skill(
+            name: str,
+            scope: Optional[str] = None,
+            project_id: Optional[str] = None,
+        ):
+            from .skills import SkillError, remove_skill
+            try:
+                return remove_skill(
+                    name,
+                    scope=scope,
+                    project_dir=_skill_project_dir(project_id),
+                )
+            except SkillError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         @app.get("/api/agentcore/status")
         async def agentcore_status():
@@ -1356,8 +1437,11 @@ class HakusAIServer:
                     # Resolve active project (if any) — same as streaming path.
                     from . import projects as _projects
                     working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
+                    selected_message = _message_with_selected_skills(
+                        request.message, working_dir,
+                    )
                     result = await agentcore_run_turn_collect(
-                        request.message, request.session_id,
+                        selected_message, request.session_id,
                         provider=request.provider,
                         run_mode=getattr(request, "run_mode", None),
                         working_dir=working_dir,
@@ -1385,6 +1469,10 @@ class HakusAIServer:
 
             try:
                 logger.info(f"Chat request: {request.message}")
+                legacy_working_dir = _skill_project_dir(getattr(request, "project_id", None))
+                selected_message = _message_with_selected_skills(
+                    request.message, legacy_working_dir,
+                )
                 context = AgentContext(
                     session_id=request.session_id,
                     user_id="default"
@@ -1395,7 +1483,7 @@ class HakusAIServer:
                 emotion = None
                 actions = []
 
-                async for response in self.agent.chat(request.message, context, stream=False):
+                async for response in self.agent.chat(selected_message, context, stream=False):
                     full_content = response.content
                     emotion = response.emotion
                     actions = response.actions
@@ -1454,8 +1542,11 @@ class HakusAIServer:
                     from . import projects as _projects
                     working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
                     try:
+                        selected_message = _message_with_selected_skills(
+                            request.message, working_dir,
+                        )
                         async for chunk in agentcore_run_turn_stream(
-                            request.message, request.session_id,
+                            selected_message, request.session_id,
                             provider=request.provider,
                             run_mode=getattr(request, "run_mode", None),
                             reasoning_effort=getattr(request, "reasoning_effort", None),
@@ -1507,12 +1598,16 @@ class HakusAIServer:
 
             async def generate():
                 try:
+                    legacy_working_dir = _skill_project_dir(getattr(request, "project_id", None))
+                    selected_message = _message_with_selected_skills(
+                        request.message, legacy_working_dir,
+                    )
                     context = AgentContext(
                         session_id=request.session_id,
                         user_id="default"
                     )
 
-                    async for response in self.agent.chat(request.message, context, stream=True):
+                    async for response in self.agent.chat(selected_message, context, stream=True):
                         data = {
                             "content": response.content,
                             "emotion": response.emotion,
@@ -1561,8 +1656,11 @@ class HakusAIServer:
                 try:
                     from . import projects as _projects
                     msg_working_dir = _projects.resolve_working_dir(getattr(request, "project_id", None))
+                    selected_message = _message_with_selected_skills(
+                        request.message, msg_working_dir,
+                    )
                     result = await agentcore_run_turn_collect(
-                        request.message, request.session_id,
+                        selected_message, request.session_id,
                         provider=request.provider,
                         run_mode=getattr(request, "run_mode", None),
                         reasoning_effort=getattr(request, "reasoning_effort", None),
@@ -1593,6 +1691,10 @@ class HakusAIServer:
                 }
 
             try:
+                legacy_working_dir = _skill_project_dir(getattr(request, "project_id", None))
+                selected_message = _message_with_selected_skills(
+                    request.message, legacy_working_dir,
+                )
                 context = AgentContext(
                     session_id=request.session_id,
                     user_id="default"
@@ -1601,7 +1703,7 @@ class HakusAIServer:
                 # 收集完整响应
                 full_content = ""
 
-                async for response in self.agent.chat(request.message, context, stream=False):
+                async for response in self.agent.chat(selected_message, context, stream=False):
                     full_content = response.content
 
                 return {
@@ -3314,8 +3416,11 @@ class HakusAIServer:
                                 from . import projects as _projects
                                 ws_project_id = data.get("project_id")
                                 ws_working_dir = _projects.resolve_working_dir(ws_project_id)
+                                selected_content = _message_with_selected_skills(
+                                    content, ws_working_dir,
+                                )
                                 async for chunk in agentcore_run_turn_stream(
-                                    content, session_id,
+                                    selected_content, session_id,
                                     provider=ws_provider,
                                     working_dir=ws_working_dir,
                                 ):
@@ -3354,9 +3459,13 @@ class HakusAIServer:
                             })
                             continue
 
+                        legacy_working_dir = _skill_project_dir(data.get("project_id"))
+                        selected_content = _message_with_selected_skills(
+                            content, legacy_working_dir,
+                        )
                         context = AgentContext(session_id=session_id)
 
-                        async for response in self.agent.chat(content, context, stream=True):
+                        async for response in self.agent.chat(selected_content, context, stream=True):
                             await websocket.send_json({
                                 "type": "stream",
                                 "content": response.content,

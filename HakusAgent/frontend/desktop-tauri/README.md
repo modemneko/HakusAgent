@@ -1,7 +1,20 @@
-# Tauri + React + Typescript
+# HakusAI Desktop
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+HakusAI 的 Tauri 2 + React 桌面客户端，覆盖 Windows、macOS、Linux 和 Android。
 
-## Recommended IDE Setup
+```powershell
+npm ci
+npm run tauri:dev
+```
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+只构建 Web 资源：
+
+```powershell
+npm run build
+```
+
+完整环境、Python sidecar 和发布约束见仓库根目录：
+
+- `docs/ARCHITECTURE.md`
+- `docs/DEVELOPMENT.md`
+- `docs/SKILLS.md`

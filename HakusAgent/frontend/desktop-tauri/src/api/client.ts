@@ -65,11 +65,20 @@ import type {
   ProjectUpdateBody,
   SessionLogEvent,
   SessionLogStats,
+  SkillsResponse,
+  SkillMutationReceipt,
 } from './types'
 import { EXPECTED_BACKEND_API_VERSION_INT } from './types'
 import { refreshProjectFolder, syncProjectFolder } from './tauriBridge'
 
 export type StreamHandler = (chunk: ChatStreamChunk, event?: AgentEvent) => void
+
+export function toRuntimeSkillMentions(message: string): string {
+  return message.replace(
+    /(?<![\w@])@skill:([A-Za-z0-9][A-Za-z0-9._-]{0,63})/g,
+    (_match, name: string) => `$${name}`,
+  )
+}
 
 export class HakusAIError extends Error {
   constructor(message: string, public code?: string) {
@@ -260,6 +269,7 @@ export class HakusAIClient {
         '/api/memory/details',
         '/api/tools',
         '/api/tools/toggle',
+        '/api/skills',
         '/api/permission',
         '/api/config/export',
         '/api/config/import',
@@ -764,6 +774,78 @@ export class HakusAIClient {
     }
   }
 
+  // ============ Skills ============
+
+  async listSkills(projectId?: string): Promise<SkillsResponse> {
+    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+    const path = this.usesEmbeddedRuntime ? `/skills${query}` : `/api/skills${query}`
+    const url = this.usesEmbeddedRuntime ? `${this.baseUrl}/v1${path}` : `${this.baseUrl}${path}`
+    const res = this.usesEmbeddedRuntime
+      ? await this.runtimeFetch(path)
+      : await this.fetchWithHardTimeout(url, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'List Skills failed')
+    return res.json()
+  }
+
+  async setSkillEnabled(name: string, enabled: boolean, projectId?: string): Promise<void> {
+    const encoded = encodeURIComponent(name)
+    const path = this.usesEmbeddedRuntime ? `/skills/${encoded}` : `/api/skills/${encoded}`
+    const url = this.usesEmbeddedRuntime ? `${this.baseUrl}/v1${path}` : `${this.baseUrl}${path}`
+    const body = this.usesEmbeddedRuntime
+      ? { enabled }
+      : { enabled, ...(projectId ? { project_id: projectId } : {}) }
+    const init: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+    const res = this.usesEmbeddedRuntime
+      ? await this.runtimeFetch(path, init)
+      : await this.fetchWithHardTimeout(url, init, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Toggle Skill failed')
+  }
+
+  async installSkill(
+    source: string,
+    scope: 'global' | 'project',
+    projectId?: string,
+  ): Promise<SkillMutationReceipt> {
+    const path = this.usesEmbeddedRuntime ? '/skills/install' : '/api/skills/install'
+    const url = this.usesEmbeddedRuntime ? `${this.baseUrl}/v1${path}` : `${this.baseUrl}${path}`
+    const init: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source,
+        scope,
+        ...(!this.usesEmbeddedRuntime && projectId ? { project_id: projectId } : {}),
+      }),
+    }
+    const res = this.usesEmbeddedRuntime
+      ? await this.runtimeFetch(path, init, 60000)
+      : await this.fetchWithHardTimeout(url, init, 60000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Install Skill failed')
+    return res.json()
+  }
+
+  async removeSkill(
+    name: string,
+    scope?: 'global' | 'project',
+    projectId?: string,
+  ): Promise<SkillMutationReceipt> {
+    const params = new URLSearchParams()
+    if (scope) params.set('scope', scope)
+    if (!this.usesEmbeddedRuntime && projectId) params.set('project_id', projectId)
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    const path = `${this.usesEmbeddedRuntime ? '/skills' : '/api/skills'}/${encodeURIComponent(name)}${suffix}`
+    const url = this.usesEmbeddedRuntime ? `${this.baseUrl}/v1${path}` : `${this.baseUrl}${path}`
+    const res = this.usesEmbeddedRuntime
+      ? await this.runtimeFetch(path, { method: 'DELETE' })
+      : await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Remove Skill failed')
+    return res.json()
+  }
+
   async getPermission(): Promise<PermissionInfo> {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/permission`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/permission`, 'Get permission failed')
@@ -1041,11 +1123,15 @@ export class HakusAIClient {
         await this._throwForResponse(workspaceResponse, workspaceUrl, 'Set Runtime project workspace failed')
       }
     }
+    // The shared Runtime already treats `$skill-name` as an explicit Skill
+    // invocation. Keep the desktop UI's @ mention syntax while translating
+    // only the wire prompt on Android.
+    const runtimePrompt = toRuntimeSkillMentions(message)
     const start = await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}/turns`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        prompt: message,
+        prompt: runtimePrompt,
         ...(provider ? { model: provider } : {}),
         ...(runMode ? { mode: runMode } : {}),
       }),

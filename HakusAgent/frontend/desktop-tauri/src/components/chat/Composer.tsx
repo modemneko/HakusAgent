@@ -27,6 +27,7 @@ import {
   Square,
   Terminal,
   Volume2,
+  WandSparkles,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -339,6 +340,7 @@ export function Composer({
   const composingRef = useRef(false)
   const prevSessionIdRef = useRef<string | undefined>(undefined)
   const attachmentsRef = useRef<Attachment[]>([])
+  const mentionCacheRef = useRef<{ projectId: string | null; loadedAt: number; items: MentionItem[] } | null>(null)
 
   const sendOnEnter = useSettingsStore((s) => s.sendOnEnter)
   const providers = useSettingsStore((s) => s.providers)
@@ -489,23 +491,48 @@ export function Composer({
   }
 
   const loadMentionItems = useCallback(async () => {
+    const cached = mentionCacheRef.current
+    if (
+      cached &&
+      cached.projectId === activeProjectId &&
+      Date.now() - cached.loadedAt < 15_000
+    ) {
+      setMentionItems(cached.items)
+      return
+    }
+
     setMentionItems(BASE_MENTION_ITEMS)
     setMentionLoading(true)
     try {
-      const files = await apiClient.listFiles()
+      const [filesResult, skillsResult] = await Promise.allSettled([
+        apiClient.listFiles(),
+        apiClient.listSkills(activeProjectId || undefined),
+      ])
+      const files = filesResult.status === 'fulfilled' ? filesResult.value : []
       const fileItems: MentionItem[] = files.map((file) => ({
         label: file.filename,
         insert: `@file:${file.filename}`,
         hint: `${formatSize(file.size)} · ${file.is_text ? 'text' : 'file'}`,
         icon: file.content_type?.startsWith('image/') ? ImageIcon : FileText,
       }))
-      setMentionItems([...BASE_MENTION_ITEMS, ...fileItems])
+      const skills = skillsResult.status === 'fulfilled' ? skillsResult.value.skills : []
+      const skillItems: MentionItem[] = skills
+        .filter((skill) => skill.enabled)
+        .map((skill) => ({
+          label: skill.name,
+          insert: `@skill:${skill.name}`,
+          hint: `Skill · ${skill.description}`,
+          icon: WandSparkles,
+        }))
+      const items = [...BASE_MENTION_ITEMS, ...skillItems, ...fileItems]
+      mentionCacheRef.current = { projectId: activeProjectId, loadedAt: Date.now(), items }
+      setMentionItems(items)
     } catch {
       setMentionItems(BASE_MENTION_ITEMS)
     } finally {
       setMentionLoading(false)
     }
-  }, [])
+  }, [activeProjectId])
 
   const updateMentionState = (nextValue: string, cursor: number) => {
     const mention = mentionQueryFrom(nextValue, cursor)
@@ -867,7 +894,7 @@ export function Composer({
               className="absolute bottom-full left-2 z-50 mb-2 max-h-72 w-[340px] overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
             >
               <div className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground">
-                <span>@ context</span>
+                <span>@ 上下文与 Skills</span>
                 {mentionLoading && <Loader2 className="h-3 w-3 animate-spin" />}
               </div>
               {filteredMentionItems.length === 0 ? (

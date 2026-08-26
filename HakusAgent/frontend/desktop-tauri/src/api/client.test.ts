@@ -13,7 +13,7 @@
  *   cd frontend/client && npx vitest run src/api/client.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { HakusAIClient } from './client'
+import { HakusAIClient, toRuntimeSkillMentions } from './client'
 
 // ============================================================================
 // Mock WebSocket — 收集实例, 模拟 readyState / send / close
@@ -400,5 +400,49 @@ describe('HakusAIClient getMetrics (Phase 5)', () => {
     const metrics = await client.getMetrics()
 
     expect(metrics).toBeNull()
+  })
+})
+
+describe('HakusAIClient Skills', () => {
+  let originalFetch: typeof fetch
+
+  beforeEach(() => {
+    originalFetch = global.fetch
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    vi.restoreAllMocks()
+  })
+
+  it('lists Skills for the selected project', async () => {
+    const payload = {
+      directory: 'C:/Users/test/.hakus/skills',
+      directories: [],
+      warnings: [],
+      skills: [],
+    }
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => payload,
+    })
+    ;(global as any).fetch = mockFetch
+
+    const client = new HakusAIClient('http://localhost:8080')
+    await expect(client.listSkills('project one')).resolves.toEqual(payload)
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/skills?project_id=project%20one',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('converts only explicit Skill mentions for the embedded Runtime', () => {
+    expect(toRuntimeSkillMentions('Use @skill:review-code and @skill:test_2.')).toBe(
+      'Use $review-code and $test_2.',
+    )
+    expect(toRuntimeSkillMentions('mail@example.com x@skill:no @@skill:no')).toBe(
+      'mail@example.com x@skill:no @@skill:no',
+    )
   })
 })
