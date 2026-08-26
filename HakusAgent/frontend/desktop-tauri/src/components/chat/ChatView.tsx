@@ -866,7 +866,7 @@ export function ChatView() {
 // 1. 标题改成「问候式」语气（你好，我是 HakusAI），更像助手打招呼。
 // 2. 4 个入口从「长条形胶囊」改成「正方形卡片」：图标在顶部、文字在下方，
 //    水平并列摆放（flex-row + gap），整体居中。
-// 3. 容器变窄时自动隐藏放不下的卡片（ResizeObserver 测量 + slice），避免挤压换行。
+// 3. 容器变窄时通过 CSS 网格重排，所有入口始终保留。
 // =============================================================================
 interface StarterCard {
   icon: typeof Rocket
@@ -881,30 +881,7 @@ const STARTER_CARDS: StarterCard[] = [
   { icon: Bug, label: '修复问题', prompt: '帮我修复一个 bug 或失败的测试' },
 ]
 
-// 单张卡片固定宽度（与下方 w-32 = 8rem = 128px 对齐）+ gap-3 = 12px
-const CARD_W = 128
-const CARD_GAP = 12
-
 function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: (prompt: string) => void }) {
-  // 测量容器宽度，决定能放下几张卡片（最少 1 张，最多 4 张）。
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [visibleCount, setVisibleCount] = useState(4)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const update = () => {
-      const w = el.clientWidth
-      // 能放 n 张需要：n * CARD_W + (n-1) * CARD_GAP
-      const n = Math.floor((w + CARD_GAP) / (CARD_W + CARD_GAP))
-      setVisibleCount(Math.max(1, Math.min(STARTER_CARDS.length, n)))
-    }
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
   return (
     <div className="empty-state-hero flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
@@ -919,9 +896,9 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
         </p>
       </div>
       {/* ref 容器只用来测宽，本身不可见；内层 flex 真正承载卡片 */}
-      <div ref={containerRef} className="starter-card-grid w-full max-w-xl">
+      <div className="starter-card-grid w-full max-w-xl">
         <div className="flex justify-center gap-3">
-          {STARTER_CARDS.slice(0, visibleCount).map((card) => {
+          {STARTER_CARDS.map((card) => {
             const Icon = card.icon
             return (
               <button

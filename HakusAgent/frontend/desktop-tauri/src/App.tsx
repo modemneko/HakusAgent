@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
 const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
 const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
+const PHONE_MEDIA_QUERY = '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
 function App() {
   const mountedAt = useRef(Date.now())
@@ -36,7 +37,7 @@ function App() {
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
 
   const isPhoneViewport = () =>
-    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches
+    typeof window !== 'undefined' && window.matchMedia?.(PHONE_MEDIA_QUERY).matches
 
   const toggleSidebar = () => {
     const next = !useAppStore.getState().sidebarOpen
@@ -247,7 +248,7 @@ function App() {
   // preference when the viewport enters the phone breakpoint.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
-    const phoneQuery = window.matchMedia('(max-width: 767px)')
+    const phoneQuery = window.matchMedia(PHONE_MEDIA_QUERY)
     const closePhonePanels = () => {
       if (!phoneQuery.matches) return
       setSidebar(false)
@@ -267,7 +268,7 @@ function App() {
       <TooltipProvider delayDuration={300}>
         <div
           data-testid="app-shell"
-          className="app-shell flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground"
+          className="app-shell flex h-screen w-full max-w-full flex-col overflow-hidden bg-background text-foreground"
           style={{
             opacity: appReady ? 1 : 0,
             transition: 'opacity 0.3s ease-in',

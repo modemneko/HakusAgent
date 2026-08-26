@@ -146,6 +146,10 @@
   body,
   #root {
     height: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 100%;
   }
   body {
     @apply bg-background text-foreground;
@@ -371,8 +375,14 @@
  * layouts follow the same rules.
  * ====================================================================== */
 .app-shell {
+  width: 100%;
+  max-width: 100%;
+  height: 100vh;
   height: 100dvh;
-  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .app-panel-scrim {
@@ -425,11 +435,7 @@
   }
 }
 
-@media (max-width: 767px) {
-  .app-shell {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
   .app-panel-scrim[data-sidebar-open="true"] {
     display: block;
   }
@@ -574,7 +580,7 @@
   display: none;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
   .dark {
     --primary: 265 58% 70%;
     --border: 220 10% 25%;
@@ -867,6 +873,94 @@
   }
 }
 
+/* Short landscape windows need a denser composition than portrait phones.
+   This covers phones in landscape as well as split-screen/foldable windows
+   without relying on a device model or user-agent. */
+@media (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+  .titlebar {
+    height: calc(3rem + env(safe-area-inset-top));
+    min-height: calc(3rem + env(safe-area-inset-top));
+  }
+
+  .topbar-icon-button,
+  .topbar-settings-button {
+    width: 2.5rem !important;
+    height: 2.5rem !important;
+  }
+
+  .empty-state-hero {
+    gap: 0.5rem;
+    padding-top: 0.625rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .empty-state-hero > div:first-child {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.875rem;
+  }
+
+  .empty-state-hero p:first-child {
+    font-size: 0.9rem;
+  }
+
+  .empty-state-hero p:last-child {
+    display: none;
+  }
+
+  .starter-card-grid {
+    max-width: 22rem;
+  }
+
+  .starter-card-grid button {
+    min-height: 4.75rem;
+    padding: 0.5rem 0.625rem;
+  }
+
+  .starter-card-grid button > span:first-child {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .composer-shell {
+    padding-top: 0.375rem;
+  }
+
+  .composer-box > textarea {
+    min-height: 2.5rem;
+    max-height: 6rem;
+  }
+
+  .composer-options > button,
+  .composer-actions > button {
+    width: 2.5rem;
+    min-width: 2.5rem;
+    height: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  .settings-dialog-header {
+    padding-top: 0.75rem;
+    padding-bottom: 0.625rem;
+  }
+
+  .settings-dialog-mobile-picker {
+    min-height: 2.75rem;
+    padding-top: 0.375rem;
+    padding-bottom: 0.375rem;
+  }
+
+  .settings-dialog-panel > div {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .settings-dialog-footer {
+    min-height: 3.5rem;
+    padding-top: 0.375rem;
+  }
+}
+
 /* Markdown rendering styles */
 .markdown-body {
   @apply text-sm leading-6;
@@ -1025,7 +1119,7 @@
  * surface gets its own material layer: safe-area aware, translucent, and
  * touch-first. This block intentionally stays below the phone breakpoint.
  * ====================================================================== */
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
   :root:not(.dark) {
     --primary: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
@@ -1164,7 +1258,7 @@
  * an explicit viewport boundary because they do not inherit the composer or
  * settings panel's width.
  * ====================================================================== */
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
   .sidebar-wrapper,
   .right-panel-wrapper {
     box-sizing: border-box;
