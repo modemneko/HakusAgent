@@ -22,7 +22,7 @@ const DropdownMenuContent = React.forwardRef<
         // macOS-style: larger radius, frosted glass, soft shadow.
         // backdrop-blur-2xl + bg-popover/70 gives the translucent look
         // that lets the underlying chat content show through subtly.
-        'z-50 min-w-[10rem] overflow-hidden rounded-2xl border border-border/50 bg-popover/70 p-1.5 text-popover-foreground shadow-lg backdrop-blur-2xl',
+        'z-50 min-w-[10rem] max-w-[calc(100vw-1rem)] max-h-[min(70vh,32rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-border/50 bg-popover/70 p-1.5 text-popover-foreground shadow-lg backdrop-blur-2xl',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95',
         className,
       )}
@@ -103,7 +103,7 @@ const DropdownMenuSubContent = React.forwardRef<
     <DropdownMenuPrimitive.SubContent
       ref={ref}
       className={cn(
-        'z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0',
+        'z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] max-h-[min(70vh,32rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0',
         className,
       )}
       {...props}

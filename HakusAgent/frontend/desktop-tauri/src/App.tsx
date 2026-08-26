@@ -35,6 +35,21 @@ function App() {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
 
+  const isPhoneViewport = () =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches
+
+  const toggleSidebar = () => {
+    const next = !useAppStore.getState().sidebarOpen
+    setSidebar(next)
+    if (next && isPhoneViewport()) setRightPanelOpen(false)
+  }
+
+  const toggleRightPanel = () => {
+    const next = !useAppStore.getState().rightPanelOpen
+    setRightPanelOpen(next)
+    if (next && isPhoneViewport()) setSidebar(false)
+  }
+
   const loadSessions = useSessionStore((s) => s.loadFromServer)
   const migrateSessions = useSessionStore((s) => s.migrateFromLocalStorage)
   const loadSettings = useSettingsStore((s) => s.load)
@@ -301,8 +316,8 @@ function App() {
 
             <div className="app-content flex min-h-0 min-w-0 flex-1 flex-col">
               <TopBar
-                onToggleSidebar={() => useAppStore.getState().toggleSidebar()}
-                onToggleRightPanel={() => useAppStore.getState().toggleRightPanel()}
+                onToggleSidebar={toggleSidebar}
+                onToggleRightPanel={toggleRightPanel}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
               <ChatView />

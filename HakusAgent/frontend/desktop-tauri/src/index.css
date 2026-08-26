@@ -392,12 +392,18 @@
     z-index: 40;
     width: min(86vw, 560px) !important;
     transform: translateX(100%);
+    visibility: hidden;
+    pointer-events: none;
     overflow: visible !important;
     box-shadow: var(--shadow-lg);
+    transition: transform 200ms ease-out, visibility 0s linear 200ms !important;
   }
 
   .right-panel-wrapper[data-panel-open="true"] {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s !important;
   }
 
   .right-panel-wrapper .right-panel {
@@ -436,12 +442,18 @@
     z-index: 40;
     width: min(86vw, 340px) !important;
     transform: translateX(-100%);
+    visibility: hidden;
+    pointer-events: none;
     overflow: visible !important;
     box-shadow: var(--shadow-lg);
+    transition: transform 200ms ease-out, visibility 0s linear 200ms !important;
   }
 
   .sidebar-wrapper[data-panel-open="true"] {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s !important;
   }
 
   .sidebar-wrapper .sidebar {
@@ -501,50 +513,6 @@
     min-width: 0;
   }
 
-  .settings-dialog-content {
-    width: calc(100vw - 1rem);
-    max-width: none;
-    height: min(92dvh, 720px) !important;
-    max-height: 92dvh !important;
-  }
-
-  .settings-dialog-body {
-    flex-direction: column;
-  }
-
-  .settings-dialog-nav {
-    width: 100%;
-    max-height: 56px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: 0;
-    border-bottom: 1px solid hsl(var(--border) / 0.7);
-    padding: 0.375rem;
-  }
-
-  .settings-dialog-nav ul {
-    display: flex;
-    min-width: max-content;
-    gap: 0.25rem;
-  }
-
-  .settings-dialog-nav button {
-    width: auto;
-    min-height: 36px;
-    white-space: nowrap;
-  }
-
-  .settings-dialog-panel > div {
-    padding: 1rem;
-  }
-
-  .settings-dialog-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-  }
-
   .chat-timeline {
     width: 100%;
     padding-top: 0.75rem;
@@ -561,65 +529,6 @@
   .chat-message-body,
   .chat-tool-call-body {
     max-width: calc(100% - 2.5rem) !important;
-  }
-
-  .composer-shell {
-    padding-right: max(0.75rem, env(safe-area-inset-right));
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-    padding-left: max(0.75rem, env(safe-area-inset-left));
-  }
-
-  .composer-inner {
-    width: 100%;
-    max-width: none;
-  }
-
-  .composer-box {
-    border-radius: 18px;
-    padding: 0.5rem;
-  }
-
-  .composer-controls {
-    align-items: center;
-    flex-wrap: nowrap;
-    gap: 0.375rem;
-  }
-
-  .composer-options {
-    flex: 1 1 auto;
-    min-width: 0;
-    gap: 0.25rem;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .composer-options::-webkit-scrollbar {
-    display: none;
-  }
-
-  .composer-options > button,
-  .composer-options [role="button"] {
-    min-height: 40px;
-  }
-
-  .composer-options .composer-project-trigger {
-    max-width: 42vw;
-  }
-
-  .composer-actions {
-    flex: 0 0 auto;
-    margin-left: auto;
-  }
-
-  .composer-actions > button {
-    min-width: 40px;
-    min-height: 40px;
-  }
-
-  .composer-tip {
-    padding-right: 0.25rem;
-    padding-left: 0.25rem;
   }
 
   .empty-state-hero {
@@ -1244,5 +1153,62 @@
     border: 1px solid hsl(var(--foreground) / 0.12);
     background: hsl(var(--card) / 0.58);
     border-radius: 999px;
+  }
+}
+
+/* ========================================================================
+ * Mobile overlay contract
+ *
+ * Panel wrappers stay mounted so their transitions are smooth, but a closed
+ * wrapper must be invisible and inert. Portal-based menus/dialogs also need
+ * an explicit viewport boundary because they do not inherit the composer or
+ * settings panel's width.
+ * ====================================================================== */
+@media (max-width: 767px) {
+  .sidebar-wrapper,
+  .right-panel-wrapper {
+    box-sizing: border-box;
+    transition: transform 200ms ease-out, visibility 0s linear 200ms !important;
+    will-change: transform;
+  }
+
+  .sidebar-wrapper:not([data-panel-open="true"]),
+  .right-panel-wrapper:not([data-panel-open="true"]) {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"] {
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s !important;
+  }
+
+  .app-panel-scrim {
+    box-sizing: border-box;
+    touch-action: none;
+  }
+
+  [data-radix-menu-content],
+  [data-radix-menu-sub-content] {
+    box-sizing: border-box;
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100dvh - 1rem) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+
+  /* Settings contains a few secondary dialogs (model list, keys, headers).
+     Keep those dialogs centered and scrollable without changing the main
+     settings sheet, which intentionally remains full-screen on phones. */
+  [data-radix-dialog-content]:not(.settings-dialog-content) {
+    box-sizing: border-box;
+    width: calc(100vw - 1rem) !important;
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100dvh - 1rem) !important;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
