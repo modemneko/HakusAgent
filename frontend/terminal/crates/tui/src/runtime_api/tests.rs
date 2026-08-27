@@ -6318,6 +6318,125 @@ async fn api_surfaces_only_configured_model_for_custom_provider_route() -> Resul
 }
 
 #[tokio::test]
+async fn named_custom_provider_runtime_routes_keep_exact_identity_for_gui_config() -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "hakus-config-named-custom-runtime-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root)?;
+    let config_file = root.join("custom-config.toml");
+    fs::write(
+        &config_file,
+        r#"provider = "deepseek"
+default_text_model = "deepseek-v4-pro"
+
+[providers.my-provider]
+kind = "openai-compatible"
+base_url = "https://example.com/v1"
+model = "example-model"
+api_key = "example-key"
+"#,
+    )?;
+
+    let Some((addr, _runtime_threads, handle)) =
+        spawn_test_server_with_config_path(config_file.clone()).await?
+    else {
+        return Ok(());
+    };
+    let client = crate::tls::reqwest_client();
+
+    let providers = get_providers(&client, &addr).await;
+    assert!(
+        providers["providers"]
+            .as_array()
+            .is_some_and(|entries| entries.iter().any(|entry| {
+                entry["id"].as_str() == Some("my-provider")
+                    && entry["base_url"].as_str() == Some("https://example.com/v1")
+            })),
+        "named custom provider must keep its exact id in GET /v1/providers: {providers}"
+    );
+
+    let initial_models = get_provider_models(&client, &addr, "my-provider").await;
+    assert_eq!(initial_models["provider"].as_str(), Some("my-provider"));
+    assert_eq!(
+        initial_models["models"][0]["id"].as_str(),
+        Some("example-model")
+    );
+
+    let update = client
+        .post(format!("http://{addr}/v1/providers/my-provider"))
+        .json(&serde_json::json!({
+            "model_name": "updated-model",
+            "base_url": "https://example.org/v1"
+        }))
+        .send()
+        .await?;
+    assert_eq!(update.status(), StatusCode::OK);
+
+    let headers = serde_json::json!({
+        "headers": {
+            "X-Hakus-Client": "desktop"
+        }
+    });
+    let response = client
+        .put(format!("http://{addr}/v1/providers/my-provider/headers"))
+        .json(&headers)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = client
+        .get(format!("http://{addr}/v1/providers/my-provider/headers"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let headers_body: serde_json::Value = response.json().await?;
+    assert_eq!(headers_body["provider"].as_str(), Some("my-provider"));
+    assert_eq!(
+        headers_body["headers"]["X-Hakus-Client"].as_str(),
+        Some("desktop")
+    );
+
+    let updated_models = get_provider_models(&client, &addr, "my-provider").await;
+    assert_eq!(
+        updated_models["models"],
+        serde_json::json!([{ "id": "updated-model" }])
+    );
+
+    let (status, switched) =
+        post_switch_provider(&client, &addr, "my-provider", &serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK, "switch response: {switched}");
+    assert_eq!(switched["provider"].as_str(), Some("my-provider"));
+    assert_eq!(switched["model"].as_str(), Some("updated-model"));
+
+    let persisted = fs::read_to_string(&config_file)?;
+    let persisted: toml::Value = toml::from_str(&persisted)?;
+    assert_eq!(persisted["provider"].as_str(), Some("my-provider"));
+    assert_eq!(
+        persisted["providers"]["my-provider"]["base_url"].as_str(),
+        Some("https://example.org/v1")
+    );
+    assert_eq!(
+        persisted["providers"]["my-provider"]["model"].as_str(),
+        Some("updated-model")
+    );
+    assert_eq!(
+        persisted["providers"]["my-provider"]["http_headers"]["X-Hakus-Client"].as_str(),
+        Some("desktop")
+    );
+    assert!(
+        persisted
+            .get("providers")
+            .and_then(|providers| providers.get("custom"))
+            .is_none(),
+        "named custom provider must not be compressed into [providers.custom]"
+    );
+
+    handle.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn api_surfaces_only_active_model_when_runtime_route_passes_ids_through() -> Result<()> {
     let root = std::env::temp_dir().join(format!(
         "hakus-config-runtime-pass-through-{}",

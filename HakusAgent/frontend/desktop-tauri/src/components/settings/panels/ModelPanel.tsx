@@ -309,12 +309,12 @@ export function ModelPanel() {
     setHeadersDialogOpen(true)
     try {
       const h = await apiClient.getProviderHeaders(selected.id)
-      setHeaderEntries(Object.entries(h).map(([k, v]) => ({ k, v })))
+      const entries = Object.entries(h).map(([k, v]) => ({ k, v }))
+      setHeaderEntries(entries.length > 0 ? entries : [{ k: '', v: '' }])
     } catch (e: any) {
       toast.error(`加载 Header 失败：${e?.message || e}`)
-      setHeaderEntries([])
+      setHeaderEntries([{ k: '', v: '' }])
     }
-    if (headerEntries.length === 0) setHeaderEntries([{ k: '', v: '' }])
   }
 
   const handleSaveHeaders = async () => {
@@ -362,7 +362,7 @@ export function ModelPanel() {
           <div className="mb-1 font-medium">加载 Provider 列表失败</div>
           <div className="break-all text-[12px] text-red-500/80">{providersError.message}</div>
           <div className="mt-2 text-[11px] text-muted-foreground">
-            请确认 backend 已启动且 /api/config/providers 可访问。
+            请确认 Rust Runtime 已启动且 /v1/providers 可访问。
             可尝试「高级 → 重启 Backend」或在「连接」页检查服务地址。
           </div>
         </div>
@@ -498,7 +498,7 @@ export function ModelPanel() {
                   <><ListPlus className="mr-1.5 h-3.5 w-3.5" /> 获取模型列表</>
                 )}
               </Button>
-              {selected.id !== 'ollama' && (
+              {selected.supports_multi_key !== false && selected.id !== 'ollama' && (
                 <Button variant="outline" size="sm" onClick={handleOpenKeys}>
                   <KeyRound className="mr-1.5 h-3.5 w-3.5" /> 多 Key 管理
                 </Button>

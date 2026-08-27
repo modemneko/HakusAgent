@@ -1,6 +1,3 @@
-#[cfg(not(target_os = "android"))]
-mod backend;
-#[cfg(target_os = "android")]
 mod embedded_backend;
 #[cfg(not(target_os = "android"))]
 mod shortcut_cmds;
@@ -10,8 +7,6 @@ mod tray_cmds;
 #[cfg(not(target_os = "android"))]
 mod window_cmds;
 
-#[cfg(not(target_os = "android"))]
-use backend::BackendState;
 #[cfg(not(target_os = "android"))]
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -43,13 +38,13 @@ fn read_tray_settings(app: &tauri::AppHandle) -> (bool, bool) {
     (tray_enabled, minimize_to_tray)
 }
 
-/// Kill the spawned Python backend child process if it is still running.
+/// Stop the in-process Rust Runtime API if it is still running.
 /// Called from every exit path (close button, tray quit, Alt+F4, process kill)
-/// so the backend doesn't linger as an orphan after the UI disappears.
+/// so the runtime task does not linger after the UI disappears.
 #[cfg(not(target_os = "android"))]
 fn kill_backend(app: &tauri::AppHandle) {
-    if let Some(state) = app.try_state::<BackendState>() {
-        state.kill_child();
+    if let Some(state) = app.try_state::<embedded_backend::EmbeddedBackendState>() {
+        state.stop();
     }
 }
 
@@ -128,18 +123,20 @@ pub fn run() {
     #[cfg(not(target_os = "android"))]
     {
         builder = builder
-            .plugin(tauri_plugin_shell::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_global_shortcut::Builder::new().build())
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_dialog::init())
-            .manage(BackendState::new())
-            // Desktop-only setup: start the bundled Python server and tray.
+            // Desktop-only setup: start the shared Rust Runtime API and tray.
             .setup(|app| {
-                // spawn_backend() is non-blocking — it just calls shell.spawn()
-                // and kicks off an async log reader. No need for spawn_blocking.
-                match backend::spawn_backend(app.handle()) {
-                    Ok(port) => eprintln!("[setup] Backend auto-started, port = {port}"),
+                match embedded_backend::EmbeddedBackendState::start(app.handle()) {
+                    Ok(state) => {
+                        app.manage(state);
+                        eprintln!(
+                            "[setup] Rust Runtime auto-started, port = {}",
+                            embedded_backend::EMBEDDED_BACKEND_PORT
+                        );
+                    }
                     Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
                 }
 
@@ -171,7 +168,7 @@ pub fn run() {
                             let _ = tray.set_visible(true);
                         }
                     } else {
-                        // Actually closing — kill the backend so it doesn't
+                        // Actually closing — stop the runtime so it doesn't
                         // outlive the UI. The RunEvent::Exit handler below is
                         // a backup, but killing here ensures the backend dies
                         // even if some other window keeps the app alive.
@@ -212,13 +209,13 @@ pub fn run() {
 
     #[cfg(not(target_os = "android"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
-        // Backend
-        backend::backend_status,
-        backend::backend_logs,
-        backend::backend_start,
-        backend::backend_stop,
-        backend::backend_restart,
-        backend::backend_health,
+        // Rust Runtime API
+        embedded_backend::backend_status,
+        embedded_backend::backend_logs,
+        embedded_backend::backend_start,
+        embedded_backend::backend_stop,
+        embedded_backend::backend_restart,
+        embedded_backend::backend_health,
         // Store (was electron-store)
         store_cmds::store_get,
         store_cmds::store_set,

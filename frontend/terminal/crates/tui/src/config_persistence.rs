@@ -252,6 +252,83 @@ pub(crate) fn persist_provider_base_url_key(
     Ok(path)
 }
 
+/// Persist (or clear) the endpoint owned by one exact provider identity.
+///
+/// DeepSeek and the legacy root-level custom route own the root `base_url`;
+/// every other route owns its provider table. Keeping this decision here
+/// prevents GUI callers from accidentally writing a DeepSeek endpoint into a
+/// provider table or a named custom endpoint into the shared root field.
+pub(crate) fn persist_provider_base_url_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    value: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    let normalized = value.map(str::trim).filter(|value| !value.is_empty());
+    let is_legacy_literal_custom = provider == ApiProvider::Custom
+        && provider_identity.trim().eq_ignore_ascii_case(ApiProvider::Custom.as_str());
+
+    let segments: Vec<String> = if matches!(provider, ApiProvider::Deepseek | ApiProvider::DeepseekCN)
+        || is_legacy_literal_custom
+    {
+        vec!["base_url".to_string()]
+    } else {
+        let provider_key = if provider == ApiProvider::Custom {
+            normalize_custom_provider_id(provider_identity)?
+        } else {
+            provider_base_url_table_key(provider)?.to_string()
+        };
+        vec!["providers".to_string(), provider_key, "base_url".to_string()]
+    };
+    let refs: Vec<&str> = segments.iter().map(String::as_str).collect();
+    mutate_config_document(&path, |doc| match normalized {
+        Some(value) => set_document_value(doc, &refs, value),
+        None => unset_document_value(doc, &refs).map(|_| ()),
+    })?;
+    Ok(path)
+}
+
+/// Persist one provider's complete custom-header map. Header values are
+/// intentionally kept in the same provider-owned table used by the runtime;
+/// callers must not route them through the global root map for named custom
+/// providers.
+pub(crate) fn persist_provider_headers_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    headers: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    let is_root = matches!(provider, ApiProvider::Deepseek | ApiProvider::DeepseekCN)
+        || (provider == ApiProvider::Custom
+            && provider_identity.trim().eq_ignore_ascii_case(ApiProvider::Custom.as_str()));
+    let provider_key = if is_root {
+        None
+    } else if provider == ApiProvider::Custom {
+        Some(normalize_custom_provider_id(provider_identity)?)
+    } else {
+        Some(provider_base_url_table_key(provider)?.to_string())
+    };
+    let mut table = toml_edit::InlineTable::new();
+    for (name, value) in headers {
+        table.insert(name, toml_edit::Value::from(value.as_str()));
+    }
+    let segments: Vec<String> = match provider_key {
+        Some(key) => vec!["providers".to_string(), key, "http_headers".to_string()],
+        None => vec!["http_headers".to_string()],
+    };
+    let refs: Vec<&str> = segments.iter().map(String::as_str).collect();
+    mutate_config_document(&path, |doc| {
+        if table.is_empty() {
+            unset_document_value(doc, &refs).map(|_| ())
+        } else {
+            set_document_value(doc, &refs, toml_edit::Value::InlineTable(table))
+        }
+    })?;
+    Ok(path)
+}
+
 /// Persist the model for one exact provider route without rewriting the
 /// legacy root DeepSeek fallback used by unrelated providers.
 ///

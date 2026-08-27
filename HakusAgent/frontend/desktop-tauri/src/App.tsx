@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils'
 
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
 const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
+const IS_RUST_PREVIEW = typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('backend')?.toLowerCase() === 'rust'
 const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
 const PHONE_MEDIA_QUERY = '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
@@ -165,11 +167,11 @@ function App() {
     return () => clearTimeout(t)
   }, [IS_TAURI, showSplash, tryDismissSplash])
 
-  // Android starts the Rust Runtime API in-process. Keep the loopback default
-  // pointed at that local service, while still allowing a user-configured LAN
-  // URL to act as a remote server.
+  // Android/Tauri and the explicit browser preview use the Rust Runtime API.
+  // Keep the loopback default pointed at that local service, while still
+  // allowing a user-configured LAN URL to act as a remote server on Android.
   useEffect(() => {
-    if (!IS_ANDROID) return
+    if (!IS_ANDROID && !IS_RUST_PREVIEW) return
     let cancelled = false
     void (async () => {
       await loadSettings()

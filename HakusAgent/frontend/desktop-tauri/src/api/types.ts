@@ -161,6 +161,17 @@ export interface ProviderInfo {
   model_name: string
   base_url: string
   is_default: boolean
+  default_base_url?: string
+  default_model?: string
+  has_model_catalog?: boolean
+  env_vars?: string[]
+  has_custom_headers?: boolean
+  group?: string
+  auth_mode?: string
+  supports_connection_test?: boolean
+  supports_live_models?: boolean
+  supports_headers?: boolean
+  supports_multi_key?: boolean
 }
 
 export interface ProvidersResponse {

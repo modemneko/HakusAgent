@@ -33,7 +33,10 @@ pub fn shortcuts_set_accelerator(
     }
 
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set("shortcutAccelerator", serde_json::Value::String(accelerator.clone()));
+    store.set(
+        "shortcutAccelerator",
+        serde_json::Value::String(accelerator.clone()),
+    );
     store.save().map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
@@ -45,7 +48,6 @@ pub fn shortcuts_set_accelerator(
 #[tauri::command]
 pub fn shortcuts_validate(accelerator: String) -> Result<serde_json::Value, String> {
     // Basic syntax check
-    let valid = !accelerator.is_empty()
-        && accelerator.chars().any(|c| c.is_ascii_alphabetic());
+    let valid = !accelerator.is_empty() && accelerator.chars().any(|c| c.is_ascii_alphabetic());
     Ok(serde_json::json!({"valid": valid}))
 }

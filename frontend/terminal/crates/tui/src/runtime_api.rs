@@ -6,7 +6,7 @@ use std::fs;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_stream::stream;
@@ -1155,8 +1155,23 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/snapshots", get(list_snapshots))
         .route("/v1/snapshots/{id}/restore", post(restore_snapshot))
         .route("/v1/providers", get(list_providers))
-        .route("/v1/providers/{id}/models", get(list_provider_models))
+        .route(
+            "/v1/providers/{id}",
+            post(update_provider),
+        )
+        .route(
+            "/v1/providers/{id}/models",
+            get(list_provider_models).post(fetch_provider_models),
+        )
+        .route(
+            "/v1/providers/{id}/test",
+            post(test_provider_connection),
+        )
         .route("/v1/providers/{id}/switch", post(switch_provider))
+        .route(
+            "/v1/providers/{id}/headers",
+            get(get_provider_headers).put(set_provider_headers),
+        )
         .route("/v1/config", get(get_config).post(set_config))
         .route("/v1/config/reload", post(reload_config))
         .route(
@@ -5254,6 +5269,24 @@ struct ProviderEntry {
     /// API key environment variable candidates, e.g. `["DEEPSEEK_API_KEY"]`.
     /// The GUI may surface these in a tooltip when auth is missing.
     env_vars: Vec<String>,
+    /// Current effective model for this route.
+    model: String,
+    /// Current effective endpoint for this route.
+    base_url: String,
+    /// Whether a usable credential (or an explicitly keyless route) exists.
+    has_api_key: bool,
+    /// Redacted credential, never the secret itself.
+    masked_api_key: String,
+    /// Whether this route owns a custom header map.
+    has_custom_headers: bool,
+    /// UI grouping derived from the shared provider registry.
+    group: String,
+    /// Effective auth mode, such as `api_key`, `oauth`, or `none`.
+    auth_mode: String,
+    supports_connection_test: bool,
+    supports_live_models: bool,
+    supports_headers: bool,
+    supports_multi_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5275,6 +5308,248 @@ struct ProviderModelEntry {
 struct ProviderModelsResponse {
     provider: String,
     models: Vec<ProviderModelEntry>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProviderUpdateRequest {
+    #[serde(default)]
+    model_name: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    set_as_default: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ProviderUpdateResponse {
+    provider: String,
+    model: String,
+    base_url: String,
+    key_saved: bool,
+    set_as_default: bool,
+    message: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProviderProbeRequest {
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    timeout: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProviderProbeResponse {
+    ok: bool,
+    message: String,
+    detail: Option<String>,
+    latency_ms: Option<u128>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProviderHeadersRequest {
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+}
+
+fn provider_group(provider: ApiProvider) -> &'static str {
+    match provider {
+        ApiProvider::Ollama
+        | ApiProvider::OllamaCloud
+        | ApiProvider::Sglang
+        | ApiProvider::Vllm
+        | ApiProvider::Openmodel => "本地 / 自托管",
+        ApiProvider::Deepseek
+        | ApiProvider::DeepseekCN
+        | ApiProvider::DeepseekAnthropic
+        | ApiProvider::Openai
+        | ApiProvider::Anthropic
+        | ApiProvider::Xai
+        | ApiProvider::Google
+        | ApiProvider::Mistral
+        | ApiProvider::OpenaiCodex => "国际服务",
+        ApiProvider::NvidiaNim
+        | ApiProvider::Openrouter
+        | ApiProvider::Orcarouter
+        | ApiProvider::Novita
+        | ApiProvider::Fireworks
+        | ApiProvider::Siliconflow
+        | ApiProvider::SiliconflowCn
+        | ApiProvider::Together
+        | ApiProvider::Edenai
+        | ApiProvider::Telecomjs
+        | ApiProvider::Arcee => "聚合 / 中转",
+        ApiProvider::Custom => "自定义",
+        _ => "国内服务",
+    }
+}
+
+fn mask_provider_key(key: &str) -> String {
+    let key = key.trim();
+    let chars: Vec<char> = key.chars().collect();
+    if chars.is_empty() {
+        return String::new();
+    }
+    if chars.len() <= 8 {
+        return format!("{}...", chars.iter().take(2).collect::<String>());
+    }
+    format!(
+        "{}...{}",
+        chars.iter().take(4).collect::<String>(),
+        chars[chars.len() - 4..].iter().collect::<String>()
+    )
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeProviderRoute {
+    provider: ApiProvider,
+    identity: String,
+}
+
+impl RuntimeProviderRoute {
+    fn id(&self) -> &str {
+        &self.identity
+    }
+}
+
+fn provider_route_config_for_identity(
+    config: &Config,
+    identity: &str,
+) -> Config {
+    let mut route = config.clone();
+    route.provider = Some(identity.to_string());
+    route
+}
+
+fn provider_entry_for_identity(
+    config: &Config,
+    active_provider: ApiProvider,
+    active_identity: &str,
+    provider: ApiProvider,
+    identity: &str,
+    display_name: &str,
+) -> ProviderEntry {
+    let route = provider_route_config_for_identity(config, identity);
+    let model = route.default_model();
+    let base_url = route.deepseek_base_url();
+    let has_api_key = crate::config::has_api_key_for(&route, provider);
+    let key = route
+        .deepseek_api_key_read_only()
+        .ok()
+        .filter(|key| !key.trim().is_empty());
+    let has_custom_headers = if matches!(provider, ApiProvider::Deepseek | ApiProvider::DeepseekCN) {
+        route.http_headers.as_ref().is_some_and(|headers| !headers.is_empty())
+    } else {
+        route
+            .provider_config_for(provider)
+            .and_then(|entry| entry.http_headers.as_ref())
+            .is_some_and(|headers| !headers.is_empty())
+    };
+    let auth_mode = route
+        .auth_mode_for_provider(provider)
+        .unwrap_or_else(|| provider.credential_help().acquisition.as_str().to_string());
+    let has_model_catalog = !crate::provider_lake::all_catalog_models_for_provider(provider).is_empty();
+    let default_model = if provider == ApiProvider::Custom {
+        model.clone()
+    } else {
+        provider_default_model_for_api(config, active_provider, active_identity, provider, identity)
+    };
+    let default_base_url = if provider == ApiProvider::Custom {
+        base_url.clone()
+    } else {
+        provider.default_base_url().to_string()
+    };
+    ProviderEntry {
+        id: identity.to_string(),
+        display_name: display_name.to_string(),
+        default_base_url,
+        default_model,
+        has_model_catalog,
+        env_vars: route
+            .provider_config_for(provider)
+            .and_then(|entry| entry.api_key_env.clone())
+            .map(|name| vec![name])
+            .unwrap_or_else(|| {
+                provider
+                    .env_vars()
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect()
+            }),
+        model,
+        base_url,
+        has_api_key,
+        masked_api_key: key.as_deref().map(mask_provider_key).unwrap_or_default(),
+        has_custom_headers,
+        group: provider_group(provider).to_string(),
+        auth_mode,
+        supports_connection_test: true,
+        supports_live_models: true,
+        supports_headers: true,
+        supports_multi_key: false,
+    }
+}
+
+fn provider_entry_for(
+    config: &Config,
+    active_provider: ApiProvider,
+    active_identity: &str,
+    provider: ApiProvider,
+) -> ProviderEntry {
+    let identity = provider.as_str().to_string();
+    provider_entry_for_identity(
+        config,
+        active_provider,
+        active_identity,
+        provider,
+        &identity,
+        provider.display_name(),
+    )
+}
+
+fn resolve_runtime_provider(config: &Config, id: &str) -> Result<RuntimeProviderRoute, ApiError> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(ApiError::bad_request("Provider id cannot be empty"));
+    }
+
+    // Exact custom table names are checked before built-in parsing. This
+    // keeps a named route bound to its own table even when its spelling is
+    // close to a built-in provider id.
+    if let Some(entry) = config
+        .providers
+        .as_ref()
+        .and_then(|providers| providers.custom_provider_config(id))
+    {
+        if !entry.is_openai_compatible_custom() {
+            return Err(ApiError::bad_request(format!(
+                "Custom provider '{id}' must set kind = \"openai-compatible\""
+            )));
+        }
+        let identity = config
+            .resolve_provider_identity(id)
+            .map_err(ApiError::bad_request)?;
+        return Ok(RuntimeProviderRoute {
+            provider: ApiProvider::Custom,
+            identity: identity.key,
+        });
+    }
+
+    let provider = parse_runtime_provider(id)?;
+    let identity = config
+        .resolve_provider_identity(&config.provider_identity_for(provider))
+        .map_err(ApiError::bad_request)?;
+    Ok(RuntimeProviderRoute {
+        provider,
+        identity: identity.key,
+    })
 }
 
 fn push_unique_model(models: &mut Vec<String>, model: &str) {
@@ -5292,8 +5567,15 @@ fn normalize_api_base_url(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
-fn provider_uses_custom_route_for_api(config: &Config, provider: ApiProvider) -> bool {
-    config
+fn provider_uses_custom_route_for_api(
+    config: &Config,
+    provider: ApiProvider,
+    identity: &str,
+) -> bool {
+    if provider == ApiProvider::Custom {
+        return true;
+    }
+    provider_route_config_for_identity(config, identity)
         .provider_config_for(provider)
         .and_then(|entry| entry.base_url.as_deref())
         .is_some_and(|base_url| {
@@ -5304,28 +5586,35 @@ fn provider_uses_custom_route_for_api(config: &Config, provider: ApiProvider) ->
 fn provider_models_for_api(
     config: &Config,
     active_provider: ApiProvider,
+    active_identity: &str,
     provider: ApiProvider,
+    identity: &str,
 ) -> Vec<String> {
+    let route = provider_route_config_for_identity(config, identity);
     let mut models = Vec::new();
-    if let Some(model) = config
+    if let Some(model) = route
         .provider_config_for(provider)
         .and_then(|entry| entry.model.as_deref())
     {
         push_unique_model(&mut models, model);
     }
-    if provider == active_provider {
-        let active_model = config.default_model();
+    if provider == active_provider && identity == active_identity {
+        let active_model = route.default_model();
         if !active_model.trim().eq_ignore_ascii_case("auto") {
             push_unique_model(&mut models, &active_model);
         }
-        if config.model_ids_pass_through() {
+        if route.model_ids_pass_through() {
             return models;
         }
     }
-    if provider_uses_custom_route_for_api(config, provider) {
+    if provider_uses_custom_route_for_api(config, provider, identity) {
         return models;
     }
-    for model in crate::provider_lake::models_for_provider(config, active_provider, provider) {
+    for model in crate::provider_lake::models_for_provider(
+        config,
+        active_provider,
+        provider,
+    ) {
         push_unique_model(&mut models, &model);
     }
     models
@@ -5334,12 +5623,14 @@ fn provider_models_for_api(
 fn provider_default_model_for_api(
     config: &Config,
     active_provider: ApiProvider,
+    active_identity: &str,
     provider: ApiProvider,
+    identity: &str,
 ) -> String {
-    if provider == active_provider {
-        return config.default_model();
+    if provider == active_provider && identity == active_identity {
+        return provider_route_config_for_identity(config, identity).default_model();
     }
-    provider_models_for_api(config, active_provider, provider)
+    provider_models_for_api(config, active_provider, active_identity, provider, identity)
         .into_iter()
         .next()
         .unwrap_or_default()
@@ -5350,24 +5641,46 @@ async fn list_providers(
 ) -> Result<Json<ProvidersResponse>, ApiError> {
     let config = state.config.read().clone();
     let active_provider = config.api_provider();
-    let current = active_provider.as_str().to_string();
+    let active_identity = config.provider_identity_for(active_provider);
+    let current = active_identity.clone();
     let mut providers = Vec::new();
     for api_provider in ApiProvider::sorted_for_display() {
-        let default_model = provider_default_model_for_api(&config, active_provider, api_provider);
-        let has_model_catalog =
-            !crate::provider_lake::all_catalog_models_for_provider(api_provider).is_empty();
-        providers.push(ProviderEntry {
-            id: api_provider.as_str().to_string(),
-            display_name: api_provider.display_name().to_string(),
-            default_base_url: api_provider.default_base_url().to_string(),
-            default_model,
-            has_model_catalog,
-            env_vars: api_provider
-                .env_vars()
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-        });
+        if api_provider == ApiProvider::Custom {
+            continue;
+        }
+        providers.push(provider_entry_for(
+            &config,
+            active_provider,
+            &active_identity,
+            api_provider,
+        ));
+    }
+    if let Some(custom) = config.providers.as_ref().map(|providers| &providers.custom) {
+        for (identity, entry) in custom {
+            if entry.is_openai_compatible_custom() {
+                providers.push(provider_entry_for_identity(
+                    &config,
+                    active_provider,
+                    &active_identity,
+                    ApiProvider::Custom,
+                    identity,
+                    &format!("Custom: {identity}"),
+                ));
+            }
+        }
+    }
+    if active_provider == ApiProvider::Custom
+        && active_identity.eq_ignore_ascii_case(ApiProvider::Custom.as_str())
+        && !providers.iter().any(|entry| entry.id == active_identity)
+    {
+        providers.push(provider_entry_for_identity(
+            &config,
+            active_provider,
+            &active_identity,
+            ApiProvider::Custom,
+            &active_identity,
+            "Custom (legacy)",
+        ));
     }
     Ok(Json(ProvidersResponse { current, providers }))
 }
@@ -5389,23 +5702,324 @@ async fn list_provider_models(
 ) -> Result<Json<ProviderModelsResponse>, ApiError> {
     let config = state.config.read().clone();
     let active_provider = config.api_provider();
-    let api_provider = ApiProvider::parse(&id)
-        .ok_or_else(|| ApiError::bad_request(format!("Unknown provider id '{id}'")))?;
-    // Reject requests for the legacy deepseek-cn alias that has no
-    // ProviderKind metadata — the GUI should use `deepseek` instead.
-    if api_provider == ApiProvider::DeepseekCN {
-        return Err(ApiError::bad_request(
-            "provider 'deepseek-cn' is a legacy alias; use 'deepseek' instead",
-        ));
-    }
-    let models = provider_models_for_api(&config, active_provider, api_provider)
+    let active_identity = config.provider_identity_for(active_provider);
+    let route = resolve_runtime_provider(&config, &id)?;
+    let models = provider_models_for_api(
+        &config,
+        active_provider,
+        &active_identity,
+        route.provider,
+        route.id(),
+    )
         .into_iter()
         .map(|id| ProviderModelEntry { id: id.to_string() })
         .collect();
     Ok(Json(ProviderModelsResponse {
-        provider: api_provider.as_str().to_string(),
+        provider: route.id().to_string(),
         models,
+        source: "runtime_catalog".to_string(),
     }))
+}
+
+fn parse_runtime_provider(id: &str) -> Result<ApiProvider, ApiError> {
+    let provider = ApiProvider::parse(id)
+        .ok_or_else(|| ApiError::bad_request(format!("Unknown provider id '{id}'")))?;
+    if provider == ApiProvider::DeepseekCN {
+        return Err(ApiError::bad_request(
+            "provider 'deepseek-cn' is a legacy alias; use 'deepseek' instead",
+        ));
+    }
+    Ok(provider)
+}
+
+fn validate_provider_base_url(raw: &str) -> Result<String, ApiError> {
+    let value = raw.trim().trim_end_matches('/');
+    let parsed = reqwest::Url::parse(value)
+        .map_err(|error| ApiError::bad_request(format!("Invalid provider base URL: {error}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(ApiError::bad_request(
+            "Provider base URL must be an http(s) URL with a host",
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn config_for_provider_request(
+    config: &Config,
+    route: &RuntimeProviderRoute,
+    model: Option<&str>,
+    base_url: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<Config, ApiError> {
+    let mut scoped = provider_route_config_for_identity(config, route.id());
+    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+        let normalized = normalize_runtime_config_model(route.provider, model)?;
+        scoped.set_provider_model_override(route.provider, Some(normalized));
+    }
+    if let Some(base_url) = base_url {
+        scoped.set_provider_base_url_override(
+            route.provider,
+            Some(validate_provider_base_url(base_url)?),
+        );
+    }
+    if let Some(api_key) = api_key.map(str::trim).filter(|key| !key.is_empty()) {
+        scoped.set_provider_api_key_override(route.provider, Some(api_key.to_string()));
+    }
+    Ok(scoped)
+}
+
+/// Save one provider's model, endpoint, credential, and optional default
+/// selection through the same Rust persistence paths used by the TUI.
+async fn update_provider(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ProviderUpdateRequest>,
+) -> Result<Json<ProviderUpdateResponse>, ApiError> {
+    use crate::config_persistence;
+
+    let (provider_route, identity, route) = {
+        let config = state.config.read();
+        let provider_route = resolve_runtime_provider(&config, &id)?;
+        let route = config_for_provider_request(
+            &config,
+            &provider_route,
+            req.model_name.as_deref(),
+            req.base_url.as_deref(),
+            req.api_key.as_deref(),
+        )?;
+        let identity = config
+            .resolve_provider_identity(provider_route.id())
+            .map_err(ApiError::bad_request)?;
+        (provider_route, identity, route)
+    };
+
+    let model = req
+        .model_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(|model| normalize_runtime_config_model(provider_route.provider, model))
+        .transpose()?;
+    if let Some(model) = model.as_deref() {
+        config_persistence::persist_provider_model_key(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            model,
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider model: {error}")))?;
+    }
+
+    if let Some(base_url) = req.base_url.as_deref() {
+        let value = base_url.trim();
+        let value = (!value.is_empty()).then(|| validate_provider_base_url(value)).transpose()?;
+        config_persistence::persist_provider_base_url_for_identity(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            value.as_deref(),
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider base URL: {error}")))?;
+    }
+
+    let key_saved = req
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(|key| {
+            crate::config::save_api_key_for_identity(&identity, &route, key).map(|_| true)
+        })
+        .transpose()
+        .map_err(|error| ApiError::internal(format!("Failed to save provider API key: {error}")))?
+        .unwrap_or(false);
+
+    if req.set_as_default {
+        config_persistence::persist_root_string_key(
+            state.config_path.as_deref(),
+            "provider",
+            &identity.key,
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to set default provider: {error}")))?;
+    }
+
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    {
+        let mut config = state.config.write();
+        *config = reloaded.clone();
+    }
+
+    let active = reloaded.api_provider();
+    let active_identity = reloaded.provider_identity_for(active);
+    Ok(Json(ProviderUpdateResponse {
+        provider: active_identity.clone(),
+        model: reloaded.default_model(),
+        base_url: reloaded.deepseek_base_url(),
+        key_saved,
+        set_as_default: active == provider_route.provider && active_identity == provider_route.identity,
+        message: format!("{} provider configuration saved", provider_route.id()),
+    }))
+}
+
+async fn fetch_provider_models(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ProviderProbeRequest>,
+) -> Result<Json<ProviderModelsResponse>, ApiError> {
+    let provider_route = {
+        let config = state.config.read();
+        resolve_runtime_provider(&config, &id)?
+    };
+    let route = {
+        let config = state.config.read();
+        config_for_provider_request(
+            &config,
+            &provider_route,
+            req.model.as_deref(),
+            req.base_url.as_deref(),
+            req.api_key.as_deref(),
+        )?
+    };
+    let client = crate::client::DeepSeekClient::new(&route)
+        .map_err(|error| ApiError::bad_request(format!("Unable to create provider client: {error}")))?;
+    let timeout = req.timeout.unwrap_or(20).clamp(5, 120);
+    let models = tokio::time::timeout(Duration::from_secs(timeout), client.list_models())
+        .await
+        .map_err(|_| ApiError::bad_request(format!("Fetching models timed out after {timeout}s")))?
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(ProviderModelsResponse {
+        provider: provider_route.id().to_string(),
+        models: models
+            .into_iter()
+            .map(|model| ProviderModelEntry { id: model.id })
+            .collect(),
+        source: "provider_api".to_string(),
+    }))
+}
+
+async fn test_provider_connection(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ProviderProbeRequest>,
+) -> Result<Json<ProviderProbeResponse>, ApiError> {
+    let provider_route = {
+        let config = state.config.read();
+        resolve_runtime_provider(&config, &id)?
+    };
+    let route = {
+        let config = state.config.read();
+        config_for_provider_request(
+            &config,
+            &provider_route,
+            req.model.as_deref(),
+            req.base_url.as_deref(),
+            req.api_key.as_deref(),
+        )?
+    };
+    let client = crate::client::DeepSeekClient::new(&route)
+        .map_err(|error| ApiError::bad_request(format!("Unable to create provider client: {error}")))?;
+    let timeout = req.timeout.unwrap_or(20).clamp(5, 120);
+    let started = Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(timeout), client.list_models()).await;
+    let latency_ms = Some(started.elapsed().as_millis());
+    match result {
+        Ok(Ok(models)) => Ok(Json(ProviderProbeResponse {
+            ok: true,
+            message: format!("{} connection succeeded", provider_route.id()),
+            detail: Some(format!("{} model(s) available", models.len())),
+            latency_ms,
+        })),
+        Ok(Err(error)) => Ok(Json(ProviderProbeResponse {
+            ok: false,
+            message: format!("{} connection failed", provider_route.id()),
+            detail: Some(error.to_string()),
+            latency_ms,
+        })),
+        Err(_) => Ok(Json(ProviderProbeResponse {
+            ok: false,
+            message: format!("{} connection timed out", provider_route.id()),
+            detail: Some(format!("The provider did not answer within {timeout}s")),
+            latency_ms,
+        })),
+    }
+}
+
+async fn get_provider_headers(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let provider_route = {
+        let config = state.config.read();
+        resolve_runtime_provider(&config, &id)?
+    };
+    let config = state.config.read();
+    let headers = if matches!(provider_route.provider, ApiProvider::Deepseek | ApiProvider::DeepseekCN) {
+        config.http_headers.clone().unwrap_or_default()
+    } else {
+        provider_route_config_for_identity(&config, provider_route.id())
+            .provider_config_for(provider_route.provider)
+            .and_then(|entry| entry.http_headers.clone())
+            .unwrap_or_default()
+    };
+    Ok(Json(json!({ "provider": provider_route.id(), "headers": headers })))
+}
+
+async fn set_provider_headers(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ProviderHeadersRequest>,
+) -> Result<Json<Value>, ApiError> {
+    use crate::config_persistence;
+
+    let provider_route = {
+        let config = state.config.read();
+        resolve_runtime_provider(&config, &id)?
+    };
+    let mut headers = std::collections::HashMap::new();
+    for (name, value) in req.headers {
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() || value.is_empty() {
+            continue;
+        }
+        HeaderName::from_bytes(name.as_bytes())
+            .map_err(|error| ApiError::bad_request(format!("Invalid header name: {error}")))?;
+        HeaderValue::from_str(value)
+            .map_err(|error| ApiError::bad_request(format!("Invalid header value: {error}")))?;
+        headers.insert(name.to_string(), value.to_string());
+    }
+    let identity = {
+        let config = state.config.read();
+        config
+            .resolve_provider_identity(provider_route.id())
+            .map_err(ApiError::bad_request)?
+    };
+    config_persistence::persist_provider_headers_for_identity(
+        state.config_path.as_deref(),
+        provider_route.provider,
+        &identity.key,
+        &headers,
+    )
+    .map_err(|error| ApiError::internal(format!("Failed to save provider headers: {error}")))?;
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+    Ok(Json(json!({
+        "provider": provider_route.id(),
+        "saved": true,
+        "count": headers.len(),
+    })))
 }
 
 /// Request body for `POST /v1/providers/{id}/switch`.
@@ -5474,14 +6088,11 @@ async fn switch_provider(
 ) -> Result<Json<SwitchProviderResponse>, ApiError> {
     use crate::config_persistence;
 
-    let target = ApiProvider::parse(&id)
-        .ok_or_else(|| ApiError::bad_request(format!("Unknown provider id '{id}'")))?;
-    // Reject the legacy deepseek-cn alias — same guard as list_provider_models.
-    if target == ApiProvider::DeepseekCN {
-        return Err(ApiError::bad_request(
-            "provider 'deepseek-cn' is a legacy alias; use 'deepseek' instead",
-        ));
-    }
+    let target_route = {
+        let config = state.config.read();
+        resolve_runtime_provider(&config, &id)?
+    };
+    let target = target_route.provider;
 
     // Normalize the optional model override against the *target* provider.
     // Mirrors `set_config`'s `model` branch, which validates against the
@@ -5494,10 +6105,7 @@ async fn switch_provider(
 
     // Resolve the target provider identity *before* mutating config, so
     // persistence uses the same key the TUI's switch_provider would.
-    let (provider_identity, _active_provider) = {
-        let config = state.config.read();
-        (config.provider_identity_for(target), config.api_provider())
-    };
+    let provider_identity = target_route.identity.clone();
 
     // Persist `provider` (always) + `model` (only when explicitly given).
     // This is the critical TUI-parity rule: a bare `/provider <id>` (no
@@ -5525,7 +6133,7 @@ async fn switch_provider(
         // `default_model`. Failures here are non-fatal — the config.toml
         // write above is the source of truth.
         let _ = crate::settings::Settings::transact(|settings| {
-            settings.set_model_for_provider(target.as_str(), model);
+            settings.set_model_for_provider(&provider_identity, model);
             if matches!(target, ApiProvider::Deepseek | ApiProvider::DeepseekCN) {
                 let _ = settings.set("default_model", model);
             }
@@ -5553,27 +6161,32 @@ async fn switch_provider(
     // Read the resolved active model + provider from the freshly reloaded
     // config. This is the value the GUI must display — NOT the catalog
     // default and NOT the previously-active model.
-    let (active_provider, active_model) = {
+    let (active_provider, active_identity, active_model) = {
         let config = state.config.read();
-        (config.api_provider(), config.default_model())
+        let active_provider = config.api_provider();
+        (
+            active_provider,
+            config.provider_identity_for(active_provider),
+            config.default_model(),
+        )
     };
 
     let message = if model_override.is_some() {
         format!(
             "Provider switched to {} (model: {}).",
-            active_provider.as_str(),
+            active_identity,
             active_model
         )
     } else {
         format!(
             "Provider switched to {} (model: {}, resolved from config).",
-            active_provider.as_str(),
+            active_identity,
             active_model
         )
     };
 
     Ok(Json(SwitchProviderResponse {
-        provider: active_provider.as_str().to_string(),
+        provider: provider_identity,
         model: active_model,
         message,
         persisted: true,

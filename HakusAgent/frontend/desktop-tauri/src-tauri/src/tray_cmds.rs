@@ -54,7 +54,10 @@ pub fn tray_set_enabled(app: AppHandle, enabled: bool) -> Result<serde_json::Val
 }
 
 #[tauri::command]
-pub fn tray_set_minimize_to_tray(app: AppHandle, enabled: bool) -> Result<serde_json::Value, String> {
+pub fn tray_set_minimize_to_tray(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
 
     // Refuse to enable minimizeToTray if the tray itself is disabled —

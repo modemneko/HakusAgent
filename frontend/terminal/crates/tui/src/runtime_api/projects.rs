@@ -108,7 +108,10 @@ fn canonical_project_path(state: &RuntimeApiState, raw: &str) -> Result<PathBuf,
         .workspace
         .canonicalize()
         .map_err(|error| ApiError::internal(format!("resolve runtime workspace: {error}")))?;
-    if !canonical.starts_with(&workspace_root) {
+    // Desktop can work on any folder selected through the native picker.
+    // Android must stay inside the app-managed workspace because its SAF
+    // mirror is the only filesystem boundary available to the runtime.
+    if state.mobile_enabled && !canonical.starts_with(&workspace_root) {
         return Err(ApiError::forbidden(
             "project path must stay inside the application workspace",
         ));

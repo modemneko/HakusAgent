@@ -175,7 +175,12 @@ use crate::tui::history::{summarize_tool_args, summarize_tool_output};
 /// calling this function. Keeping configuration and plugin discovery here
 /// makes the embedded path use the same runtime as `hakuscli app-server`
 /// without exposing the TUI's internal configuration types to consumers.
-pub async fn run_embedded_runtime_api(workspace: PathBuf, host: String, port: u16) -> Result<()> {
+pub async fn run_embedded_runtime_api(
+    workspace: PathBuf,
+    host: String,
+    port: u16,
+    mobile: bool,
+) -> Result<()> {
     let config = Config::load(None, None)?;
     let plugin_discovery = crate::plugins::PluginDiscoveryContext::capture_pre_dotenv();
 
@@ -190,8 +195,14 @@ pub async fn run_embedded_runtime_api(workspace: PathBuf, host: String, port: u1
             cors_origins: vec![
                 "http://tauri.localhost".to_string(),
                 "https://tauri.localhost".to_string(),
+                // The same runtime is used by the Vite preview so the
+                // desktop/Android API path can be smoke-tested without
+                // launching a second backend implementation.
+                "http://localhost:1420".to_string(),
+                "http://127.0.0.1:1420".to_string(),
             ],
             insecure_no_auth: true,
+            mobile,
             ..runtime_api::RuntimeApiOptions::default()
         },
     )
