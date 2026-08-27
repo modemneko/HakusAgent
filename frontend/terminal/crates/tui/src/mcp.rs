@@ -2509,6 +2509,14 @@ impl McpPool {
         }
     }
 
+    /// Drop one cached connection without changing the persisted server
+    /// configuration. The next tool discovery or invocation can reconnect it.
+    pub fn disconnect_server(&mut self, server_name: &str) -> bool {
+        let connected = self.connections.contains_key(server_name);
+        self.drop_connection(server_name, "explicit runtime disconnect");
+        connected
+    }
+
     fn drop_all_connections(&mut self, reason: &str) {
         if self.connections.is_empty() {
             return;

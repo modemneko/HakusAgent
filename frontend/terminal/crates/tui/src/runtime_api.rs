@@ -76,6 +76,7 @@ use crate::tools::subagent::{
     AgentWorkerRecord, SharedSubAgentManager, load_persisted_agent_worker_records,
     new_shared_subagent_manager_with_timeout,
 };
+use hakus_wechat::{IlLinkClient, LoginHandle, QrLoginStatus};
 use hakus_protocol::fleet::{
     FleetArtifactKind, FleetEventReplay, FleetRun, FleetRunId, FleetRuntimeEvent,
     FleetRuntimeTarget, FleetSecurityPolicy, FleetTaskSpec, FleetWorkerEventPayload,
@@ -174,8 +175,67 @@ pub struct RuntimeApiState {
     /// lazily-initialized slot; slow per-pool work (connect_all) runs under
     /// the inner handle so it cannot block slot reads.
     mcp_pool: Arc<Mutex<Option<Arc<Mutex<McpPool>>>>>,
+    mcp_global_config: Arc<Mutex<McpGlobalConfig>>,
+    wechat: Arc<Mutex<WechatRuntimeState>>,
+    started_at: Instant,
     #[cfg(test)]
     compat_stream_test_hook: Option<tokio::sync::mpsc::UnboundedSender<CompatStreamTestPoint>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct McpGlobalConfig {
+    #[serde(default)]
+    auto_start: bool,
+    #[serde(default)]
+    fail_fast: bool,
+    #[serde(default = "default_mcp_tool_naming")]
+    tool_naming: String,
+}
+
+fn default_mcp_tool_naming() -> String {
+    "namespace".to_string()
+}
+
+impl Default for McpGlobalConfig {
+    fn default() -> Self {
+        Self {
+            auto_start: false,
+            fail_fast: false,
+            tool_naming: default_mcp_tool_naming(),
+        }
+    }
+}
+
+struct WechatRuntimeState {
+    client: IlLinkClient,
+    login: Option<LoginHandle>,
+}
+
+#[derive(Debug, Serialize)]
+struct WechatStatusResponse {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qrcode_base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WechatSendRequest {
+    user_id: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WechatMessagesResponse {
+    messages: Vec<WechatMessageEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct WechatMessageEntry {
+    user_id: String,
+    text: String,
+    id: String,
 }
 
 #[cfg(test)]
@@ -565,6 +625,7 @@ struct McpServerEntry {
 #[derive(Debug, Serialize)]
 struct McpServersResponse {
     servers: Vec<McpServerEntry>,
+    global: McpGlobalConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -588,6 +649,195 @@ struct McpToolsResponse {
     tools: Vec<McpToolEntry>,
 }
 
+#[derive(Debug, Deserialize)]
+struct McpInvokeRequest {
+    #[serde(default = "default_json_object")]
+    arguments: Value,
+}
+
+fn default_json_object() -> Value {
+    json!({})
+}
+
+/// Project native Runtime events into the session-log shape consumed by the
+/// desktop review panel. Keep the original event and payload fields so newer
+/// clients can still inspect the complete Rust event envelope.
+fn session_log_projection(
+    event_name: &str,
+    payload: &Value,
+) -> (String, serde_json::Map<String, Value>) {
+    let mut fields = match payload {
+        Value::Object(object) => object.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let item = payload.get("item");
+    let item_kind = item
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let is_tool_item = matches!(item_kind, "tool_call" | "command_execution" | "file_change");
+
+    let event_type = match event_name {
+        "turn.started" => "turn_start",
+        "turn.completed" => "turn_completed",
+        "turn.failed" => "turn_failed",
+        "turn.cancelled" | "turn.canceled" => "cancelled",
+        "item.delta"
+            if payload.get("kind").and_then(Value::as_str) == Some("agent_reasoning") =>
+        {
+            "reasoning"
+        }
+        "item.delta" => "text_delta",
+        "item.started" if is_tool_item => "tool_call_started",
+        "item.completed" | "item.failed" if is_tool_item => "tool_call_finished",
+        "agent.spawned" => "subagent_spawned",
+        "token.usage" | "token_usage" => "token_usage",
+        _ => event_name,
+    }
+    .to_string();
+
+    if let Some(delta) = payload.get("delta") {
+        fields.insert("text".to_string(), delta.clone());
+    }
+    if let Some(turn) = payload.get("turn") {
+        for (source, target) in [
+            ("input_summary", "user_message"),
+            ("effective_provider", "provider"),
+            ("effective_model", "model"),
+        ] {
+            if let Some(value) = turn.get(source) {
+                fields.insert(target.to_string(), value.clone());
+            }
+        }
+        if let Some(usage) = turn.get("usage") {
+            for key in ["input_tokens", "output_tokens", "cache_hit_tokens"] {
+                if let Some(value) = usage.get(key) {
+                    fields.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
+    if is_tool_item {
+        if let Some(item) = item {
+            let metadata = item.get("metadata");
+            let name = metadata
+                .and_then(|value| value.get("tool_name"))
+                .or_else(|| item.get("summary"));
+            if let Some(name) = name {
+                fields.insert("name".to_string(), name.clone());
+            }
+            if let Some(call_id) = metadata
+                .and_then(|value| value.get("tool_use_id"))
+                .or_else(|| item.get("id"))
+            {
+                fields.insert("call_id".to_string(), call_id.clone());
+            }
+            if let Some(detail) = item.get("detail").and_then(Value::as_str) {
+                if event_type == "tool_call_started" {
+                    let arguments = serde_json::from_str(detail)
+                        .unwrap_or_else(|_| Value::String(detail.to_string()));
+                    fields.insert("arguments".to_string(), arguments);
+                } else {
+                    fields.insert("result_preview".to_string(), Value::String(detail.to_string()));
+                }
+            }
+            if event_type == "tool_call_finished" {
+                fields.insert(
+                    "success".to_string(),
+                    json!(event_name == "item.completed"
+                        && item.get("status").and_then(Value::as_str) != Some("failed")),
+                );
+            }
+        }
+        if let Some(error) = payload.get("error") {
+            fields.insert("error".to_string(), error.clone());
+        }
+    }
+    if event_name == "agent.spawned" {
+        if let Some(agent_id) = payload.get("agent_id") {
+            fields.insert("sub_agent_id".to_string(), agent_id.clone());
+        }
+        if let Some(task) = item.and_then(|value| value.get("detail")) {
+            fields.insert("task".to_string(), task.clone());
+        }
+    }
+
+    (event_type, fields)
+}
+
+#[derive(Debug, Serialize)]
+struct McpInvokeResponse {
+    ok: bool,
+    message: String,
+    result: String,
+    is_error: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ThreadEventLogQuery {
+    #[serde(default)]
+    since_seq: Option<u64>,
+    #[serde(default)]
+    since_turn: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct ThreadEventLogResponse {
+    session_id: String,
+    events: Vec<ThreadEventLogEntry>,
+    stats: ThreadEventLogStats,
+}
+
+#[derive(Debug, Serialize)]
+struct ThreadEventLogEntry {
+    #[serde(skip)]
+    seq: u64,
+    #[serde(rename = "type")]
+    event_type: String,
+    ts: i64,
+    turn: u64,
+    event: String,
+    payload: Value,
+    #[serde(flatten)]
+    fields: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ThreadEventLogStats {
+    session_id: String,
+    log_path: String,
+    archive_path: String,
+    live_size_bytes: u64,
+    archive_size_bytes: u64,
+    event_count: usize,
+    current_turn: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeMetricsResponse {
+    uptime_seconds: u64,
+    total_turns: u32,
+    total_errors: u32,
+    active_websockets: u32,
+    checkpoints_saved: u32,
+    llm_calls: u32,
+    llm_retries: u32,
+    by_provider: BTreeMap<String, RuntimeProviderMetrics>,
+    providers: Vec<String>,
+    counters: hakus_telemetry::Counters,
+    errors: hakus_telemetry::Errors,
+    turn_wall: hakus_telemetry::TurnWall,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeProviderMetrics {
+    turns: u32,
+    errors: u32,
+    llm_calls: u32,
+}
+
 /// Request body for `POST /v1/apps/mcp/servers` (create) and
 /// `PATCH /v1/apps/mcp/servers/{name}` (update).
 ///
@@ -601,6 +851,9 @@ struct McpServerWriteRequest {
     command: Option<Option<String>>,
     /// Arguments for the stdio command.
     args: Option<Vec<String>>,
+    /// Working directory for the stdio child process.
+    #[serde(default, deserialize_with = "deserialize_present_nullable")]
+    cwd: Option<Option<PathBuf>>,
     /// Environment variables injected into the stdio child process.
     /// Values are stored as-is; use `${VAR}` syntax to reference environment
     /// variables at runtime instead of embedding secrets here.
@@ -665,6 +918,7 @@ struct McpServerDetail {
     required: bool,
     command: Option<String>,
     args: Vec<String>,
+    cwd: Option<PathBuf>,
     /// Environment variable names injected into the process.
     /// Values are **not** returned — callers see only the keys.
     env_keys: Vec<String>,
@@ -698,6 +952,7 @@ impl McpServerDetail {
             required: cfg.required,
             command: cfg.command.clone(),
             args: cfg.args.clone(),
+            cwd: cfg.cwd.clone(),
             env_keys,
             url: cfg.url.clone(),
             transport: cfg.transport.clone(),
@@ -854,7 +1109,7 @@ pub async fn run_http_server(
         AutomationSchedulerConfig::default(),
     );
 
-    let sessions_dir = default_sessions_dir().unwrap_or_else(|_| fallback_sessions_dir());
+    let sessions_dir = default_sessions_dir()?;
     let runtime_token_env = runtime_token_environment(&|name| std::env::var(name).ok());
     let runtime_token_alias_warning =
         runtime_token_alias_warning(options.auth_token.as_deref(), &runtime_token_env);
@@ -877,6 +1132,8 @@ pub async fn run_http_server(
     let skill_state = SkillStateStore::load_default()
         .context("load persistent Skill activation state for Runtime API")?;
     let sub_agent_manager = runtime_api_sub_agent_manager(&workspace, options.workers);
+    let mcp_global_config = load_mcp_global_config(&config)
+        .context("load persistent MCP UI configuration")?;
     let state = RuntimeApiState {
         config: Arc::new(parking_lot::RwLock::new(config.clone())),
         workspace,
@@ -898,6 +1155,12 @@ pub async fn run_http_server(
         web,
         fleet_hakus_binary: configured_hakus_binary(),
         mcp_pool: Arc::new(Mutex::new(None)),
+        mcp_global_config: Arc::new(Mutex::new(mcp_global_config)),
+        wechat: Arc::new(Mutex::new(WechatRuntimeState {
+            client: IlLinkClient::new(hakus_wechat::WechatState::default_dir()),
+            login: None,
+        })),
+        started_at: Instant::now(),
         #[cfg(test)]
         compat_stream_test_hook: None,
     };
@@ -978,12 +1241,110 @@ fn web_launcher_warning(result: Result<()>) -> Option<String> {
     })
 }
 
-fn fallback_sessions_dir() -> PathBuf {
-    hakus_paths::hakus_home()
-        .ok()
-        .flatten()
-        .map(|home| home.join("sessions"))
-        .unwrap_or_else(|| PathBuf::from(".hakus").join("sessions"))
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeCharacter {
+    name: String,
+    nickname: String,
+    personality: String,
+    scenario: String,
+    first_message: String,
+    avatar_type: String,
+    #[serde(default)]
+    system_prompt: String,
+}
+
+impl Default for RuntimeCharacter {
+    fn default() -> Self {
+        Self {
+            name: "HakusAI".to_string(),
+            nickname: "HakusAI".to_string(),
+            personality: String::new(),
+            scenario: String::new(),
+            first_message: String::new(),
+            avatar_type: "none".to_string(),
+            system_prompt: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpdateCharacterRequest {
+    name: Option<String>,
+    nickname: Option<String>,
+    personality: Option<String>,
+    scenario: Option<String>,
+    first_message: Option<String>,
+    system_prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct McpGlobalConfigPatch {
+    auto_start: Option<bool>,
+    fail_fast: Option<bool>,
+    tool_naming: Option<String>,
+}
+
+fn character_path(state: &RuntimeApiState) -> PathBuf {
+    state
+        .config
+        .read()
+        .mcp_config_path()
+        .parent()
+        .unwrap_or_else(|| FsPath::new("."))
+        .join("character.json")
+}
+
+fn load_character(state: &RuntimeApiState) -> Result<RuntimeCharacter, ApiError> {
+    let path = character_path(state);
+    if !path.exists() {
+        return Ok(RuntimeCharacter::default());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| ApiError::internal(format!("Failed to read character config: {e}")))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| ApiError::internal(format!("Failed to parse character config: {e}")))
+}
+
+fn save_character(state: &RuntimeApiState, character: &RuntimeCharacter) -> Result<(), ApiError> {
+    let path = character_path(state);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| ApiError::internal(format!("Failed to create character directory: {e}")))?;
+    }
+    let bytes = serde_json::to_vec_pretty(character)
+        .map_err(|e| ApiError::internal(format!("Failed to serialize character config: {e}")))?;
+    crate::utils::write_atomic(&path, &bytes)
+        .map_err(|e| ApiError::internal(format!("Failed to save character config: {e}")))
+}
+
+fn mcp_global_config_path(config: &Config) -> PathBuf {
+    config
+        .mcp_config_path()
+        .parent()
+        .unwrap_or_else(|| FsPath::new("."))
+        .join("mcp-ui.json")
+}
+
+fn load_mcp_global_config(config: &Config) -> Result<McpGlobalConfig> {
+    let path = mcp_global_config_path(config);
+    if !path.exists() {
+        return Ok(McpGlobalConfig::default());
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read MCP UI config {}", path.display()))?;
+    serde_json::from_str(&raw)
+        .with_context(|| format!("Failed to parse MCP UI config {}", path.display()))
+}
+
+fn save_mcp_global_config(config: &Config, value: &McpGlobalConfig) -> Result<()> {
+    let path = mcp_global_config_path(config);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create MCP UI config directory {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(value)?;
+    crate::utils::write_atomic(&path, &bytes)
+        .with_context(|| format!("Failed to save MCP UI config {}", path.display()))
 }
 
 pub fn build_router(state: RuntimeApiState) -> Router {
@@ -1004,6 +1365,9 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             post(resume_session_thread),
         )
         .route("/v1/workspace/status", get(workspace_status))
+        .route("/v1/workspace/status/files", get(workspace::workspace_git_status))
+        .route("/v1/workspace/diff", get(workspace::workspace_diff))
+        .route("/v1/workspace/stage", post(workspace::stage_path))
         .route(
             "/v1/projects",
             get(projects::list_projects).post(projects::create_project),
@@ -1058,7 +1422,11 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/stream", post(stream_turn))
         .route("/v1/threads", get(list_threads).post(create_thread))
         .route("/v1/threads/summary", get(list_threads_summary))
-        .route("/v1/threads/{id}", get(get_thread).patch(update_thread))
+        .route(
+            "/v1/threads/{id}",
+            get(get_thread).patch(update_thread).delete(delete_thread),
+        )
+        .route("/v1/threads/{id}/event-log", get(get_thread_event_log))
         .route("/v1/threads/{id}/resume", post(resume_thread))
         .route("/v1/threads/{id}/fork", post(fork_thread))
         .route("/v1/threads/{id}/undo", post(undo_thread_turn))
@@ -1132,6 +1500,14 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             "/v1/apps/mcp/servers/{name}/reconnect",
             post(reconnect_mcp_server),
         )
+        .route(
+            "/v1/apps/mcp/servers/{name}/stop",
+            post(stop_mcp_server),
+        )
+        .route(
+            "/v1/apps/mcp/servers/{name}/tools/{tool}/invoke",
+            post(invoke_mcp_tool),
+        )
         .route("/v1/skills/install", post(install_skill_api))
         .route("/v1/skills/{name}/update", post(update_skill_api))
         .route("/v1/skills/{name}/trust", post(trust_skill_api))
@@ -1173,6 +1549,11 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             get(get_provider_headers).put(set_provider_headers),
         )
         .route("/v1/config", get(get_config).post(set_config))
+        .route("/v1/character", get(get_character).patch(update_character))
+        .route(
+            "/v1/apps/mcp/config",
+            get(get_mcp_global_config).patch(update_mcp_global_config),
+        )
         .route("/v1/config/reload", post(reload_config))
         .route(
             "/v1/memory",
@@ -1181,6 +1562,12 @@ pub fn build_router(state: RuntimeApiState) -> Router {
                 .delete(clear_memory),
         )
         .route("/v1/memory/{id}", get(get_memory_entry))
+        .route("/v1/wechat/status", get(get_wechat_status))
+        .route("/v1/wechat/login", post(wechat_login))
+        .route("/v1/wechat/logout", post(wechat_logout))
+        .route("/v1/wechat/send", post(wechat_send))
+        .route("/v1/wechat/poll", post(wechat_poll))
+        .route("/v1/metrics", get(get_metrics))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_runtime_token,
@@ -1292,6 +1679,163 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
+async fn get_wechat_status(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<WechatStatusResponse>, ApiError> {
+    let guard = state.wechat.lock().await;
+    let client = guard.client.clone();
+    let qrcode_base64 = guard
+        .login
+        .as_ref()
+        .map(|handle| handle.qr_image_b64.clone());
+    let login_status = match guard.login.as_ref() {
+        Some(handle) => handle.current_status().await,
+        None => None,
+    };
+    drop(guard);
+
+    if client.is_logged_in().await {
+        let account_id = client.account_snapshot().await.map(|account| account.account_id);
+        return Ok(Json(WechatStatusResponse {
+            status: "connected",
+            qrcode_base64: None,
+            account_id,
+        }));
+    }
+
+    let status = match login_status {
+        Some(QrLoginStatus::Scanned) => "scanned",
+        Some(QrLoginStatus::Expired) => "expired",
+        Some(QrLoginStatus::Confirmed { .. }) => "waiting",
+        Some(QrLoginStatus::Redirect { .. }) | Some(QrLoginStatus::Waiting) => "waiting",
+        None if qrcode_base64.is_some() => "waiting",
+        None => "disconnected",
+    };
+    Ok(Json(WechatStatusResponse {
+        status,
+        qrcode_base64: if status == "disconnected" || status == "expired" {
+            None
+        } else {
+            qrcode_base64
+        },
+        account_id: None,
+    }))
+}
+
+async fn wechat_login(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<WechatStatusResponse>, ApiError> {
+    let mut guard = state.wechat.lock().await;
+    if let Some(handle) = guard.login.as_ref() {
+        let current = handle.current_status().await;
+        if !matches!(&current, Some(QrLoginStatus::Expired)) {
+            let status = match current {
+                Some(QrLoginStatus::Scanned) => "scanned",
+                Some(QrLoginStatus::Confirmed { .. }) if guard.client.is_logged_in().await => {
+                    "connected"
+                }
+                _ => "waiting",
+            };
+            return Ok(Json(WechatStatusResponse {
+                status,
+                qrcode_base64: Some(handle.qr_image_b64.clone()),
+                account_id: None,
+            }));
+        }
+        handle.cancel();
+        guard.login = None;
+    }
+
+    let client = guard.client.clone();
+    let handle = hakus_wechat::login::start_qr_login(&client)
+        .await
+        .map_err(|error| ApiError::bad_request(format!("WeChat QR login failed: {error}")))?;
+    let qrcode_base64 = handle.qr_image_b64.clone();
+    guard.login = Some(handle);
+    Ok(Json(WechatStatusResponse {
+        status: "waiting",
+        qrcode_base64: Some(qrcode_base64),
+        account_id: None,
+    }))
+}
+
+async fn wechat_logout(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<Value>, ApiError> {
+    let (client, login) = {
+        let mut guard = state.wechat.lock().await;
+        (guard.client.clone(), guard.login.take())
+    };
+    if let Some(handle) = login {
+        handle.cancel();
+    }
+    client
+        .logout()
+        .await
+        .map_err(|error| ApiError::internal(format!("WeChat logout failed: {error}")))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn wechat_send(
+    State(state): State<RuntimeApiState>,
+    Json(request): Json<WechatSendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if request.user_id.trim().is_empty() || request.text.trim().is_empty() {
+        return Err(ApiError::bad_request("user_id and text are required"));
+    }
+    let client = state.wechat.lock().await.client.clone();
+    client
+        .send_text(request.user_id.trim(), &request.text)
+        .await
+        .map_err(|error| ApiError::bad_request(format!("WeChat send failed: {error}")))?;
+    Ok(Json(json!({ "success": true })))
+}
+
+async fn wechat_poll(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<WechatMessagesResponse>, ApiError> {
+    let client = state.wechat.lock().await.client.clone();
+    let messages = client
+        .poll_text_messages()
+        .await
+        .map_err(|error| ApiError::bad_request(format!("WeChat poll failed: {error}")))?
+        .into_iter()
+        .map(|(user_id, text, id)| WechatMessageEntry { user_id, text, id })
+        .collect();
+    Ok(Json(WechatMessagesResponse { messages }))
+}
+
+async fn get_metrics(
+    State(state): State<RuntimeApiState>,
+) -> Json<RuntimeMetricsResponse> {
+    let counters = hakus_telemetry::session_counters().counters();
+    let errors = hakus_telemetry::session_counters().errors();
+    let total_errors = errors
+        .auth_preflight_failed
+        .saturating_add(errors.provider_http_4xx)
+        .saturating_add(errors.provider_http_5xx)
+        .saturating_add(errors.tool_denied_by_policy)
+        .saturating_add(errors.tool_timeout)
+        .saturating_add(errors.network_error);
+    Json(RuntimeMetricsResponse {
+        uptime_seconds: state.started_at.elapsed().as_secs(),
+        total_turns: counters.turns,
+        total_errors,
+        active_websockets: 0,
+        // These metrics are not emitted by the Rust Runtime. They remain
+        // explicit zeroes so the shared UI does not mistake missing data for
+        // a failed request or silently call the retired Python API.
+        checkpoints_saved: 0,
+        llm_calls: 0,
+        llm_retries: 0,
+        by_provider: BTreeMap::new(),
+        providers: hakus_telemetry::session_counters().providers(),
+        counters,
+        errors,
+        turn_wall: hakus_telemetry::session_counters().turn_wall(),
+    })
+}
+
 async fn create_task(
     State(state): State<RuntimeApiState>,
     Json(mut req): Json<NewTaskRequest>,
@@ -1330,6 +1874,10 @@ async fn create_thread(
     if req.mode.as_ref().is_none_or(|m| m.trim().is_empty()) {
         req.mode = Some("agent".to_string());
     }
+    if req.system_prompt.is_none() {
+        let character = load_character(&state)?;
+        req.system_prompt = character_system_prompt(&character);
+    }
 
     let thread = state
         .runtime_threads
@@ -1337,6 +1885,20 @@ async fn create_thread(
         .await
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     Ok((StatusCode::CREATED, Json(thread)))
+}
+
+fn character_system_prompt(character: &RuntimeCharacter) -> Option<String> {
+    let mut sections = Vec::new();
+    if !character.system_prompt.trim().is_empty() {
+        sections.push(character.system_prompt.trim().to_string());
+    }
+    if !character.personality.trim().is_empty() {
+        sections.push(format!("Personality:\n{}", character.personality.trim()));
+    }
+    if !character.scenario.trim().is_empty() {
+        sections.push(format!("Scenario:\n{}", character.scenario.trim()));
+    }
+    (!sections.is_empty()).then(|| sections.join("\n\n"))
 }
 
 async fn list_threads(
@@ -3134,6 +3696,19 @@ async fn list_mcp_servers(
     )
     .map_err(|e| ApiError::internal(format!("Failed to load MCP config: {e}")))?;
 
+    let connected_servers = {
+        let pool_slot = state.mcp_pool.lock().await;
+        if let Some(pool_handle) = pool_slot.as_ref() {
+            let pool = pool_handle.lock().await;
+            pool.connected_servers()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::new()
+        }
+    };
+
     let mut servers = Vec::new();
     for (name, server_cfg) in config.servers {
         servers.push(McpServerEntry {
@@ -3142,20 +3717,22 @@ async fn list_mcp_servers(
             required: server_cfg.required,
             command: server_cfg.command.clone(),
             url: server_cfg.url.clone(),
-            connected: false,
+            connected: connected_servers.contains(&name),
             enabled_tools: server_cfg.enabled_tools.clone(),
             disabled_tools: server_cfg.disabled_tools.clone(),
         });
     }
     servers.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(Json(McpServersResponse { servers }))
+    let global = state.mcp_global_config.lock().await.clone();
+    Ok(Json(McpServersResponse { servers, global }))
 }
 
 async fn list_mcp_tools(
     State(state): State<RuntimeApiState>,
     Query(query): Query<McpToolsQuery>,
 ) -> Result<Json<McpToolsResponse>, ApiError> {
+    let connect = query.connect || state.mcp_global_config.lock().await.auto_start;
     // Double-checked init: hold the state-level slot mutex only long enough
     // to grab (or lazily create) the pool handle. connect_all can stall on a
     // slow MCP server and must not run under the slot lock.
@@ -3163,7 +3740,7 @@ async fn list_mcp_tools(
         let mut pool_slot = state.mcp_pool.lock().await;
         match pool_slot.as_ref() {
             Some(pool) => Some(Arc::clone(pool)),
-            None if query.connect => {
+            None if connect => {
                 let mcp_config_path = state.config.read().mcp_config_path();
                 let plugin_registry = state
                     .plugin_discovery
@@ -3187,7 +3764,7 @@ async fn list_mcp_tools(
     };
 
     let mut pool = pool_handle.lock().await;
-    if query.connect {
+    if connect {
         let _errors = pool.connect_all().await;
     }
 
@@ -3215,6 +3792,41 @@ async fn list_mcp_tools(
     tools.sort_by(|a, b| a.server.cmp(&b.server).then_with(|| a.name.cmp(&b.name)));
 
     Ok(Json(McpToolsResponse { tools }))
+}
+
+async fn get_mcp_global_config(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<Value>, ApiError> {
+    let global = state.mcp_global_config.lock().await.clone();
+    Ok(Json(json!({ "global": global })))
+}
+
+async fn update_mcp_global_config(
+    State(state): State<RuntimeApiState>,
+    Json(patch): Json<McpGlobalConfigPatch>,
+) -> Result<Json<Value>, ApiError> {
+    let mut updated = state.mcp_global_config.lock().await.clone();
+    if let Some(auto_start) = patch.auto_start {
+        updated.auto_start = auto_start;
+    }
+    if let Some(fail_fast) = patch.fail_fast {
+        updated.fail_fast = fail_fast;
+    }
+    if let Some(tool_naming) = patch.tool_naming {
+        let normalized = tool_naming.trim().to_ascii_lowercase();
+        if normalized != "namespace" && normalized != "flat" {
+            return Err(ApiError::bad_request(
+                "tool_naming must be either 'namespace' or 'flat'",
+            ));
+        }
+        updated.tool_naming = normalized;
+    }
+
+    let config = state.config.read().clone();
+    save_mcp_global_config(&config, &updated)
+        .map_err(|error| ApiError::internal(format!("Failed to save MCP global config: {error}")))?;
+    *state.mcp_global_config.lock().await = updated.clone();
+    Ok(Json(json!({ "global": updated })))
 }
 
 /// `GET /v1/apps/mcp/servers/{name}` — fetch a single server's redacted config.
@@ -3488,6 +4100,91 @@ async fn reconnect_mcp_server(
     }))
 }
 
+/// `POST /v1/apps/mcp/servers/{name}/stop` — stop one live MCP connection.
+async fn stop_mcp_server(
+    State(state): State<RuntimeApiState>,
+    Path(name): Path<String>,
+) -> Result<Json<McpServerActionReceipt>, ApiError> {
+    let pool_handle = {
+        let pool_slot = state.mcp_pool.lock().await;
+        pool_slot.as_ref().cloned()
+    };
+    if let Some(pool_handle) = pool_handle {
+        pool_handle.lock().await.disconnect_server(&name);
+    }
+    Ok(Json(McpServerActionReceipt {
+        name,
+        action: "stopped",
+        ok: true,
+    }))
+}
+
+/// `POST /v1/apps/mcp/servers/{name}/tools/{tool}/invoke` — invoke a
+/// discovered MCP tool explicitly from the desktop/mobile settings UI.
+async fn invoke_mcp_tool(
+    State(state): State<RuntimeApiState>,
+    Path((name, tool)): Path<(String, String)>,
+    Json(request): Json<McpInvokeRequest>,
+) -> Result<Json<McpInvokeResponse>, ApiError> {
+    let pool_handle = {
+        let mut pool_slot = state.mcp_pool.lock().await;
+        match pool_slot.as_ref() {
+            Some(pool) => Arc::clone(pool),
+            None => {
+                let mcp_config_path = state.config.read().mcp_config_path();
+                let plugin_registry = state
+                    .plugin_discovery
+                    .registry_for_workspace(&state.workspace);
+                let pool = McpPool::from_config_path_with_workspace_and_plugins(
+                    &mcp_config_path,
+                    &state.workspace,
+                    plugin_registry,
+                )
+                .map_err(|error| {
+                    ApiError::internal(format!("Failed to load MCP config: {error}"))
+                })?;
+                let handle = Arc::new(Mutex::new(pool));
+                pool_slot.replace(Arc::clone(&handle));
+                handle
+            }
+        }
+    };
+
+    let prefixed_name = McpPool::mcp_model_tool_name(&name, &tool);
+    let result = pool_handle
+        .lock()
+        .await
+        .call_tool(&prefixed_name, request.arguments)
+        .await;
+    match result {
+        Ok(value) => {
+            let is_error = value
+                .get("isError")
+                .and_then(Value::as_bool)
+                .or_else(|| value.get("is_error").and_then(Value::as_bool))
+                .unwrap_or(false);
+            let result = serde_json::to_string_pretty(&value)
+                .map_err(|error| ApiError::internal(format!("Failed to serialize MCP result: {error}")))?;
+            Ok(Json(McpInvokeResponse {
+                ok: !is_error,
+                message: if is_error {
+                    format!("MCP tool {name}/{tool} returned an error")
+                } else {
+                    format!("MCP tool {name}/{tool} completed")
+                },
+                result,
+                is_error,
+            }))
+        }
+        Err(error) => Ok(Json(McpInvokeResponse {
+            ok: false,
+            message: error.to_string(),
+            result: String::new(),
+            is_error: true,
+        })),
+    }
+}
+
 /// Build a fresh [`McpServerConfig`] from a create request.
 fn mcp_server_config_from_write_request(
     req: McpServerWriteRequest,
@@ -3497,8 +4194,8 @@ fn mcp_server_config_from_write_request(
     crate::mcp::McpServerConfig {
         command: req.command.flatten(),
         args: req.args.unwrap_or_default(),
+        cwd: req.cwd.flatten(),
         env: req.env.unwrap_or_default(),
-        cwd: None,
         url: req.url.flatten(),
         transport: req.transport.flatten(),
         connect_timeout: req.connect_timeout.flatten(),
@@ -3529,6 +4226,9 @@ fn apply_write_request_to_config(
     }
     if let Some(v) = req.args {
         cfg.args = v;
+    }
+    if let Some(v) = req.cwd {
+        cfg.cwd = v;
     }
     if let Some(v) = req.env {
         cfg.env = v;
@@ -3692,6 +4392,138 @@ async fn update_thread(
         .await
         .map_err(map_thread_err)?;
     Ok(Json(thread))
+}
+
+async fn delete_thread(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .runtime_threads
+        .delete_thread(&id)
+        .await
+        .map_err(map_thread_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_thread_event_log(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Query(query): Query<ThreadEventLogQuery>,
+) -> Result<Json<ThreadEventLogResponse>, ApiError> {
+    // Validate the thread before reading its event file. An empty event file
+    // is valid for a new thread, but an unknown id must still be a 404.
+    state
+        .runtime_threads
+        .get_thread_detail(&id)
+        .await
+        .map_err(map_thread_err)?;
+
+    let raw_events = state
+        .runtime_threads
+        .events_since_async(&id, None)
+        .await
+        .map_err(|error| ApiError::internal(format!("Failed to read thread event log: {error}")))?;
+    let mut turn_numbers = BTreeMap::<String, u64>::new();
+    let mut next_turn = 1u64;
+    let mut mapped = Vec::with_capacity(raw_events.len());
+    let mut live_size_bytes = 0u64;
+
+    for event in raw_events {
+        let (event_type, fields) = session_log_projection(&event.event, &event.payload);
+        let turn = match event.turn_id.as_deref() {
+            Some(turn_id) => {
+                if let Some(number) = turn_numbers.get(turn_id) {
+                    *number
+                } else {
+                    let number = next_turn;
+                    next_turn = next_turn.saturating_add(1);
+                    turn_numbers.insert(turn_id.to_string(), number);
+                    number
+                }
+            }
+            None => 0,
+        };
+        live_size_bytes = live_size_bytes.saturating_add(
+            serde_json::to_vec(&event)
+                .map(|bytes| bytes.len() as u64 + 1)
+                .unwrap_or_default(),
+        );
+        mapped.push(ThreadEventLogEntry {
+            seq: event.seq,
+            event_type,
+            ts: event.timestamp.timestamp(),
+            turn,
+            event: event.event,
+            payload: event.payload,
+            fields,
+        });
+    }
+
+    let event_count = mapped.len();
+    let current_turn = mapped.iter().map(|event| event.turn).max().unwrap_or(0);
+    if let Some(since_seq) = query.since_seq {
+        mapped.retain(|event| event.seq > since_seq);
+    }
+    if let Some(since_turn) = query.since_turn {
+        mapped.retain(|event| event.turn == 0 || event.turn > since_turn);
+    }
+    if let Some(limit) = query.limit {
+        let limit = limit.clamp(1, 5000);
+        if mapped.len() > limit {
+            mapped.drain(..mapped.len() - limit);
+        }
+    }
+
+    Ok(Json(ThreadEventLogResponse {
+        session_id: id.clone(),
+        stats: ThreadEventLogStats {
+            session_id: id.clone(),
+            log_path: format!("events/{id}.jsonl"),
+            archive_path: String::new(),
+            live_size_bytes,
+            archive_size_bytes: 0,
+            event_count,
+            current_turn,
+        },
+        events: mapped,
+    }))
+}
+
+async fn get_character(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<RuntimeCharacter>, ApiError> {
+    Ok(Json(load_character(&state)?))
+}
+
+async fn update_character(
+    State(state): State<RuntimeApiState>,
+    Json(patch): Json<UpdateCharacterRequest>,
+) -> Result<Json<RuntimeCharacter>, ApiError> {
+    let mut character = load_character(&state)?;
+    if let Some(value) = patch.name {
+        character.name = value;
+    }
+    if let Some(value) = patch.nickname {
+        character.nickname = value;
+    }
+    if let Some(value) = patch.personality {
+        character.personality = value;
+    }
+    if let Some(value) = patch.scenario {
+        character.scenario = value;
+    }
+    if let Some(value) = patch.first_message {
+        character.first_message = value;
+    }
+    if let Some(value) = patch.system_prompt {
+        character.system_prompt = value;
+    }
+    if character.name.trim().is_empty() {
+        return Err(ApiError::bad_request("character name must not be empty"));
+    }
+    save_character(&state, &character)?;
+    Ok(Json(character))
 }
 
 async fn resume_thread(
@@ -4550,6 +5382,10 @@ async fn stream_turn(
     let trust_mode = req.trust_mode.unwrap_or(false);
     let auto_approve = req.auto_approve.unwrap_or(false);
     let prompt = req.prompt;
+    let system_prompt = character_system_prompt(
+        &load_character(&state)
+            .map_err(|error| ApiError::internal(format!("Failed to load character: {error:?}")))?,
+    );
 
     let thread = state
         .runtime_threads
@@ -4562,7 +5398,7 @@ async fn stream_turn(
             trust_mode: Some(trust_mode),
             auto_approve: Some(auto_approve),
             archived: true,
-            system_prompt: None,
+            system_prompt,
             task_id: None,
             ..Default::default()
         })
@@ -6948,6 +7784,7 @@ fn map_thread_err(err: anyhow::Error) -> ApiError {
     {
         ApiError::not_found(message)
     } else if message.contains("already has an active turn")
+        || message.contains("has an active turn")
         || message.contains("No active turn")
         || message.contains("is not active")
     {

@@ -152,7 +152,7 @@ export class HakusAIClient {
    * The Tauri desktop and Android clients embed the Rust Runtime API. A
    * browser preview can opt into the same path with `?backend=rust`.
    */
-  private get usesEmbeddedRuntime(): boolean {
+  get usesEmbeddedRuntime(): boolean {
     const isTauri = typeof __TAURI_INTERNALS__ !== 'undefined'
     const isRustPreview = typeof window !== 'undefined'
       && new URLSearchParams(window.location.search).get('backend')?.toLowerCase() === 'rust'
@@ -360,18 +360,30 @@ export class HakusAIClient {
 
   async getConfig(): Promise<AppConfig> {
     if (this.usesEmbeddedRuntime) {
-      const res = await this.runtimeFetch('/config')
-      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Get config failed')
-      const config = await res.json()
+      const [configRes, characterRes] = await Promise.all([
+        this.runtimeFetch('/config'),
+        this.runtimeFetch('/character'),
+      ])
+      if (!configRes.ok) await this._throwForResponse(configRes, `${this.baseUrl}/v1/config`, 'Get config failed')
+      if (!characterRes.ok) await this._throwForResponse(characterRes, `${this.baseUrl}/v1/character`, 'Get character failed')
+      const config = await configRes.json()
+      const character = await characterRes.json()
       return {
         version: 'runtime-api',
-        character: { name: 'HakusAI', personality: '' },
+        character: {
+          name: String(character.name || 'HakusAI'),
+          personality: String(character.personality || ''),
+        },
         model: {
           provider: String(config.provider || 'deepseek'),
           model_name: String(config.model || config.default_model || 'auto'),
         },
         voice: { enabled: false, asr_provider: '', tts_provider: '' },
-        avatar: { enabled: false, type: 'none', name: 'HakusAI' },
+        avatar: {
+          enabled: character.avatar_type !== 'none',
+          type: String(character.avatar_type || 'none'),
+          name: String(character.name || 'HakusAI'),
+        },
       }
     }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config`, {}, 10000)
@@ -381,14 +393,10 @@ export class HakusAIClient {
 
   async getCharacter(): Promise<CharacterInfo> {
     if (this.usesEmbeddedRuntime) {
-      return {
-        name: 'HakusAI',
-        nickname: 'HakusAI',
-        personality: '',
-        scenario: '',
-        first_message: '',
-        avatar_type: 'none',
-      }
+      const url = `${this.baseUrl}/v1/character`
+      const res = await this.runtimeFetch('/character')
+      if (!res.ok) await this._throwForResponse(res, url, 'Get Runtime character failed')
+      return res.json()
     }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/character`, 'Get character failed')
@@ -396,7 +404,16 @@ export class HakusAIClient {
   }
 
   async updateCharacter(body: UpdateCharacterBody): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('角色配置保存')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/character`
+      const res = await this.runtimeFetch('/character', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Update Runtime character failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/character/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -743,9 +760,11 @@ export class HakusAIClient {
       }))
       return {
         servers,
-        // Global MCP switches are not part of the Rust Runtime contract yet.
-        // Keep the UI shape explicit without pretending they were persisted.
-        global: { auto_start: false, fail_fast: false, tool_naming: 'namespace' },
+        global: {
+          auto_start: Boolean(data.global?.auto_start),
+          fail_fast: Boolean(data.global?.fail_fast),
+          tool_naming: data.global?.tool_naming === 'flat' ? 'flat' : 'namespace',
+        },
       }
     }
     const res = await this.fetchWithHardTimeout(
@@ -770,6 +789,9 @@ export class HakusAIClient {
           command: config.command || null,
           args: config.args,
           env: config.env,
+          cwd: config.cwd || null,
+          connect_timeout: config.startup_timeout,
+          execute_timeout: config.tool_timeout,
           transport: config.transport === 'stdio'
             ? null
             : config.transport === 'http'
@@ -805,6 +827,9 @@ export class HakusAIClient {
           ...(patch.command !== undefined ? { command: patch.command || null } : {}),
           ...(patch.args !== undefined ? { args: patch.args } : {}),
           ...(patch.env !== undefined ? { env: patch.env } : {}),
+          ...(patch.cwd !== undefined ? { cwd: patch.cwd || null } : {}),
+          ...(patch.startup_timeout !== undefined ? { connect_timeout: patch.startup_timeout } : {}),
+          ...(patch.tool_timeout !== undefined ? { execute_timeout: patch.tool_timeout } : {}),
           ...(patch.transport && patch.transport !== 'stdio'
             ? { transport: patch.transport === 'http' ? 'streamable_http' : patch.transport }
             : {}),
@@ -847,7 +872,23 @@ export class HakusAIClient {
   }
 
   async updateMcpGlobalConfig(patch: Partial<McpGlobalConfig>): Promise<{ global: McpGlobalConfig }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' MCP 全局开关')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/apps/mcp/config`
+      const res = await this.runtimeFetch('/apps/mcp/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Update Runtime MCP global config failed')
+      const data = await res.json()
+      return {
+        global: {
+          auto_start: Boolean(data.global?.auto_start),
+          fail_fast: Boolean(data.global?.fail_fast),
+          tool_naming: data.global?.tool_naming === 'flat' ? 'flat' : 'namespace',
+        },
+      }
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/config/mcp`,
       {
@@ -887,7 +928,13 @@ export class HakusAIClient {
   }
 
   async stopMcpServer(name: string): Promise<{ ok: boolean; message: string }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' MCP 单独停止（请使用禁用开关）')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/apps/mcp/servers/${encodeURIComponent(name)}/stop`
+      const res = await this.runtimeFetch(`/apps/mcp/servers/${encodeURIComponent(name)}/stop`, { method: 'POST' })
+      if (!res.ok) await this._throwForResponse(res, url, 'Stop Runtime MCP server failed')
+      const data = await res.json()
+      return { ok: Boolean(data.ok), message: String(data.action || 'stopped') }
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/stop`,
       { method: 'POST' },
@@ -952,7 +999,17 @@ export class HakusAIClient {
   }
 
   async invokeMcpTool(name: string, toolName: string, args: Record<string, unknown>): Promise<McpInvokeResult> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' MCP 工具手动调用')
+    if (this.usesEmbeddedRuntime) {
+      const path = `/apps/mcp/servers/${encodeURIComponent(name)}/tools/${encodeURIComponent(toolName)}/invoke`
+      const url = `${this.baseUrl}/v1${path}`
+      const res = await this.runtimeFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arguments: args }),
+      }, 60000)
+      if (!res.ok) await this._throwForResponse(res, url, 'Invoke Runtime MCP tool failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/mcp/servers/${encodeURIComponent(name)}/tools/${encodeURIComponent(toolName)}/invoke`,
       {
@@ -1217,7 +1274,28 @@ export class HakusAIClient {
    * active websockets / llm_calls 等指标。
    */
   async getMetrics(): Promise<MetricsResponse | null> {
-    if (this.usesEmbeddedRuntime) return null
+    if (this.usesEmbeddedRuntime) {
+      try {
+        const res = await this.runtimeFetch('/metrics', {}, 5000)
+        if (!res.ok) return null
+        const data = await res.json()
+        const counters = data.counters || {}
+        const errors = data.errors || {}
+        return {
+          uptime_seconds: Number(data.uptime_seconds || 0),
+          total_turns: Number(data.total_turns ?? counters.turns ?? 0),
+          total_errors: Number(data.total_errors ?? Object.values(errors).reduce((sum: number, value: any) => sum + Number(value || 0), 0)),
+          active_websockets: Number(data.active_websockets || 0),
+          // Rust Runtime does not expose the retired Python-only counters.
+          checkpoints_saved: Number(data.checkpoints_saved || 0),
+          llm_calls: Number(data.llm_calls || 0),
+          llm_retries: Number(data.llm_retries || 0),
+          by_provider: data.by_provider && typeof data.by_provider === 'object' ? data.by_provider : undefined,
+        }
+      } catch {
+        return null
+      }
+    }
     try {
       const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/metrics`, {}, 5000)
       if (!res.ok) return null
@@ -1917,9 +1995,7 @@ export class HakusAIClient {
     if (this.usesEmbeddedRuntime) {
       const url = `${this.baseUrl}/v1/threads/${encodeURIComponent(sessionId)}`
       const res = await this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ archived: true }),
+        method: 'DELETE',
       })
       if (!res.ok) await this._throwForResponse(res, url, 'Delete Runtime thread failed')
       return
@@ -2026,19 +2102,15 @@ export class HakusAIClient {
     stats: SessionLogStats
   }> {
     if (this.usesEmbeddedRuntime) {
-      return {
-        session_id: sessionId,
-        events: [],
-        stats: {
-          session_id: sessionId,
-          log_path: '',
-          archive_path: '',
-          live_size_bytes: 0,
-          archive_size_bytes: 0,
-          event_count: 0,
-          current_turn: 0,
-        },
-      }
+      const params = new URLSearchParams()
+      if (opts?.sinceTurn !== undefined) params.set('since_turn', String(opts.sinceTurn))
+      if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+      const query = params.toString() ? `?${params.toString()}` : ''
+      const path = `/threads/${encodeURIComponent(sessionId)}/event-log${query}`
+      const url = `${this.baseUrl}/v1${path}`
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, url, 'Get Runtime session log failed')
+      return res.json()
     }
     const params = new URLSearchParams()
     if (opts?.sinceTurn) params.set('since_turn', String(opts.sinceTurn))
@@ -2110,14 +2182,23 @@ export class HakusAIClient {
 
   // ---- 微信 ClawBot ----
   async getWeChatStatus(): Promise<any> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('微信 ClawBot')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/wechat/status')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/wechat/status`, 'Get Runtime WeChat status failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/status`, {}, 10000)
     if (!res.ok) await this._throwForResponse(res, 'wechat/status', 'Get wechat status failed')
     return res.json()
   }
 
   async weChatLogin(): Promise<{ status: string; qrcode_base64?: string }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('微信 ClawBot')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/wechat/login`
+      const res = await this.runtimeFetch('/wechat/login', { method: 'POST' }, 30000)
+      if (!res.ok) await this._throwForResponse(res, url, 'Runtime WeChat login failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2127,7 +2208,12 @@ export class HakusAIClient {
   }
 
   async weChatDisconnect(): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('微信 ClawBot')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/wechat/logout`
+      const res = await this.runtimeFetch('/wechat/logout', { method: 'POST' })
+      if (!res.ok) await this._throwForResponse(res, url, 'Runtime WeChat logout failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/disconnect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2136,7 +2222,16 @@ export class HakusAIClient {
   }
 
   async weChatSend(userId: string, text: string): Promise<{ success: boolean }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('微信 ClawBot')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/wechat/send`
+      const res = await this.runtimeFetch('/wechat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, text }),
+      }, 15000)
+      if (!res.ok) await this._throwForResponse(res, url, 'Runtime WeChat send failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/wechat/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2155,20 +2250,17 @@ export class HakusAIClient {
    */
   async getGitStatus(): Promise<GitStatusResponse> {
     if (this.usesEmbeddedRuntime) {
-      const url = `${this.baseUrl}/v1/workspace/status`
-      const res = await this.runtimeFetch('/workspace/status')
+      const url = `${this.baseUrl}/v1/workspace/status/files`
+      const res = await this.runtimeFetch('/workspace/status/files')
       if (!res.ok) await this._throwForResponse(res, url, 'Get Runtime workspace status failed')
       const data = await res.json()
       return {
         branch: String(data.branch || ''),
-        workdir: String(data.workspace || ''),
-        is_repo: Boolean(data.git_repo),
-        // Runtime currently exposes aggregate counts rather than the full
-        // porcelain file list. Keep the review panel stable until the richer
-        // diff contract is added to the shared API.
-        unstaged: [],
-        staged: [],
-        untracked: [],
+        workdir: String(data.workdir || ''),
+        is_repo: Boolean(data.is_repo),
+        unstaged: Array.isArray(data.unstaged) ? data.unstaged : [],
+        staged: Array.isArray(data.staged) ? data.staged : [],
+        untracked: Array.isArray(data.untracked) ? data.untracked : [],
       }
     }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/git/status`, {}, 10000)
@@ -2184,8 +2276,16 @@ export class HakusAIClient {
    */
   async getGitDiff(opts?: { staged?: boolean; ref?: string; paths?: string[] }): Promise<GitDiffResponse> {
     if (this.usesEmbeddedRuntime) {
-      const workspace = await this.getGitStatus()
-      return { diff: '', truncated: false, workdir: workspace.workdir }
+      const params = new URLSearchParams()
+      if (opts?.staged) params.set('staged', 'true')
+      if (opts?.ref) params.set('ref', opts.ref)
+      if (opts?.paths?.length) params.set('paths', opts.paths.join(','))
+      const query = params.toString() ? `?${params.toString()}` : ''
+      const path = `/workspace/diff${query}`
+      const url = `${this.baseUrl}/v1${path}`
+      const res = await this.runtimeFetch(path, {}, 15000)
+      if (!res.ok) await this._throwForResponse(res, url, 'Get Runtime git diff failed')
+      return res.json()
     }
     const params = new URLSearchParams()
     if (opts?.staged) params.set('staged', 'true')
@@ -2202,7 +2302,16 @@ export class HakusAIClient {
 
   /** POST /api/git/stage — stage or unstage a path (git add / git restore --staged). */
   async stagePath(path: string, unstage: boolean = false): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' Git 暂存操作')
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/workspace/stage`
+      const res = await this.runtimeFetch('/workspace/stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, unstage }),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Stage Runtime git path failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/git/stage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

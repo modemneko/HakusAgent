@@ -751,6 +751,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   migrateFromLocalStorage: async () => {
+    // Embedded Rust Runtime sessions are authoritative on disk. Do not read
+    // the retired browser localStorage snapshot, even when it still exists.
+    if (apiClient.usesEmbeddedRuntime) return
+
     // Idempotent — flag prevents re-running
     if (localStorage.getItem(MIGRATION_FLAG_KEY) === '1') return
     const { sessions, messages } = loadLegacyFromStorage()

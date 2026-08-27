@@ -928,6 +928,12 @@ async fn spawn_test_server_with_root_token_mobile_workspace_and_overrides(
             .fleet_hakus_binary
             .unwrap_or_else(configured_hakus_binary),
         compat_stream_test_hook: overrides.compat_stream_test_hook,
+        mcp_global_config: Arc::new(Mutex::new(McpGlobalConfig::default())),
+        wechat: Arc::new(Mutex::new(WechatRuntimeState {
+            client: hakus_wechat::IlLinkClient::new(root.join("wechat")),
+            login: None,
+        })),
+        started_at: Instant::now(),
     };
     let app = build_router(state);
     let handle = tokio::spawn(async move {

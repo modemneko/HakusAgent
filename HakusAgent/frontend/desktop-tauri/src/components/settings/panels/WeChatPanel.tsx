@@ -12,7 +12,7 @@ import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { apiClient } from '@/api/client'
 
-type LoginStatus = 'not_configured' | 'disconnected' | 'qrcode' | 'waiting' | 'connected' | 'checking'
+type LoginStatus = 'not_configured' | 'disconnected' | 'qrcode' | 'waiting' | 'scanned' | 'expired' | 'connected' | 'checking'
 
 const POLL_INTERVAL = 5000  // 始终每 5 秒轮询后端状态
 const FAST_POLL_INTERVAL = 3000  // 扫码等待期间 3 秒轮询
@@ -61,7 +61,7 @@ export function WeChatPanel() {
 
   // 始终轮询后端状态（刷新页面后也能恢复）
   useEffect(() => {
-    const isFast = status === 'waiting' || status === 'qrcode' || status === 'checking'
+    const isFast = status === 'waiting' || status === 'qrcode' || status === 'scanned' || status === 'checking'
     const interval = setInterval(refreshStatus, isFast ? FAST_POLL_INTERVAL : POLL_INTERVAL)
     return () => clearInterval(interval)
   }, [status, refreshStatus])
@@ -117,6 +117,8 @@ export function WeChatPanel() {
     disconnected: '未连接',
     qrcode: '等待扫码',
     waiting: '等待确认',
+    scanned: '已扫码，等待确认',
+    expired: '二维码已过期',
     connected: '已连接',
     checking: '检测中',
   }
@@ -125,10 +127,12 @@ export function WeChatPanel() {
     disconnected: 'text-red-400',
     qrcode: 'text-amber-400',
     waiting: 'text-amber-400',
+    scanned: 'text-amber-400',
+    expired: 'text-red-400',
     connected: 'text-emerald-400',
     checking: 'text-muted-foreground',
   }
-  const StatusIcon = status === 'connected' ? CheckCircle2 : status === 'not_configured' ? XCircle : Loader2
+  const StatusIcon = status === 'connected' ? CheckCircle2 : status === 'not_configured' || status === 'expired' ? XCircle : Loader2
 
   return (
     <div className="space-y-5">
@@ -146,7 +150,7 @@ export function WeChatPanel() {
           {accountId && <span className="mt-0.5 block truncate pl-6 text-[10px] text-muted-foreground">({accountId})</span>}
         </div>
         <div className="flex gap-2">
-          {status !== 'connected' && status !== 'checking' && (
+          {status !== 'connected' && status !== 'checking' && status !== 'waiting' && status !== 'scanned' && (
             <Button size="sm" onClick={handleLogin} disabled={loading}>
               {loading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <QrCode className="mr-1 h-3 w-3" />}
               扫码登录

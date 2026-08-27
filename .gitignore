@@ -78,6 +78,10 @@ dist/
 *.temp
 .cache/
 
+# Local Hakus runtime state and Android/Gradle caches
+.hakus/
+**/.gradle/
+
 # Model files (large)
 *.pt
 *.pth

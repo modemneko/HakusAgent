@@ -1283,6 +1283,41 @@ impl RuntimeThreadStore {
         remove_file_if_exists(&self.item_path(item_id)?)
     }
 
+    fn remove_events(&self, thread_id: &str) -> Result<()> {
+        remove_file_if_exists(&self.events_path(thread_id)?)
+    }
+
+    /// Delete every durable record owned by a thread.
+    ///
+    /// Runtime projections are deliberately stored as separate files, so a
+    /// thread deletion must remove the complete graph rather than only the
+    /// thread row. The caller holds the manager's active/thread mutation
+    /// guards while invoking this method.
+    pub fn delete_thread_cascade(&self, thread_id: &str) -> Result<()> {
+        let thread = self
+            .load_thread(thread_id)
+            .with_context(|| format!("Thread not found: {thread_id}"))?;
+        let turns = self.list_turns_for_thread(&thread.id)?;
+        for turn in &turns {
+            for item in self.list_items_for_turn(&turn.id)? {
+                self.remove_item(&item.id)?;
+            }
+            self.remove_turn(&turn.id)?;
+        }
+
+        // Agent Mail is part of the thread's durable runtime state. Remove
+        // envelopes addressed to or sent from the deleted thread as well.
+        for mail in self.list_agent_mail()? {
+            if mail.source.thread_id == thread.id || mail.destination.thread_id == thread.id {
+                remove_file_if_exists(&self.mail_path(&mail.message_id)?)?;
+            }
+        }
+
+        self.delete_goal(&thread.id)?;
+        self.remove_events(&thread.id)?;
+        self.remove_thread(&thread.id)
+    }
+
     pub fn load_thread(&self, thread_id: &str) -> Result<ThreadRecord> {
         let path = self.thread_path(thread_id)?;
         let raw = read_store_file(&path)
@@ -4621,6 +4656,51 @@ impl RuntimeThreadManager {
         self.store
             .load_thread(id)
             .with_context(|| format!("Thread not found: {id}"))
+    }
+
+    /// Permanently delete a thread and all of its durable projections.
+    ///
+    /// Deletion is intentionally rejected while a turn is active. Removing
+    /// the files underneath a running engine would otherwise let late stream
+    /// checkpoints recreate part of the supposedly deleted conversation.
+    pub async fn delete_thread(&self, id: &str) -> Result<()> {
+        let engine = {
+            let mut active = self.active.lock().await;
+            let _thread_mutation = self.store.thread_mutation.lock();
+            self.store
+                .load_thread(id)
+                .with_context(|| format!("Thread not found: {id}"))?;
+            if active
+                .engines
+                .get(id)
+                .and_then(|state| state.active_turn.as_ref())
+                .is_some()
+            {
+                bail!("Thread {id} has an active turn; interrupt it before deleting");
+            }
+
+            let engine = active.engines.remove(id).map(|state| state.engine);
+            active.lru.retain(|thread_id| thread_id != id);
+            self.store.delete_thread_cascade(id)?;
+            engine
+        };
+
+        self.pending_approvals
+            .lock()
+            .retain(|_, entry| entry.thread_id != id);
+        self.pending_user_inputs
+            .lock()
+            .retain(|(thread_id, _), _| thread_id != id);
+        self.pending_dynamic_tools
+            .lock()
+            .retain(|_, entry| entry.params.thread_id != id);
+        self.recovery_receipts.lock().remove(id);
+        self.projection_locks.lock().remove(id);
+
+        if let Some(engine) = engine {
+            let _ = engine.send(Op::Shutdown).await;
+        }
+        Ok(())
     }
 
     pub async fn update_thread(&self, id: &str, req: UpdateThreadRequest) -> Result<ThreadRecord> {

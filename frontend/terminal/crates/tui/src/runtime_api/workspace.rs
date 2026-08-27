@@ -1,8 +1,8 @@
 use std::path::{Path as FsPath, PathBuf};
 
 use axum::Json;
-use axum::extract::State;
-use serde::Serialize;
+use axum::extract::{Query, State};
+use serde::{Deserialize, Serialize};
 
 use crate::dependencies::{ExternalTool as _, Git};
 
@@ -22,6 +22,47 @@ pub(super) struct WorkspaceStatusResponse {
     pub(super) behind: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct GitFileChange {
+    pub(super) path: String,
+    pub(super) status: String,
+    pub(super) staged: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct GitStatusFilesResponse {
+    pub(super) branch: String,
+    pub(super) workdir: PathBuf,
+    pub(super) is_repo: bool,
+    pub(super) unstaged: Vec<GitFileChange>,
+    pub(super) staged: Vec<GitFileChange>,
+    pub(super) untracked: Vec<GitFileChange>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct GitDiffResponse {
+    pub(super) diff: String,
+    pub(super) truncated: bool,
+    pub(super) workdir: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct GitDiffQuery {
+    #[serde(default)]
+    pub(super) staged: bool,
+    #[serde(rename = "ref", default)]
+    pub(super) reference: Option<String>,
+    #[serde(default)]
+    pub(super) paths: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitStageRequest {
+    pub(super) path: String,
+    #[serde(default)]
+    pub(super) unstage: bool,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct WorkspaceGitMetadata {
     pub(super) branch: Option<String>,
@@ -33,6 +74,103 @@ pub(super) async fn workspace_status(
     State(state): State<RuntimeApiState>,
 ) -> Result<Json<WorkspaceStatusResponse>, ApiError> {
     Ok(Json(collect_workspace_status(&state.workspace)))
+}
+
+pub(super) async fn workspace_git_status(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<GitStatusFilesResponse>, ApiError> {
+    let status = collect_workspace_status(&state.workspace);
+    if !status.git_repo {
+        return Ok(Json(GitStatusFilesResponse {
+            branch: String::new(),
+            workdir: state.workspace,
+            is_repo: false,
+            unstaged: Vec::new(),
+            staged: Vec::new(),
+            untracked: Vec::new(),
+        }));
+    }
+
+    let porcelain = run_git(&state.workspace, &["status", "--porcelain=v1", "-z"])
+        .ok_or_else(|| ApiError::internal("Failed to read git status"))?;
+    let (unstaged, staged, untracked) = parse_git_status(&porcelain);
+    Ok(Json(GitStatusFilesResponse {
+        branch: status.branch.unwrap_or_default(),
+        workdir: status.workspace,
+        is_repo: true,
+        unstaged,
+        staged,
+        untracked,
+    }))
+}
+
+pub(super) async fn workspace_diff(
+    State(state): State<RuntimeApiState>,
+    Query(query): Query<GitDiffQuery>,
+) -> Result<Json<GitDiffResponse>, ApiError> {
+    if !collect_workspace_status(&state.workspace).git_repo {
+        return Ok(Json(GitDiffResponse {
+            diff: String::new(),
+            truncated: false,
+            workdir: state.workspace,
+        }));
+    }
+
+    let reference = query.reference.as_deref().map(validate_git_reference).transpose()?;
+    let paths = parse_git_paths(query.paths.as_deref())?;
+    let mut args = vec!["diff".to_string(), "--no-ext-diff".to_string()];
+    if query.staged {
+        args.push("--cached".to_string());
+    }
+    if let Some(reference) = reference {
+        args.push(reference);
+    }
+    args.push("--".to_string());
+    args.extend(paths);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = Git::output(&arg_refs, &state.workspace)
+        .map_err(|e| ApiError::internal(format!("Failed to run git diff: {e}")))?;
+    if !output.status.success() {
+        return Err(ApiError::bad_request(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
+    let truncated = output.stdout.len() > MAX_DIFF_BYTES;
+    let diff = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(MAX_DIFF_BYTES)])
+        .to_string();
+    Ok(Json(GitDiffResponse {
+        diff,
+        truncated,
+        workdir: state.workspace,
+    }))
+}
+
+pub(super) async fn stage_path(
+    State(state): State<RuntimeApiState>,
+    Json(request): Json<GitStageRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !collect_workspace_status(&state.workspace).git_repo {
+        return Err(ApiError::bad_request("Workspace is not a git repository"));
+    }
+    let path = validate_workspace_relative_path(&request.path)?;
+    let args = if request.unstage {
+        vec!["restore", "--staged", "--", path.as_str()]
+    } else {
+        vec!["add", "--", path.as_str()]
+    };
+    let output = Git::output(&args, &state.workspace)
+        .map_err(|e| ApiError::internal(format!("Failed to run git stage: {e}")))?;
+    if !output.status.success() {
+        return Err(ApiError::bad_request(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "path": path,
+        "unstaged": request.unstage,
+    })))
 }
 
 pub(super) fn collect_workspace_status(workspace: &FsPath) -> WorkspaceStatusResponse {
@@ -116,6 +254,99 @@ fn run_git(workspace: &FsPath, args: &[&str]) -> Option<String> {
         return None;
     }
     String::from_utf8(output.stdout).ok()
+}
+
+fn parse_git_status(porcelain: &str) -> (
+    Vec<GitFileChange>,
+    Vec<GitFileChange>,
+    Vec<GitFileChange>,
+) {
+    let mut unstaged = Vec::new();
+    let mut staged = Vec::new();
+    let mut untracked = Vec::new();
+    for record in porcelain.split('\0').filter(|record| !record.is_empty()) {
+        let bytes = record.as_bytes();
+        if bytes.len() < 3 {
+            continue;
+        }
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let raw_path = record[3..].to_string();
+        let path = raw_path
+            .rsplit_once(" -> ")
+            .map_or(raw_path.as_str(), |(_, new_path)| new_path)
+            .to_string();
+        if x == '?' && y == '?' {
+            untracked.push(GitFileChange {
+                path,
+                status: "untracked".to_string(),
+                staged: false,
+            });
+            continue;
+        }
+        let status = git_status_label(if x != ' ' { x } else { y });
+        if x != ' ' {
+            staged.push(GitFileChange {
+                path: path.clone(),
+                status: status.clone(),
+                staged: true,
+            });
+        }
+        if y != ' ' {
+            unstaged.push(GitFileChange {
+                path,
+                status,
+                staged: false,
+            });
+        }
+    }
+    (unstaged, staged, untracked)
+}
+
+fn git_status_label(status: char) -> String {
+    match status {
+        'M' => "modified",
+        'A' => "added",
+        'D' => "deleted",
+        'R' | 'C' => "renamed",
+        _ => "unknown",
+    }
+    .to_string()
+}
+
+fn validate_workspace_relative_path(raw: &str) -> Result<String, ApiError> {
+    let path = std::path::Path::new(raw.trim());
+    if raw.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        })
+        || raw.contains('\0')
+    {
+        return Err(ApiError::bad_request(
+            "Git path must be a non-empty relative path inside the workspace",
+        ));
+    }
+    Ok(raw.trim().replace('\\', "/"))
+}
+
+fn parse_git_paths(raw: Option<&str>) -> Result<Vec<String>, ApiError> {
+    raw.unwrap_or_default()
+        .split(',')
+        .filter(|path| !path.trim().is_empty())
+        .map(validate_workspace_relative_path)
+        .collect()
+}
+
+fn validate_git_reference(raw: &str) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') || trimmed.contains('\0') {
+        return Err(ApiError::bad_request("Invalid git reference"));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn current_git_branch(workspace: &FsPath) -> Option<String> {

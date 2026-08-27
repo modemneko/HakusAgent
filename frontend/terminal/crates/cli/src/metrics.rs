@@ -2,9 +2,9 @@
 //! a human-readable usage rollup.
 //!
 //! Data sources:
-//! - `~/.deepseek/audit.log`   — one JSON line per event (approvals, credentials)
-//! - `~/.deepseek/sessions/`   — saved session JSON files (tool call history)
-//! - `~/.deepseek/tasks/runtime/events/` — runtime thread JSONL event streams
+//! - `$HAKUS_HOME/audit.log`   — one JSON line per event (approvals, credentials)
+//! - `$HAKUS_HOME/sessions/`   — saved session JSON files (tool call history)
+//! - `$HAKUS_HOME/tasks/runtime/events/` — runtime thread JSONL event streams
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ pub struct MetricsArgs {
 }
 
 pub fn run(args: MetricsArgs) -> Result<()> {
-    let base = deepseek_home();
+    let base = hakus_home();
 
     // Collect data from every source; treat missing files as empty.
     let mut rollup = Rollup::default();
@@ -822,7 +822,7 @@ fn print_human(rollup: &Rollup) {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn deepseek_home() -> PathBuf {
+fn hakus_home() -> PathBuf {
     hakus_paths::hakus_home()
         .ok()
         .flatten()
