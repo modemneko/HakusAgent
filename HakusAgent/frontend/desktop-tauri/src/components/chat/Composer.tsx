@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import {
   AtSign,
@@ -67,6 +68,7 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
+import { getOverlayContainer } from '@/components/ui/portal'
 
 interface Attachment {
   id: string
@@ -121,6 +123,9 @@ const MOBILE_SETTINGS_LABELS: Record<Exclude<MobileSettingsSection, 'root'>, str
   reasoning: '思考强度',
   permission: '权限',
 }
+
+const PHONE_VIEWPORT_QUERY =
+  '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
 const TEXT_EXTENSIONS: Record<string, string> = {
   txt: 'text',
@@ -335,6 +340,7 @@ export function Composer({
   const [mentionQuery, setMentionQuery] = useState('')
   const [mentionIndex, setMentionIndex] = useState(0)
   const [mentionLoading, setMentionLoading] = useState(false)
+  const [isPhoneViewport, setIsPhoneViewport] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [permission, setPermission] = useState<PermissionMode>('ask')
@@ -356,6 +362,15 @@ export function Composer({
   const prevSessionIdRef = useRef<string | undefined>(undefined)
   const attachmentsRef = useRef<Attachment[]>([])
   const mentionCacheRef = useRef<{ projectId: string | null; loadedAt: number; items: MentionItem[] } | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const phoneQuery = window.matchMedia(PHONE_VIEWPORT_QUERY)
+    const syncViewport = () => setIsPhoneViewport(phoneQuery.matches)
+    syncViewport()
+    phoneQuery.addEventListener?.('change', syncViewport)
+    return () => phoneQuery.removeEventListener?.('change', syncViewport)
+  }, [])
 
   const sendOnEnter = useSettingsStore((s) => s.sendOnEnter)
   const providers = useSettingsStore((s) => s.providers)
@@ -404,6 +419,7 @@ export function Composer({
     : defaultModel || "No model"
   const activePermissionMeta = PERMISSION_META[permission]
   const ActivePermissionIcon = activePermissionMeta.icon
+  const overlayContainer = getOverlayContainer()
 
   const filteredMentionItems = useMemo(() => {
     if (!mentionQuery) return mentionItems
@@ -879,6 +895,59 @@ export function Composer({
 
   const hasExpandedContent = attachments.length > 0 || Boolean(taskProgress) || pendingQueue.length > 0
 
+  const mentionMenu = mentionOpen ? (
+    <div
+      ref={menuRef}
+      className="composer-mention-menu absolute bottom-full left-2 z-50 mb-2 max-h-72 overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
+    >
+      <div className="hakus-mobile-menu-header composer-mention-header">
+        <span>@ 上下文与 Skills</span>
+        <button
+          type="button"
+          className="hakus-mobile-menu-close"
+          onClick={() => setMentionOpen(false)}
+          aria-label="关闭上下文选择"
+        >
+          <span>关闭</span>
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="composer-mention-body">
+        <div className="composer-mention-desktop-heading">
+          <span>@ 上下文与 Skills</span>
+          {mentionLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+        </div>
+        {filteredMentionItems.length === 0 ? (
+          <div className="px-2 py-2 text-xs text-muted-foreground">没有匹配的上下文</div>
+        ) : (
+          filteredMentionItems.map((item, index) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={`${item.insert}-${index}`}
+                onMouseEnter={() => setMentionIndex(index)}
+                onClick={() => insertMention(item)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
+                  index === mentionIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{item.label}</span>
+                  <span className="block truncate text-[10px] text-muted-foreground">{item.hint}</span>
+                </span>
+                <span className="max-w-[116px] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  {item.insert}
+                </span>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </div>
+  ) : null
+
   return (
     <div className="composer-shell bg-transparent px-4 pb-4 pt-2">
       <div className="composer-inner mx-auto max-w-4xl">
@@ -905,44 +974,9 @@ export function Composer({
             }}
           />
 
-          {mentionOpen && (
-            <div
-              ref={menuRef}
-              className="composer-mention-menu absolute bottom-full left-2 z-50 mb-2 max-h-72 overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
-            >
-              <div className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground">
-                <span>@ 上下文与 Skills</span>
-                {mentionLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-              </div>
-              {filteredMentionItems.length === 0 ? (
-                <div className="px-2 py-2 text-xs text-muted-foreground">没有匹配的上下文</div>
-              ) : (
-                filteredMentionItems.map((item, index) => {
-                  const Icon = item.icon
-                  return (
-                    <button
-                      key={`${item.insert}-${index}`}
-                      onMouseEnter={() => setMentionIndex(index)}
-                      onClick={() => insertMention(item)}
-                      className={cn(
-                        'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
-                        index === mentionIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
-                      )}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{item.label}</span>
-                        <span className="block truncate text-[10px] text-muted-foreground">{item.hint}</span>
-                      </span>
-                      <span className="max-w-[116px] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {item.insert}
-                      </span>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-          )}
+          {mentionOpen && isPhoneViewport && overlayContainer
+            ? createPortal(mentionMenu, overlayContainer)
+            : mentionMenu}
 
           {attachments.length > 0 && (
             <div className="flex gap-2 overflow-x-auto px-0.5 pb-0.5">
@@ -1311,7 +1345,7 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[300px] p-1.5">
+                <DropdownMenuContent align="start" side="top" mobileTitle="选择项目" className="w-[300px] p-1.5">
                   {/* Search box */}
                   <div className="mb-1 flex items-center gap-1.5 rounded-lg bg-foreground/[0.04] px-2 py-1.5">
                     <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1487,7 +1521,7 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[280px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle="选择模型" className="w-[280px]">
                   {providers.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
@@ -1584,7 +1618,7 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[180px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle="思考强度" className="w-[180px]">
                   {REASONING_EFFORTS.map((effort: ReasoningEffort) => {
                     const isSelected = activeReasoningEffort === effort
                     const meta = REASONING_EFFORT_META[effort]
@@ -1623,7 +1657,7 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" className="w-[200px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle="权限模式" className="w-[200px]">
                   {availablePermissions.map((mode) => {
                     const meta = PERMISSION_META[mode]
                     const Icon = meta.icon

@@ -9,6 +9,7 @@ import {
   Pin,
   PinOff,
   Smartphone,
+  X,
 } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useAppStore } from '@/store/app'
@@ -174,15 +175,26 @@ export function Sidebar() {
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-semibold tracking-tight">HakusAI</span>
         </div>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-          onClick={handleNew}
-          title="New chat"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+            onClick={handleNew}
+            title="New chat"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <button
+            type="button"
+            className="sidebar-mobile-close"
+            onClick={() => setSidebar(false)}
+            aria-label="关闭侧栏"
+            title="关闭侧栏"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       {/* Search (Codex 风格搜索框) */}
@@ -274,7 +286,7 @@ export function Sidebar() {
                               <MoreHorizontal className="h-3.5 w-3.5" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-36">
+                          <DropdownMenuContent align="end" mobileTitle="会话操作" className="w-36">
                             <DropdownMenuItem
                               onSelect={() => handleStartRename(session.id, session.title)}
                             >

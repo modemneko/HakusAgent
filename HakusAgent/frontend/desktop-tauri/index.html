@@ -51,7 +51,7 @@
          Colors here MUST match the resolved theme's --background / --foreground.
          We use CSS variables + a light fallback so the page paints correctly
          regardless of whether .dark was applied by the inline script above. */
-      html, body, #root {
+      html, body, #root, #hakus-overlay-root {
         margin: 0;
         padding: 0;
         height: 100%;
@@ -60,6 +60,11 @@
         min-width: 0;
         min-height: 100%;
         overflow: hidden;
+      }
+      #hakus-overlay-root {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
       }
       /* Light theme base (matches :root in index.css) */
       html {
@@ -76,6 +81,7 @@
 
   <body>
     <div id="root"></div>
+    <div id="hakus-overlay-root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

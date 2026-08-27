@@ -2,19 +2,27 @@ import * as React from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { X } from 'lucide-react'
+import { getOverlayContainer } from './portal'
 
 const DropdownMenu = DropdownMenuPrimitive.Root
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 const DropdownMenuGroup = DropdownMenuPrimitive.Group
-const DropdownMenuPortal = DropdownMenuPrimitive.Portal
+const DropdownMenuPortal = ({ container, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Portal>) => (
+  <DropdownMenuPrimitive.Portal container={container ?? getOverlayContainer()} {...props} />
+)
 const DropdownMenuSub = DropdownMenuPrimitive.Sub
 const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup
 
+type DropdownMenuContentProps = React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
+  mobileTitle?: string
+}
+
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 6, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
+  DropdownMenuContentProps
+>(({ className, sideOffset = 6, mobileTitle = '选项', children, ...props }, ref) => (
+  <DropdownMenuPortal>
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
@@ -29,8 +37,19 @@ const DropdownMenuContent = React.forwardRef<
       )}
       {...props}
       data-hakus-overlay="menu-content"
-    />
-  </DropdownMenuPrimitive.Portal>
+    >
+      <div className="hakus-mobile-menu-header">
+        <span>{mobileTitle}</span>
+        <DropdownMenuPrimitive.Item asChild>
+          <button type="button" className="hakus-mobile-menu-close" aria-label="关闭">
+            <span>关闭</span>
+            <X className="h-4 w-4" />
+          </button>
+        </DropdownMenuPrimitive.Item>
+      </div>
+      <div className="hakus-mobile-menu-body">{children}</div>
+    </DropdownMenuPrimitive.Content>
+  </DropdownMenuPortal>
 ))
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
 
@@ -101,7 +120,7 @@ const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
+  <DropdownMenuPortal>
     <DropdownMenuPrimitive.SubContent
       ref={ref}
       collisionPadding={8}
@@ -112,7 +131,7 @@ const DropdownMenuSubContent = React.forwardRef<
       {...props}
       data-hakus-overlay="menu-sub-content"
     />
-  </DropdownMenuPrimitive.Portal>
+  </DropdownMenuPortal>
 ))
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName
 

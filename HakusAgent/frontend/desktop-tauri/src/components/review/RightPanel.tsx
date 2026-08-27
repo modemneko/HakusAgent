@@ -1,4 +1,4 @@
-import { GitCompareArrows, TerminalSquare, Eye, ScrollText, FileClock } from 'lucide-react'
+import { GitCompareArrows, TerminalSquare, Eye, ScrollText, FileClock, X } from 'lucide-react'
 import { useAppStore, type RightPanelTab } from '@/store/app'
 import { cn } from '@/lib/utils'
 import { DiffReview } from './DiffReview'
@@ -17,9 +17,22 @@ const TABS: { id: RightPanelTab; label: string; icon: typeof GitCompareArrows }[
 export function RightPanel() {
   const tab = useAppStore((s) => s.rightPanelTab)
   const setTab = useAppStore((s) => s.setRightPanelTab)
+  const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen)
 
   return (
     <aside className="right-panel flex h-full w-full min-w-0 shrink-0 flex-col">
+      <div className="right-panel-mobile-header">
+        <span>工作台</span>
+        <button
+          type="button"
+          className="right-panel-mobile-close"
+          onClick={() => setRightPanelOpen(false)}
+          aria-label="关闭审阅面板"
+          title="关闭审阅面板"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
       {/* Codex Tab bar — 底部边框激活态 */}
       <div className="right-panel-tabs flex shrink-0 items-center gap-0 overflow-x-auto border-b border-border/60 px-2">
         {TABS.map((t) => {

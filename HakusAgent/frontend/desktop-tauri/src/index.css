@@ -153,6 +153,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    position: relative;
     font-family: var(--font-ui);
     font-size: var(--text-base);
     -webkit-font-smoothing: antialiased;
@@ -266,6 +267,25 @@
     @apply border-l border-border/60 bg-card/80;
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
+  }
+
+  .sidebar-mobile-close,
+  .right-panel-mobile-header,
+  .right-panel-mobile-close {
+    display: none;
+  }
+
+  .hakus-mobile-menu-header {
+    display: none;
+  }
+
+  .composer-mention-desktop-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.25rem 0.5rem;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
   }
 
   /* Status bar */
@@ -733,6 +753,22 @@
     gap: 0.125rem;
     min-width: 0;
     overflow: hidden;
+  }
+  #hakus-overlay-root {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+  #hakus-overlay-root > * {
+    pointer-events: auto;
   }
 
   .composer-options > button {
@@ -1550,74 +1586,289 @@
 }
 
 /* ========================================================================
- * Android WebView portal positioning
+ * Phone full-screen surfaces
  *
- * Radix portals use fixed positioning. Some Android WebView/window-scale
- * combinations give fixed descendants a stale or zero-width containing
- * block, which makes centered dialogs render half off-screen to the left.
- * Android marks the document before React mounts; these rules move portal
- * direct dialog surfaces into the body's stable viewport coordinate space.
- * Popper menus and tooltips keep fixed positioning because Radix's collision
- * engine uses that coordinate system.
+ * A phone should not get a desktop popover squeezed into a WebView
+ * containing block. Every portal surface becomes a page-sized surface in
+ * the app-owned overlay root. Tablet and desktop keep their native-sized
+ * dialog, Popper, and split-panel compositions above this breakpoint.
  * ====================================================================== */
-html[data-platform="android"] body {
-  position: relative;
-}
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+  #hakus-overlay-root {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
 
-html[data-platform="android"] [data-hakus-overlay="dialog-overlay"],
-html[data-platform="android"] [data-hakus-overlay="dialog-content"] {
-  position: absolute !important;
-}
+  /* Radix Popper creates a transformed wrapper around menu content. Move
+     that wrapper into the same full-screen coordinate space as dialogs. */
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    transform: none !important;
+    pointer-events: auto !important;
+  }
 
-html[data-platform="android"] [data-hakus-overlay="dialog-overlay"] {
-  inset: 0 !important;
-}
+  [data-hakus-overlay="dialog-overlay"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    transform: none !important;
+  }
 
-html[data-platform="android"] .settings-dialog-content {
-  inset: 0 !important;
-  width: auto !important;
-  max-width: none !important;
-  height: 100% !important;
-  max-height: none !important;
-  margin: 0 !important;
-  transform: none !important;
-  translate: none !important;
-}
+  [data-hakus-overlay="dialog-content"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    transform: none !important;
+    translate: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom)) !important;
+    background: hsl(var(--background) / 0.98);
+  }
 
-html[data-platform="android"] .mobile-settings-sheet {
-  inset: auto 0 0 !important;
-  width: auto !important;
-  max-width: none !important;
-  height: auto !important;
-  margin: 0 !important;
-  transform: none !important;
-  translate: none !important;
-}
+  [data-hakus-overlay="dialog-content"] > button[aria-label="Close"] {
+    position: fixed;
+    top: max(0.75rem, env(safe-area-inset-top));
+    right: max(0.75rem, env(safe-area-inset-right));
+    z-index: 2;
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: hsl(var(--foreground) / 0.06);
+    opacity: 1;
+  }
 
-html[data-platform="android"] [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
-  inset: 0 !important;
-  width: min(32rem, calc(100% - 1rem)) !important;
-  max-width: calc(100% - 1rem) !important;
-  height: fit-content !important;
-  max-height: calc(100% - 1rem) !important;
-  margin: auto !important;
-  transform: none !important;
-  translate: none !important;
-}
+  /* Secondary full-screen dialogs keep their heading below the fixed close
+     affordance, including narrow phones where long provider names wrap. */
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
+    padding-top: max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem)) !important;
+  }
 
-html[data-platform="android"] [data-hakus-overlay="menu-content"],
-html[data-platform="android"] [data-hakus-overlay="menu-sub-content"],
-html[data-platform="android"] [data-hakus-overlay="tooltip-content"] {
-  box-sizing: border-box;
-  max-width: calc(100dvw - 1rem) !important;
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
-  overscroll-behavior: contain;
-}
+  [data-hakus-overlay="dialog-content"] > button[aria-label="Close"]:active {
+    background: hsl(var(--foreground) / 0.12);
+  }
 
-html[data-platform="android"] .hakus-toast-root {
-  position: absolute !important;
-  inset: auto 1rem 1rem !important;
-  width: auto !important;
-  max-width: none !important;
+  .settings-dialog-content,
+  .mobile-settings-sheet {
+    padding: 0 !important;
+    background: hsl(var(--background) / 0.98);
+  }
+
+  .settings-dialog-content > .settings-dialog-header,
+  .mobile-settings-sheet > .mobile-settings-header {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+
+  .mobile-settings-sheet {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+  }
+
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > * {
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > :last-child {
+    margin-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  /* Menus are full-screen action pages on phones. The header owns the only
+     close affordance, so the user never has to discover an edge gesture. */
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"],
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"] {
+    position: relative !important;
+    inset: auto !important;
+    display: flex !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    box-sizing: border-box;
+    flex-direction: column;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    background: hsl(var(--background) / 0.98);
+    box-shadow: none !important;
+    transform: none !important;
+  }
+
+  .hakus-mobile-menu-header,
+  .right-panel-mobile-header {
+    display: flex;
+    min-height: calc(3.5rem + env(safe-area-inset-top));
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid hsl(var(--foreground) / 0.1);
+    padding: max(0.75rem, env(safe-area-inset-top)) 1rem 0.75rem;
+    color: hsl(var(--foreground));
+    font-size: 1rem;
+    font-weight: 650;
+  }
+
+  .hakus-mobile-menu-close,
+  .right-panel-mobile-close {
+    display: inline-flex;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  .hakus-mobile-menu-close:active,
+  .right-panel-mobile-close:active {
+    background: hsl(var(--foreground) / 0.08);
+  }
+
+  .hakus-mobile-menu-body {
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1rem 1rem max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .hakus-mobile-menu-body > .border-border\/50 {
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  [data-hakus-overlay="tooltip-content"] {
+    display: none !important;
+  }
+
+  .hakus-toast-root {
+    position: absolute !important;
+    inset: auto 1rem max(1rem, env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  .sidebar-wrapper,
+  .right-panel-wrapper {
+    position: fixed;
+    inset: 0 !important;
+    z-index: 40;
+    width: 100% !important;
+    height: 100% !important;
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+
+  .right-panel-wrapper {
+    transform: translateX(100%);
+  }
+
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"] {
+    transform: none;
+  }
+
+  .sidebar-wrapper .sidebar,
+  .right-panel-wrapper .right-panel {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding-top: env(safe-area-inset-top);
+    background: hsl(var(--background) / 0.98);
+  }
+
+  .sidebar-mobile-close {
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .sidebar-mobile-close:active {
+    background: hsl(var(--foreground) / 0.08);
+  }
+
+  .right-panel-mobile-header {
+    display: flex;
+  }
+
+  .right-panel-tabs {
+    min-height: 3.25rem;
+    padding-right: 0.5rem;
+    padding-left: 0.5rem;
+  }
+
+  .right-panel-tabs > button {
+    min-height: 3.25rem;
+    min-width: 3.75rem;
+    padding-right: 0.625rem;
+    padding-left: 0.625rem;
+  }
+
+  .composer-mention-menu {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    background: hsl(var(--background) / 0.98);
+    box-shadow: none !important;
+  }
+
+  .composer-mention-body {
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1rem 1rem max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .composer-mention-desktop-heading {
+    display: none;
+  }
 }
