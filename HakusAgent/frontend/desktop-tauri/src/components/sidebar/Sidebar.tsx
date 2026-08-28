@@ -23,11 +23,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn, truncate } from '@/lib/utils'
+import { isPhoneViewport } from '@/lib/responsive'
 import { useToast } from '@/components/ui/toast'
 import type { ChatSession } from '@/api/types'
-
-const PHONE_VIEWPORT_QUERY =
-  '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
 interface SessionGroup {
   label: string
@@ -116,7 +114,7 @@ export function Sidebar() {
   const [draftTitle, setDraftTitle] = useState('')
 
   const closeAfterMobileAction = () => {
-    if (typeof window !== 'undefined' && window.matchMedia?.(PHONE_VIEWPORT_QUERY).matches) {
+    if (isPhoneViewport()) {
       setSidebar(false)
     }
   }

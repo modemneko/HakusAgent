@@ -1420,6 +1420,7 @@ version = "0.3.0"
 dependencies = [
  "hakus-folder-picker",
  "hakus-tui",
+ "jni 0.21.1",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

@@ -19,6 +19,50 @@ use tauri_plugin_store::StoreExt;
 #[cfg(target_os = "android")]
 use tauri::{Manager, RunEvent};
 
+#[cfg(target_os = "android")]
+fn configure_android_webview(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(webview) = app.get_webview_window("main") else {
+        eprintln!("[setup] Main Android WebView is not ready; keeping CSS viewport fallback");
+        return Ok(());
+    };
+
+    if let Err(error) = webview.with_webview(|webview| {
+        use jni::objects::JValue;
+
+        webview.jni_handle().exec(|env, _, webview| {
+            let result = (|| -> jni::errors::Result<()> {
+                let settings = env
+                    .call_method(
+                        &webview,
+                        "getSettings",
+                        "()Landroid/webkit/WebSettings;",
+                        &[],
+                    )?
+                    .l()?;
+
+                // Never let Android fall back to the legacy ~980px desktop
+                // viewport. Responsive CSS must see the actual WebView width.
+                env.call_method(&settings, "setUseWideViewPort", "(Z)V", &[JValue::Bool(0)])?;
+                env.call_method(
+                    &settings,
+                    "setLoadWithOverviewMode",
+                    "(Z)V",
+                    &[JValue::Bool(0)],
+                )?;
+                Ok(())
+            })();
+
+            if let Err(error) = result {
+                eprintln!("[setup] Failed to normalize Android WebView viewport: {error}");
+            }
+        });
+    }) {
+        eprintln!("[setup] Failed to access Android WebView: {error}");
+    }
+
+    Ok(())
+}
+
 /// Read (trayEnabled, minimizeToTray) from the persisted settings store.
 /// Defaults to (true, false) when the store is unavailable or keys missing.
 #[cfg(not(target_os = "android"))]
@@ -200,6 +244,7 @@ pub fn run() {
         // Android has no bundled Python interpreter. Start the shared Rust
         // Runtime API in-process and keep all state under app_data_dir().
         builder = builder.setup(|app| {
+            configure_android_webview(app.handle())?;
             let state = embedded_backend::EmbeddedBackendState::start(app.handle())
                 .map_err(std::io::Error::other)?;
             app.manage(state);

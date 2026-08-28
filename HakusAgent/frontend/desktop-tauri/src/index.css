@@ -455,7 +455,7 @@
   }
 }
 
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   .app-panel-scrim[data-sidebar-open="true"] {
     display: block;
   }
@@ -605,7 +605,7 @@
   display: none;
 }
 
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   .dark {
     --primary: 265 58% 70%;
     --border: 220 10% 25%;
@@ -1160,7 +1160,7 @@
  * surface gets its own material layer: safe-area aware, translucent, and
  * touch-first. This block intentionally stays below the phone breakpoint.
  * ====================================================================== */
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   :root:not(.dark) {
     --primary: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
@@ -1299,7 +1299,7 @@
  * an explicit viewport boundary because they do not inherit the composer or
  * settings panel's width.
  * ====================================================================== */
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   .sidebar-wrapper,
   .right-panel-wrapper {
     box-sizing: border-box;
@@ -1355,7 +1355,7 @@
  * been progressively disclosed. They are intentionally isolated from the
  * desktop surface and use the available viewport instead of device names.
  * ====================================================================== */
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   .topbar-review-button {
     display: inline-flex !important;
   }
@@ -1593,7 +1593,7 @@
  * the app-owned overlay root. Tablet and desktop keep their native-sized
  * dialog, Popper, and split-panel compositions above this breakpoint.
  * ====================================================================== */
-@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
   #hakus-overlay-root {
     inset: 0;
     width: 100%;

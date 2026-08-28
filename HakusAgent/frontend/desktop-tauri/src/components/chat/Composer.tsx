@@ -60,6 +60,7 @@ import {
   REASONING_EFFORT_META,
   type ReasoningEffort,
 } from '@/lib/agentModes'
+import { PHONE_VIEWPORT_QUERY } from '@/lib/responsive'
 import { cn, generateId } from '@/lib/utils'
 import type { ConversationState } from '@/lib/voiceConversation'
 import { useAppStore } from '@/store/app'
@@ -123,9 +124,6 @@ const MOBILE_SETTINGS_LABELS: Record<Exclude<MobileSettingsSection, 'root'>, str
   reasoning: '思考强度',
   permission: '权限',
 }
-
-const PHONE_VIEWPORT_QUERY =
-  '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
 const TEXT_EXTENSIONS: Record<string, string> = {
   txt: 'text',

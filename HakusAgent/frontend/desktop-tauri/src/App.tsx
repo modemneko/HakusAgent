@@ -15,6 +15,7 @@ import { useAppStore } from '@/store/app'
 import { useConnectionStore } from '@/store/connection'
 import { useProjectsStore } from '@/store/projects'
 import { apiClient } from '@/api/client'
+import { isPhoneViewport, PHONE_VIEWPORT_QUERY } from '@/lib/responsive'
 import { cn } from '@/lib/utils'
 
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
@@ -22,7 +23,6 @@ const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
 const IS_RUST_PREVIEW = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('backend')?.toLowerCase() === 'rust'
 const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
-const PHONE_MEDIA_QUERY = '(max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape)'
 
 function App() {
   const mountedAt = useRef(Date.now())
@@ -37,9 +37,6 @@ function App() {
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
-
-  const isPhoneViewport = () =>
-    typeof window !== 'undefined' && window.matchMedia?.(PHONE_MEDIA_QUERY).matches
 
   const toggleSidebar = () => {
     const next = !useAppStore.getState().sidebarOpen
@@ -250,7 +247,7 @@ function App() {
   // preference when the viewport enters the phone breakpoint.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
-    const phoneQuery = window.matchMedia(PHONE_MEDIA_QUERY)
+    const phoneQuery = window.matchMedia(PHONE_VIEWPORT_QUERY)
     const closePhonePanels = () => {
       if (!phoneQuery.matches) return
       setSidebar(false)
