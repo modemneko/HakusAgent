@@ -34,7 +34,7 @@ https://example.com/one-skill.tar.gz
 
 ## 3. 目录与优先级
 
-桌面 Python 后台按以下顺序发现：
+Rust Runtime 按以下顺序发现：
 
 1. `<project>/.hakus/skills/`
 2. `<project>/.agents/skills/`（只读兼容）
@@ -83,11 +83,11 @@ Describe the workflow and constraints here.
 
 发送时：
 
-- Python 桌面后台验证 Skill 仍然存在且已启用，然后把 `SKILL.md` 附加到本次请求；
-- Android Runtime 把标记转换为 `$my-skill` 显式调用；
+- Rust Runtime 验证 Skill 仍然存在且已启用，然后把 `SKILL.md` 附加到本次请求；
+- 所有 Tauri 平台把标记转换为 `$my-skill` 显式调用；
 - 原始聊天输入仍显示 `@skill:my-skill`，不会被界面改写。
 
-为控制上下文和避免异常文件，Python 桌面端限制单个选中 Skill 为 64KB，一次请求中所有
+为控制上下文和避免异常文件，Rust Runtime 限制单个选中 Skill 为 64KB，一次请求中所有
 Skills 合计为 192KB。
 
 ## 6. 状态与 API
@@ -98,16 +98,16 @@ Skills 合计为 192KB。
 ~/.hakus/skills_state.toml
 ```
 
-桌面 Python API：
+Rust Runtime API：
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/skills` | 列出当前项目可见 Skills |
-| `POST` | `/api/skills/install` | 安装单个 Skill |
-| `POST` | `/api/skills/{name}` | 启用或停用 |
-| `DELETE` | `/api/skills/{name}` | 删除 Hakus 管理的 Skill |
+| `GET` | `/v1/skills` | 列出当前项目可见 Skills |
+| `POST` | `/v1/skills/install` | 安装单个 Skill |
+| `POST` | `/v1/skills/{name}` | 启用或停用 |
+| `DELETE` | `/v1/skills/{name}` | 删除 Hakus 管理的 Skill |
 
-Android 使用对应 `/v1/skills` Runtime API，React 客户端会自动选择。
+旧 `/api/skills` 仅保留给兼容 WebUI，React Tauri 客户端统一使用 Runtime API。
 
 ## 7. 安全
 

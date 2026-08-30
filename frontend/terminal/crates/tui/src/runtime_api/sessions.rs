@@ -6,6 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use chrono::Utc;
 
 use crate::models::{ContentBlock, Message};
 use crate::runtime_threads::{
@@ -119,6 +120,170 @@ pub(super) struct SaveSessionRequest {
 pub(super) struct SaveSessionResponse {
     session_id: String,
     session: SessionDetailResponse,
+}
+
+/// Portable backup shape shared with the desktop client. Runtime threads are
+/// projected to the legacy ServerSession/ServerMessage fields so backups can
+/// move between Python and Rust backends without exposing internal records.
+pub(super) async fn export_sessions(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<Value>, ApiError> {
+    let threads = state
+        .runtime_threads
+        .list_threads(ThreadListFilter::IncludeArchived, Some(5000))
+        .await
+        .map_err(map_thread_err)?;
+    let mut sessions = Vec::with_capacity(threads.len());
+    let mut messages = serde_json::Map::new();
+    for thread in threads {
+        let detail = state
+            .runtime_threads
+            .get_thread_detail(&thread.id)
+            .await
+            .map_err(map_thread_err)?;
+        let title = thread
+            .title
+            .clone()
+            .unwrap_or_else(|| detail.thread.model.clone());
+        sessions.push(json!({
+            "id": thread.id,
+            "title": title,
+            "remote_session_id": Value::Null,
+            "provider": thread.model_provider_id.or(thread.model_provider),
+            "pinned": false,
+            "created_at": thread.created_at.timestamp_millis(),
+            "updated_at": thread.updated_at.timestamp_millis(),
+        }));
+        let projected = messages_from_thread_detail(&detail);
+        let rows: Vec<Value> = projected
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let text = message_content_text(&message);
+                json!({
+                    "id": format!("{}_{}", detail.thread.id, index),
+                    "session_id": detail.thread.id,
+                    "role": message.role,
+                    "content": text,
+                    "reasoning": Value::Null,
+                    "tool_calls": [],
+                    "input_tokens": Value::Null,
+                    "output_tokens": Value::Null,
+                    "error": Value::Null,
+                    "streaming": false,
+                    "created_at": detail.thread.created_at.timestamp_millis(),
+                    "updated_at": detail.thread.updated_at.timestamp_millis(),
+                })
+            })
+            .collect();
+        messages.insert(detail.thread.id.clone(), Value::Array(rows));
+    }
+    Ok(Json(json!({
+        "schema_version": 1,
+        "exported_at": Utc::now().timestamp_millis(),
+        "sessions": sessions,
+        "messages": messages,
+    })))
+}
+
+/// Import the portable backup shape by creating Rust threads and seeding their
+/// text history. Unknown optional fields are ignored; malformed rows fail with
+/// a useful 400 instead of silently dropping the entire backup.
+pub(super) async fn migrate_sessions(
+    State(state): State<RuntimeApiState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let sessions = body
+        .get("sessions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::bad_request("sessions must be an array"))?;
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut imported_sessions = 0usize;
+    let mut imported_messages = 0usize;
+    for session in sessions {
+        let title = session
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("Imported Chat")
+            .trim();
+        let thread = state
+            .runtime_threads
+            .create_thread(CreateThreadRequest {
+                mode: Some("agent".to_string()),
+                archived: session.get("archived").and_then(Value::as_bool).unwrap_or(false),
+                ..Default::default()
+            })
+            .await
+            .map_err(map_thread_err)?;
+        if !title.is_empty() {
+            let _ = state
+                .runtime_threads
+                .update_thread(
+                    &thread.id,
+                    crate::runtime_threads::UpdateThreadRequest {
+                        title: Some(title.to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+        }
+        let source_id = session.get("id").and_then(Value::as_str).unwrap_or("");
+        let mut history = Vec::new();
+        if let Some(rows) = messages.get(source_id).and_then(Value::as_array) {
+            for row in rows {
+                let role = row.get("role").and_then(Value::as_str).unwrap_or("user");
+                let content = row
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if content.is_empty() || !matches!(role, "user" | "assistant") {
+                    continue;
+                }
+                history.push(Message {
+                    role: role.to_string(),
+                    content: vec![ContentBlock::Text {
+                        text: content.to_string(),
+                        cache_control: None,
+                    }],
+                });
+            }
+        }
+        imported_messages = imported_messages.saturating_add(history.len());
+        if !history.is_empty() {
+            state
+                .runtime_threads
+                .seed_thread_from_messages(&thread.id, &history)
+                .await
+                .map_err(|error| ApiError::internal(format!("Failed to import session history: {error}")))?;
+        }
+        imported_sessions = imported_sessions.saturating_add(1);
+    }
+    Ok(Json(json!({
+        "imported": { "sessions": imported_sessions, "messages": imported_messages }
+    })))
+}
+
+fn message_content_text(message: &Message) -> String {
+    let mut parts = Vec::new();
+    for block in &message.content {
+        let value = serde_json::to_value(block).unwrap_or(Value::Null);
+        let text = value
+            .get("text")
+            .or_else(|| value.get("thinking"))
+            .or_else(|| value.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !text.is_empty() {
+            parts.push(text.to_string());
+        }
+    }
+    parts.join("\n")
 }
 
 /// Turn a `SessionsQuery` into the shared projection query.

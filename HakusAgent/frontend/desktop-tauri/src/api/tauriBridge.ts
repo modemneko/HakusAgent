@@ -1,6 +1,6 @@
 /**
  * Tauri API Bridge — replaces window.electron IPC with Tauri invoke().
- * The Python server is called "backend".
+ * The embedded Rust Runtime is exposed to legacy components as "backend".
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -10,6 +10,7 @@ export const store = {
   get: (key: string) => invoke<unknown>("store_get", { key }),
   set: (key: string, value: unknown) => invoke("store_set", { key, value }),
   getAll: () => invoke<Record<string, unknown>>("store_get_all"),
+  clear: () => invoke<void>("store_clear"),
 };
 
 // ── Window ─────────────────────────────────────────────────────────

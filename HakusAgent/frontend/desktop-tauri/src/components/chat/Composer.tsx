@@ -16,6 +16,7 @@ import {
   FolderPlus,
   Image as ImageIcon,
   ListChecks,
+  LoaderCircle,
   Loader2,
   Mic,
   MoreHorizontal,
@@ -54,11 +55,9 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { apiClient } from '@/api/client'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
-import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment } from '@/api/types'
+import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment, ThreadGoal } from '@/api/types'
 import {
-  REASONING_EFFORTS,
-  REASONING_EFFORT_META,
-  type ReasoningEffort,
+  getReasoningEffortMeta,
 } from '@/lib/agentModes'
 import { PHONE_VIEWPORT_QUERY } from '@/lib/responsive'
 import { cn, generateId } from '@/lib/utils'
@@ -101,6 +100,10 @@ interface ComposerProps {
   voiceAudioLevel?: number
   onToggleVoiceCall?: () => void
   conversationState?: ConversationState
+  goal?: ThreadGoal | null
+  longRunningArmed?: boolean
+  onToggleLongRunning?: () => void
+  onGoalAction?: (action: 'pause' | 'resume' | 'complete' | 'block') => Promise<void>
 }
 
 interface MentionItem {
@@ -327,6 +330,10 @@ export function Composer({
   voiceAudioLevel = 0,
   onToggleVoiceCall,
   conversationState = 'idle',
+  goal = null,
+  longRunningArmed = false,
+  onToggleLongRunning,
+  onGoalAction,
 }: ComposerProps) {
   const toast = useToast()
   const [value, setValue] = useState('')
@@ -404,6 +411,9 @@ export function Composer({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false)
   const [mobileSettingsSection, setMobileSettingsSection] = useState<MobileSettingsSection>('root')
+  const [mobileModelProviderId, setMobileModelProviderId] = useState<string | null>(null)
+  const [goalDialogOpen, setGoalDialogOpen] = useState(false)
+  const [goalActionLoading, setGoalActionLoading] = useState(false)
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
@@ -411,10 +421,61 @@ export function Composer({
   )
   const modelText = model ? `${model.provider} ${model.model_name}` : currentProvider?.model_name
   const canUseImages = isMultimodalProvider(currentProvider, modelText)
-  const activeReasoningEffort = getReasoningEffort(agentMode)
+  const storedReasoningEffort = getReasoningEffort(agentMode)
+  const activeReasoningOptions = useMemo(() => {
+    const modelId = currentProvider?.model_name || model?.model_name
+    const entries = currentProvider ? modelsCache[currentProvider.id] : undefined
+    const selected = entries?.find((entry) => entry.id === modelId)
+    const values = (selected?.reasoning_options || [])
+      .filter((option) => !option.type || option.type.toLowerCase() === 'effort')
+      .flatMap((option) => option.values || [])
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+    return values.length > 0
+      ? ['auto', ...Array.from(new Set(values.filter((value) => value !== 'auto')))]
+      : ['auto']
+  }, [currentProvider, model, modelsCache])
+  const activeReasoningEffort = activeReasoningOptions.includes(storedReasoningEffort)
+    ? storedReasoningEffort
+    : 'auto'
+  const activeReasoningMeta = getReasoningEffortMeta(activeReasoningEffort)
+  const goalStatusLabel = goal?.status === 'active'
+    ? '进行中'
+    : goal?.status === 'paused'
+      ? '已暂停'
+      : goal?.status === 'blocked'
+        ? '需处理'
+        : goal?.status === 'usage_limited' || goal?.status === 'budget_limited'
+          ? '需处理'
+        : goal?.status === 'complete'
+          ? '已完成'
+          : ''
+  const goalHasControls = !!goal && goal.status !== 'complete'
+  const goalButtonLabel = goalHasControls
+    ? `长程 · ${goalStatusLabel}`
+    : goal?.status === 'complete'
+      ? '长程 · 已完成'
+      : '长程任务'
   const currentProviderLabel = currentProvider
     ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
     : defaultModel || "No model"
+  const orderedProviderGroups = useMemo(() => {
+    const preferred = ['国内服务', '国际服务', '聚合 / 中转', '本地 / 自托管', '自定义模型商', '自定义', '其他']
+    const grouped = new Map<string, ProviderInfo[]>()
+    providers.filter((provider) => provider.enabled !== false).forEach((provider) => {
+      const group = provider.group || '其他'
+      if (!grouped.has(group)) grouped.set(group, [])
+      grouped.get(group)!.push(provider)
+    })
+    const order = [...preferred, ...Array.from(grouped.keys())]
+      .filter((group, index, all) => all.indexOf(group) === index)
+    return order.filter((group) => grouped.has(group)).map((group) => ({ group, items: grouped.get(group)! }))
+  }, [providers])
+  const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled !== false), [providers])
+  const mobileModelProvider = mobileModelProviderId
+    ? enabledProviders.find((provider) => provider.id === mobileModelProviderId)
+    : undefined
+  const mobileModelOptions = mobileModelProviderId ? modelsCache[mobileModelProviderId] : undefined
   const activePermissionMeta = PERMISSION_META[permission]
   const ActivePermissionIcon = activePermissionMeta.icon
   const overlayContainer = getOverlayContainer()
@@ -804,28 +865,47 @@ export function Composer({
     addAttachments(Array.from(e.dataTransfer.files))
   }
 
-  // Toggle a provider row in the model picker. First expand fetches its
-  // model list (cached from then on); collapsing just hides the list.
+  const ensureProviderModels = async (providerId: string) => {
+    if (modelsCache[providerId]) return
+    const provider = providers.find((item) => item.id === providerId)
+    setModelsLoading(true)
+    try {
+      const r = await apiClient.listProviderModels(providerId)
+      const models = r.ok && r.models?.length
+        ? r.models
+        : provider?.models?.map((id) => ({ id, name: id, owned_by: null })) || []
+      setModelsCache((prev) => ({ ...prev, [providerId]: models }))
+      if (!models.length) toast.info('该 provider 未返回任何模型')
+    } catch (e: any) {
+      toast.error(`获取模型失败：${e?.message || e}`)
+    } finally {
+      setModelsLoading(false)
+    }
+  }
+
+  // Load the selected model's authoritative reasoning ladder lazily. Until a
+  // model publishes one, the only honest choice is provider-managed `auto`.
+  useEffect(() => {
+    if (currentProvider?.id && !modelsCache[currentProvider.id]) {
+      void ensureProviderModels(currentProvider.id)
+    }
+  }, [currentProvider?.id])
+
+  useEffect(() => {
+    if (storedReasoningEffort !== activeReasoningEffort) {
+      setReasoningEffort(agentMode, activeReasoningEffort)
+    }
+  }, [activeReasoningEffort, agentMode, setReasoningEffort, storedReasoningEffort])
+
+  // Toggle a provider row in the desktop model picker. First expand fetches
+  // its model list (cached from then on); collapsing just hides the list.
   const toggleProviderModels = async (providerId: string) => {
     if (expandedProvider === providerId) {
       setExpandedProvider(null)
       return
     }
     setExpandedProvider(providerId)
-    if (modelsCache[providerId]) return
-    setModelsLoading(true)
-    try {
-      const r = await apiClient.fetchProviderModels(providerId)
-      const models = r.ok && r.models?.length ? r.models : []
-      setModelsCache((prev) => ({ ...prev, [providerId]: models }))
-      if (!models.length) {
-        toast.info('该 provider 未返回任何模型')
-      }
-    } catch (e: any) {
-      toast.error(`获取模型失败：${e?.message || e}`)
-    } finally {
-      setModelsLoading(false)
-    }
+    await ensureProviderModels(providerId)
   }
 
   // Pick a specific model. Persists it as that provider's model_name and
@@ -836,11 +916,7 @@ export function Composer({
     if (provider.model_name === modelId && provider.is_default) return
     setSwitchingProvider(true)
     try {
-      await apiClient.updateProvider({
-        provider: provider.id,
-        model_name: modelId,
-        set_as_default: true,
-      } as any)
+      await apiClient.setDefaultModel(provider.id, modelId)
       await loadProviders()
       await refreshServerInfo()
       toast.success(`Model switched to ${provider.display_name}/${modelId}`)
@@ -955,7 +1031,6 @@ export function Composer({
           onDrop={handleDrop}
           className={cn(
             'composer-box relative flex flex-col gap-1.5 rounded-[22px] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
-            'focus-within:border-primary/45 focus-within:ring-1 focus-within:ring-primary/20',
             conversationState !== 'idle' && 'voice-composer-active',
             !hasExpandedContent && 'p-2',
             dragOver && 'border-primary/50 bg-accent/20 ring-1 ring-primary/25',
@@ -1175,7 +1250,10 @@ export function Composer({
                 open={mobileSettingsOpen}
                 onOpenChange={(open) => {
                   setMobileSettingsOpen(open)
-                  if (!open) setMobileSettingsSection('root')
+                  if (!open) {
+                    setMobileSettingsSection('root')
+                    setMobileModelProviderId(null)
+                  }
                 }}
               >
                 <DialogTrigger asChild>
@@ -1196,7 +1274,13 @@ export function Composer({
                       <button
                         type="button"
                         className="mobile-settings-back"
-                        onClick={() => setMobileSettingsSection('root')}
+                        onClick={() => {
+                          if (mobileSettingsSection === 'model' && mobileModelProviderId) {
+                            setMobileModelProviderId(null)
+                          } else {
+                            setMobileSettingsSection('root')
+                          }
+                        }}
                         aria-label="返回工作设置"
                       >
                         <ArrowLeft className="h-4 w-4" />
@@ -1218,14 +1302,29 @@ export function Composer({
                           <span className="mobile-settings-row-copy"><strong>项目</strong><small>{activeProject?.name || '当前目录'}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
-                        <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('model')}>
+                        <button type="button" className="mobile-settings-row" onClick={() => { setMobileSettingsSection('model'); setMobileModelProviderId(null) }}>
                           <Bot className="mobile-settings-row-icon text-primary" />
                           <span className="mobile-settings-row-copy"><strong>模型</strong><small>{currentProviderLabel}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
+                        <button
+                          type="button"
+                          className="mobile-settings-row"
+                          onClick={() => {
+                            setMobileSettingsOpen(false)
+                            window.setTimeout(() => {
+                              if (goalHasControls) setGoalDialogOpen(true)
+                              else onToggleLongRunning?.()
+                            }, 0)
+                          }}
+                        >
+                          <LoaderCircle className={cn('mobile-settings-row-icon', goalHasControls || longRunningArmed ? 'text-primary' : 'text-muted-foreground')} />
+                          <span className="mobile-settings-row-copy"><strong>长程任务</strong><small>{goalHasControls ? goalStatusLabel : longRunningArmed ? '发送一句话开始' : goal?.status === 'complete' ? '已完成，可重新启用' : '点击后发送一句话开始'}</small></span>
+                          <ChevronRight className="mobile-settings-row-chevron" />
+                        </button>
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('reasoning')}>
                           <Brain className="mobile-settings-row-icon text-primary" />
-                          <span className="mobile-settings-row-copy"><strong>思考强度</strong><small>{REASONING_EFFORT_META[activeReasoningEffort].label}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>思考强度</strong><small>{activeReasoningMeta.label}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('permission')}>
@@ -1269,7 +1368,7 @@ export function Composer({
 
                     {mobileSettingsSection === 'model' && (
                       <div className="mobile-settings-list">
-                        {providers.map((provider) => (
+                        {!mobileModelProvider ? enabledProviders.map((provider) => (
                           <button
                             type="button"
                             key={provider.id}
@@ -1277,24 +1376,55 @@ export function Composer({
                             disabled={switchingProvider || !provider.model_name}
                             onClick={() => {
                               if (!provider.model_name) return
-                              setMobileSettingsOpen(false)
-                              void handleModelSelect(provider, provider.model_name)
+                              setMobileModelProviderId(provider.id)
+                              void ensureProviderModels(provider.id)
                             }}
                           >
                             <ProviderLogo providerId={provider.id} size={20} />
                             <span className="mobile-settings-row-copy"><strong>{provider.display_name}</strong><small>{provider.model_name || '未配置模型'}</small></span>
                             {provider.is_default ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                           </button>
-                        ))}
+                        )) : (
+                          <>
+                            <div className="mobile-settings-row mobile-settings-row-static">
+                              <ProviderLogo providerId={mobileModelProvider.id} size={20} />
+                              <span className="mobile-settings-row-copy"><strong>{mobileModelProvider.display_name}</strong><small>选择一个模型</small></span>
+                            </div>
+                            {modelsLoading && !mobileModelOptions ? (
+                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">加载模型...</div>
+                            ) : mobileModelOptions && mobileModelOptions.length > 0 ? (
+                              mobileModelOptions.map((item) => (
+                                <button
+                                  type="button"
+                                  key={item.id}
+                                  className="mobile-settings-row pl-12"
+                                  disabled={switchingProvider}
+                                  onClick={() => {
+                                    setMobileSettingsOpen(false)
+                                    setMobileModelProviderId(null)
+                                    void handleModelSelect(mobileModelProvider!, item.id)
+                                  }}
+                                >
+                                  <span className="mobile-settings-row-copy"><strong>{item.name || item.id}</strong><small>{item.id}</small></span>
+                                  {mobileModelProvider.is_default && mobileModelProvider.model_name === item.id
+                                    ? <Check className="mobile-settings-row-check" />
+                                    : <ChevronRight className="mobile-settings-row-chevron" />}
+                                </button>
+                              ))
+                            ) : (
+                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">该 Provider 没有可用模型</div>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
 
                     {mobileSettingsSection === 'reasoning' && (
                       <div className="mobile-settings-list">
-                        {REASONING_EFFORTS.map((effort: ReasoningEffort) => (
+                        {activeReasoningOptions.map((effort) => (
                           <button type="button" key={effort} className="mobile-settings-row" onClick={() => { setReasoningEffort(agentMode, effort); setMobileSettingsOpen(false) }}>
                             <Brain className="mobile-settings-row-icon text-muted-foreground" />
-                            <span className="mobile-settings-row-copy"><strong>{REASONING_EFFORT_META[effort].label}</strong><small>{effort}</small></span>
+                            <span className="mobile-settings-row-copy"><strong>{getReasoningEffortMeta(effort).label}</strong><small>{getReasoningEffortMeta(effort).description}</small></span>
                             {activeReasoningEffort === effort ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                           </button>
                         ))}
@@ -1320,6 +1450,45 @@ export function Composer({
                 </DialogContent>
               </Dialog>
 
+              <div className="composer-edge-controls" aria-label="当前工作上下文">
+              <Dialog open={goalDialogOpen && goalHasControls} onOpenChange={setGoalDialogOpen}>
+                <button
+                  type="button"
+                  disabled={isStreaming && !goal}
+                  aria-pressed={longRunningArmed}
+                  className={cn(
+                    'composer-edge-trigger hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                    (goalHasControls || longRunningArmed) && 'border-primary/20 bg-primary/[0.06]',
+                    isStreaming && !goal && 'cursor-not-allowed opacity-60',
+                  )}
+                  title={goalHasControls ? '长程任务管理' : '点击启用长程模式，发送一句话开始'}
+                  onClick={() => {
+                    if (goalHasControls) setGoalDialogOpen(true)
+                    else onToggleLongRunning?.()
+                  }}
+                >
+                  <LoaderCircle className={cn('h-3.5 w-3.5 shrink-0', goalHasControls || longRunningArmed ? 'text-primary' : 'text-muted-foreground')} />
+                  <span>{goalButtonLabel}</span>
+                </button>
+                <DialogContent className="w-[min(440px,calc(100vw-32px))]">
+                  <DialogHeader>
+                    <DialogTitle>长程任务</DialogTitle>
+                    <DialogDescription>{goal?.objective}</DialogDescription>
+                  </DialogHeader>
+                  {goal && (
+                    <div className="rounded-xl bg-foreground/[0.04] px-3 py-2 text-xs text-muted-foreground">
+                      <div className="flex items-center justify-between gap-3"><span>状态</span><strong className="font-medium text-foreground">{goalStatusLabel}</strong></div>
+                      <div className="flex items-center justify-between gap-3"><span>连续回合</span><strong className="font-medium text-foreground">{goal.continuation_count}</strong></div>
+                      <div className="mt-1 flex items-center justify-between gap-3"><span>已用 token</span><strong className="font-medium text-foreground">{goal.tokens_used.toLocaleString()}</strong></div>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {goal?.status === 'active' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('pause') } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-foreground/[0.06] disabled:opacity-50">暂停</button>}
+                    {(goal?.status === 'paused' || goal?.status === 'blocked') && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('resume'); setGoalDialogOpen(false) } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50">继续</button>}
+                    {goal && goal.status !== 'complete' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('complete'); setGoalDialogOpen(false) } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-foreground/[0.06] disabled:opacity-50">标记完成</button>}
+                  </div>
+                </DialogContent>
+              </Dialog>
               <DropdownMenu
                 onOpenChange={(open) => {
                   // Reset the "删除?" confirm state whenever the
@@ -1333,7 +1502,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'composer-edge-trigger composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={activeProject ? activeProject.path : '不在项目中工作'}
@@ -1352,8 +1521,7 @@ export function Composer({
                       value={projectSearch}
                       onChange={(e) => setProjectSearch(e.target.value)}
                       placeholder="搜索项目..."
-                      className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
-                      autoFocus
+                      className="project-picker-search w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
                     />
                   </div>
                   {/* Project list (filtered) */}
@@ -1505,7 +1673,7 @@ export function Composer({
                     type="button"
                     disabled={providersLoading || switchingProvider || isStreaming}
                     className={cn(
-                      'hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'composer-edge-trigger composer-model-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
                     )}
                     title="Choose model"
@@ -1520,12 +1688,15 @@ export function Composer({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" mobileTitle="选择模型" className="w-[280px]">
-                  {providers.length === 0 && (
+                  {enabledProviders.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
                     </div>
                   )}
-                  {providers.map((provider) => {
+                  {orderedProviderGroups.map(({ group, items }) => (
+                    <div key={group}>
+                      <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">{group}</div>
+                      {items.map((provider) => {
                     const isExpanded = expandedProvider === provider.id
                     const models = modelsCache[provider.id]
                     const isCurrent = provider.is_default
@@ -1536,14 +1707,16 @@ export function Composer({
                         <button
                           type="button"
                           onClick={() => void toggleProviderModels(provider.id)}
+                          aria-current={isCurrent ? 'true' : undefined}
                           className={cn(
-                            'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.06]',
-                            isExpanded && 'bg-foreground/[0.04]',
+                            'flex w-full items-start gap-2 rounded-lg border border-transparent px-2 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.06]',
+                            isCurrent && 'border-primary/15 bg-primary/[0.06]',
+                            isExpanded && !isCurrent && 'bg-foreground/[0.04]',
                           )}
                         >
-                          <ProviderLogo providerId={provider.id} size={16} className="shrink-0" />
+                          <ProviderLogo providerId={provider.id} size={16} className="mt-0.5 shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm">{provider.display_name}</div>
+                            <div className="line-clamp-2 break-words text-sm leading-tight" title={provider.display_name}>{provider.display_name}</div>
                             <div className="truncate text-[10px] text-muted-foreground">
                               {provider.model_name || '未设置模型'}
                             </div>
@@ -1576,8 +1749,9 @@ export function Composer({
                                     onClick={() => void handleModelSelect(provider, m.id)}
                                     className={cn(
                                       'flex w-full items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-left text-xs transition-colors hover:bg-foreground/[0.06]',
-                                      isSelected && 'bg-foreground/[0.04]',
+                                      isSelected && 'bg-primary/[0.06] text-foreground',
                                     )}
+                                    aria-current={isSelected ? 'true' : undefined}
                                   >
                                     <span className="min-w-0 flex-1 truncate">{m.name || m.id}</span>
                                     {isSelected && <Check className="h-3 w-3 shrink-0 text-primary" />}
@@ -1593,9 +1767,12 @@ export function Composer({
                         )}
                       </div>
                     )
-                  })}
+                      })}
+                    </div>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+              </div>
 
               {/* Reasoning effort — independent dropdown. Three levels:
                   快速 / 深度 / 极致. Per-mode override stored in
@@ -1612,14 +1789,14 @@ export function Composer({
                     title="思考强度"
                   >
                     <Brain className="h-3.5 w-3.5 text-primary" />
-                    <span>{REASONING_EFFORT_META[activeReasoningEffort].label}</span>
+                    <span>{activeReasoningMeta.label}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" mobileTitle="思考强度" className="w-[180px]">
-                  {REASONING_EFFORTS.map((effort: ReasoningEffort) => {
+                  {activeReasoningOptions.map((effort) => {
                     const isSelected = activeReasoningEffort === effort
-                    const meta = REASONING_EFFORT_META[effort]
+                    const meta = getReasoningEffortMeta(effort)
                     return (
                       <DropdownMenuItem
                         key={effort}

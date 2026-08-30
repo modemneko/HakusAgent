@@ -13,7 +13,7 @@ import { useToast } from '@/components/ui/toast'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { cn } from '@/lib/utils'
-import type { ToolInfo, PermissionMode } from '@/api/types'
+import type { ToolInfo, PermissionMode, RuntimeConfigSnapshot } from '@/api/types'
 
 const PERMISSION_META: Record<
   PermissionMode,
@@ -41,25 +41,30 @@ const PERMISSION_META: Record<
 
 export function ToolsPanel() {
   const toast = useToast()
+  const usesEmbeddedRuntime = apiClient.usesEmbeddedRuntime
   const [loading, setLoading] = useState(true)
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [permission, setPermission] = useState<PermissionMode>('ask')
   const [availableModes, setAvailableModes] = useState<string[]>(['auto', 'ask', 'bypass'])
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [settingPerm, setSettingPerm] = useState(false)
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigSnapshot | null>(null)
+  const [updatingSetting, setUpdatingSetting] = useState<string | null>(null)
   const [outdatedError, setOutdatedError] = useState<BackendOutdatedError | null>(null)
 
   const refresh = async () => {
     setLoading(true)
     setOutdatedError(null)
     try {
-      const [toolsResp, permResp] = await Promise.all([
-        apiClient.getTools(),
+      const [toolsResp, permResp, configResp] = await Promise.all([
+        usesEmbeddedRuntime ? Promise.resolve({ tools: [] }) : apiClient.getTools(),
         apiClient.getPermission(),
+        usesEmbeddedRuntime ? apiClient.getRuntimeConfig() : Promise.resolve(null),
       ])
       setTools(toolsResp.tools)
       setPermission(permResp.mode)
       setAvailableModes(permResp.available_modes)
+      setRuntimeConfig(configResp)
     } catch (e: any) {
       console.error('[ToolsPanel] load failed:', e)
       if (e instanceof BackendOutdatedError) {
@@ -74,7 +79,7 @@ export function ToolsPanel() {
 
   useEffect(() => {
     refresh()
-  }, [])
+  }, [usesEmbeddedRuntime])
 
   const handleToggle = async (tool: ToolInfo, next: boolean) => {
     setTogglingId(tool.id)
@@ -108,6 +113,22 @@ export function ToolsPanel() {
     }
   }
 
+  const handleRuntimeSetting = async (key: 'allow_shell' | 'strict_tool_mode' | 'sandbox_mode', value: boolean | string) => {
+    if (!runtimeConfig) return
+    const previous = runtimeConfig[key]
+    setRuntimeConfig((current) => current ? { ...current, [key]: value } : current)
+    setUpdatingSetting(key)
+    try {
+      await apiClient.setRuntimeConfig(key, value)
+      toast.success(key === 'allow_shell' ? (value ? '命令执行已允许' : '命令执行已关闭') : '工具设置已更新')
+    } catch (e: any) {
+      setRuntimeConfig((current) => current ? { ...current, [key]: previous } : current)
+      toast.error(`设置更新失败：${e?.message || e}`)
+    } finally {
+      setUpdatingSetting(null)
+    }
+  }
+
   return (
     <div className="space-y-5">
       {outdatedError && (
@@ -124,12 +145,67 @@ export function ToolsPanel() {
         </Button>
       </div>
 
-      <Separator />
-
       {/* 工具列表 */}
       <div className="space-y-2">
         <Label>工具列表</Label>
-        {loading ? (
+        {usesEmbeddedRuntime ? (
+          <div className="space-y-3">
+            <p className="text-[11px] text-muted-foreground">
+              工具会按当前会话、工作模式和 MCP 服务动态提供。下面的选项控制本机执行权限。
+            </p>
+            {runtimeConfig ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">允许执行命令</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">关闭后，AI 仍可阅读文件和使用安全工具，但不能运行 shell 命令。</p>
+                  </div>
+                  <Switch
+                    checked={runtimeConfig.allow_shell}
+                    onCheckedChange={(value) => void handleRuntimeSetting('allow_shell', value)}
+                    disabled={updatingSetting === 'allow_shell'}
+                    aria-label="允许执行命令"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">严格工具模式</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">只提供当前会话明确允许的工具，适合受控工作区。</p>
+                  </div>
+                  <Switch
+                    checked={runtimeConfig.strict_tool_mode}
+                    onCheckedChange={(value) => void handleRuntimeSetting('strict_tool_mode', value)}
+                    disabled={updatingSetting === 'strict_tool_mode'}
+                    aria-label="严格工具模式"
+                  />
+                </div>
+                <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">文件访问范围</span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">限制写入与命令工具可触及的位置。</span>
+                  </span>
+                  <select
+                    value={runtimeConfig.sandbox_mode}
+                    onChange={(event) => void handleRuntimeSetting('sandbox_mode', event.target.value)}
+                    disabled={updatingSetting === 'sandbox_mode'}
+                    className="h-8 min-w-[132px] rounded-lg border border-border/70 bg-background px-2 text-xs outline-none"
+                    aria-label="文件访问范围"
+                  >
+                    <option value="read-only">只读</option>
+                    <option value="workspace-write">仅工作区</option>
+                    <option value="danger-full-access">全部文件</option>
+                    <option value="opensandbox">外部沙箱</option>
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <div className="flex items-center py-6 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中...
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">MCP 工具请在“MCP 服务器”中管理，模型只会看到当前已连接的工具。</p>
+          </div>
+        ) : loading ? (
           <div className="flex items-center py-6 text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中...
           </div>

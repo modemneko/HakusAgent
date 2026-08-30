@@ -48,6 +48,9 @@
           "family": "deepseek",
           "default": true,
           "reasoning": true,
+          "reasoning_options": [
+            { "type": "effort", "values": ["low", "high", "max"] }
+          ],
           "tool_call": true,
           "modalities": { "input": ["text"], "output": ["text"] },
           "limit": { "context": 1000000, "output": 384000 }
@@ -58,6 +61,9 @@
           "name": "DeepSeek V4 Flash",
           "family": "deepseek",
           "reasoning": true,
+          "reasoning_options": [
+            { "type": "effort", "values": ["low", "high", "max"] }
+          ],
           "tool_call": true,
           "modalities": { "input": ["text"], "output": ["text"] },
           "limit": { "context": 1000000, "output": 384000 }

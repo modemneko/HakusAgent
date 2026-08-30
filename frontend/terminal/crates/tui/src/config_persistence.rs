@@ -361,6 +361,62 @@ pub(crate) fn persist_provider_model_key(
     Ok(path)
 }
 
+fn provider_config_table_key_for_identity(
+    provider: ApiProvider,
+    provider_identity: &str,
+) -> anyhow::Result<String> {
+    if provider == ApiProvider::Custom {
+        return normalize_custom_provider_id(provider_identity);
+    }
+    Ok(provider
+        .metadata()
+        .context("provider config metadata")?
+        .provider_config_key()
+        .to_string())
+}
+
+/// Persist the picker visibility for one exact provider route.
+pub(crate) fn persist_provider_enabled_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    enabled: bool,
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
+    mutate_config_document(&path, |doc| {
+        set_document_value(doc, &["providers", key.as_str(), "enabled"], enabled)
+    })?;
+    Ok(path)
+}
+
+/// Replace the user-curated model list for one provider. Empty lists are
+/// removed so the runtime can fall back to its live/catalog models.
+pub(crate) fn persist_provider_models_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    models: &[String],
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
+    let mut array = toml_edit::Array::new();
+    for model in models.iter().map(String::as_str).map(str::trim).filter(|m| !m.is_empty()) {
+        if !array.iter().any(|existing| existing.as_str() == Some(model)) {
+            array.push(model);
+        }
+    }
+    mutate_config_document(&path, |doc| {
+        let segments = ["providers", key.as_str(), "models"];
+        if array.is_empty() {
+            unset_document_value(doc, &segments).map(|_| ())
+        } else {
+            set_document_value(doc, &segments, toml_edit::Value::Array(array))
+        }
+    })?;
+    Ok(path)
+}
+
 fn provider_base_url_table_key(provider: ApiProvider) -> anyhow::Result<&'static str> {
     match provider {
         ApiProvider::Deepseek | ApiProvider::DeepseekCN => {
@@ -462,6 +518,55 @@ pub(crate) fn persist_custom_provider(
                     unset_document_value(doc, &[entry[0], entry[1], "auth_mode"])?;
                 }
             }
+        }
+        Ok(())
+    })?;
+    Ok(path)
+}
+
+/// Persist optional presentation metadata for a named custom provider.
+/// Metadata is deliberately kept beside the route so it survives runtime
+/// restarts and remains available to every client (TUI, desktop, and mobile).
+pub(crate) fn persist_custom_provider_metadata(
+    config_path: Option<&Path>,
+    provider_id: &str,
+    display_name: Option<&str>,
+    group: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let provider_id = normalize_custom_provider_id(provider_id)?;
+    let path = config_toml_path(config_path)?;
+    mutate_config_document(&path, |doc| {
+        let entry = ["providers", provider_id.as_str()];
+        match display_name.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => set_document_value(doc, &[entry[0], entry[1], "display_name"], value)?,
+            None => { unset_document_value(doc, &[entry[0], entry[1], "display_name"])?; },
+        }
+        match group.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => set_document_value(doc, &[entry[0], entry[1], "group"], value)?,
+            None => { unset_document_value(doc, &[entry[0], entry[1], "group"])?; },
+        }
+        Ok(())
+    })?;
+    Ok(path)
+}
+
+/// Remove a named custom provider and clear the active provider pointer when
+/// it still points at that route. Built-ins are rejected by the normalizer.
+pub(crate) fn delete_custom_provider(
+    config_path: Option<&Path>,
+    provider_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let provider_id = normalize_custom_provider_id(provider_id)?;
+    let path = config_toml_path(config_path)?;
+    mutate_config_document(&path, |doc| {
+        unset_document_value(doc, &["providers", &provider_id])?;
+        if doc
+            .get("provider")
+            .and_then(|item| item.as_value())
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case(&provider_id))
+        {
+            unset_document_value(doc, &["provider"])?;
         }
         Ok(())
     })?;

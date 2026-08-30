@@ -1,7 +1,7 @@
 /**
  * HakusAI Server API Types
  *
- * 这些类型与 src/hakusai_server/server.py 中的 Pydantic 模型对应
+ * 这些类型与 frontend/terminal 的 Rust Runtime API 模型对应
  * 以及 hakus/protocol/events.py 中的 AgentEvent 事件类型对应
  */
 
@@ -40,7 +40,7 @@ export interface ChatRequest {
    * per-mode default (swift='low', deep='high').
    * See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
    */
-  reasoning_effort?: 'low' | 'high' | 'max'
+  reasoning_effort?: string
   /**
    * Per-request project override. If set to a registered project id,
    * the agent's working_dir is set to that project's folder — so all
@@ -75,14 +75,13 @@ export interface HealthResponse {
 }
 
 /**
- * /api/version 响应 — 客户端用来检测 backend 是否过旧。
+ * Runtime version response — 客户端用来检测连接的 Runtime 是否过旧。
  *
- * 场景：用户更新了客户端 (electron app)，但 Windows NSIS 安装时
- * backend.exe 可能没被替换（旧进程占用 / 杀软拦截 / 覆盖安装保留旧文件）。
- * 这时客户端会向旧 backend 发请求，遇到一堆 404。
+ * Tauri 客户端通常使用进程内 Rust Runtime；远程/兼容连接也可能返回旧协议，
+ * 这时客户端会向旧 Runtime 发请求并遇到 404。
  *
  * 客户端启动时调 /api/version，如果 backend_api_version_int < EXPECTED，
- * 直接提示用户「backend 版本过旧，请重新下载最新版客户端」。
+ * 直接提示用户「Runtime 版本过旧，请更新或重启 Runtime」。
  */
 export interface BackendVersionInfo {
   backend_api_version: string
@@ -93,8 +92,8 @@ export interface BackendVersionInfo {
 
 /**
  * 客户端期望的 backend API 版本。
- * 必须与 src/hakusai_server/server.py 中的 BACKEND_API_VERSION_INT 保持同步。
- * 每次 backend 新增端点或变更 API 形状时，server.py 那边 bump 这个数字，
+ * 必须与 Rust Runtime API 的 BACKEND_API_VERSION_INT 保持同步。
+ * 每次 backend 新增端点或变更 API 形状时，Rust Runtime 那边 bump 这个数字，
  * 这里也要同步 bump，否则客户端不会提示用户升级。
  *
  * 历史:
@@ -172,6 +171,49 @@ export interface ProviderInfo {
   supports_live_models?: boolean
   supports_headers?: boolean
   supports_multi_key?: boolean
+  /** True for a user-managed `[providers.<id>]` route. */
+  is_custom?: boolean
+  /** Optional user-facing label persisted with a custom route. */
+  description?: string
+  /** Whether this route is available in model pickers. */
+  enabled?: boolean
+  /** User-curated models merged with catalog/live models. */
+  models?: string[]
+  configured_models?: string[]
+}
+
+/**
+ * User-facing Rust Runtime settings shared by the permission and tools
+ * surfaces. This intentionally mirrors only the safe, editable projection of
+ * `/v1/config`; secrets and internal runtime state stay server-side.
+ */
+export interface RuntimeConfigSnapshot {
+  provider: string
+  model: string
+  approval_mode: string
+  reasoning_effort: string
+  auto_compact: boolean
+  default_mode: string
+  default_model: string
+  base_url: string
+  allow_shell: boolean
+  mcp_config_path: string
+  subagents_enabled: boolean
+  subagents_max_depth: number
+  show_thinking: boolean
+  thinking_default_expanded: boolean
+  thinking_highlight: boolean
+  show_tool_details: boolean
+  inline_diffs: string
+  locale: string
+  max_history: number
+  workspace_follow_symlinks: boolean
+  calm_mode: boolean
+  sandbox_mode: string
+  strict_tool_mode: boolean
+  memory_enabled: boolean
+  search_provider: string
+  prompt_suggestion: boolean
 }
 
 export interface ProvidersResponse {
@@ -185,6 +227,8 @@ export interface UpdateProviderBody {
   base_url?: string
   api_key?: string
   set_as_default?: boolean
+  enabled?: boolean
+  models?: string[]
 }
 
 // --- Provider 运维操作 (测试连接 / 获取模型 / 多 Key / 自定义 Header) ---
@@ -224,6 +268,24 @@ export interface ProviderModel {
   id: string
   name: string
   owned_by?: string | null
+  /** Raw model/provider metadata. Empty means no authoritative ladder. */
+  reasoning_options?: Array<{ type?: string; values?: string[]; default?: string }>
+  supports_reasoning?: boolean | null
+}
+
+export type ThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'usage_limited' | 'budget_limited' | 'complete'
+
+export interface ThreadGoal {
+  thread_id: string
+  goal_id: string
+  objective: string
+  status: ThreadGoalStatus
+  token_budget?: number | null
+  tokens_used: number
+  time_used_seconds: number
+  continuation_count: number
+  created_at: number
+  updated_at: number
 }
 
 /** 多 API Key 条目, 来自 GET /api/providers/{id}/keys */
@@ -258,6 +320,23 @@ export interface ToolInfo {
 
 export interface ToolsResponse {
   tools: ToolInfo[]
+}
+
+export interface CreateCustomProviderBody {
+  id: string
+  display_name?: string
+  base_url: string
+  model?: string
+  api_key?: string
+  api_key_env?: string
+  group?: string
+  models?: string[]
+  enabled?: boolean
+}
+
+export interface ProviderMutationResponse {
+  provider: string
+  message: string
 }
 
 // ========== Skills ==========
@@ -405,7 +484,7 @@ export interface ExportConfigResponse {
 
 /**
  * POST /api/upload 响应中的单个文件条目，以及 GET /api/files 列表项。
- * 与 src/hakusai_server/server.py 中的 /api/upload、/api/files 端点对应。
+ * 与 Rust Runtime 的 /v1/upload、/v1/files 端点对应。
  */
 export interface UploadedFile {
   file_id: string
@@ -451,9 +530,16 @@ export type AgentEventType =
   | 'question_answered'
   | 'reflection_started'
   | 'reflection_completed'
+  | 'goal_updated'
 
 export interface BaseAgentEvent {
   event_type: AgentEventType
+}
+
+export interface GoalUpdatedEvent extends BaseAgentEvent {
+  event_type: 'goal_updated'
+  goal?: ThreadGoal | null
+  cleared?: boolean
 }
 
 export interface TurnStartedEvent extends BaseAgentEvent {
@@ -589,6 +675,7 @@ export type AgentEvent =
   | TaskProgressEvent
   | QuestionAskedEvent
   | QuestionAnsweredEvent
+  | GoalUpdatedEvent
 
 // ========== WebSocket 消息 ==========
 
@@ -926,9 +1013,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dashscopeApiKey: '',
   voiceCallEnabled: false,
   voiceCallBackend: 'builtin',
-  celiaPath: 'D:\\项目\\Celia',
+  // Celia is optional and user-local; never ship a developer machine path.
+  celiaPath: '',
   celiaConfigPath: 'config.yaml',
-  celiaPythonCommand: 'D:\\项目\\Celia\\.venv\\Scripts\\python.exe',
+  celiaPythonCommand: 'python',
   celiaOpenInTerminal: false,
   asrProvider: 'funasr',
   asrLanguage: 'zh',
@@ -946,8 +1034,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
 // =====================================================================
 // MCP (Model Context Protocol) — Phase 2 round 2
 // =====================================================================
-// Mirrors the shapes returned by /api/config/mcp-servers and /api/mcp/servers/*.
-// Keep in sync with src/hakusai_server/mcp_ops.py + hakus/mcp/config.py.
+// Mirrors the shapes returned by the Rust Runtime MCP endpoints.
+// Keep in sync with frontend/terminal/crates/tui/src/runtime_api.rs and
+// hakus/mcp-compatible configuration parsing.
 // =====================================================================
 
 export interface McpServerInfo {

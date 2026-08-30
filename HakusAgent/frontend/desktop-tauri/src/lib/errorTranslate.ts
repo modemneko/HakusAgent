@@ -4,7 +4,7 @@
  * collapsible "技术细节" section.
  *
  * Sources of error strings:
- *   1. SSE stream chunks from server.py — these are Python exception
+ *   1. SSE stream chunks from a legacy-compatible runtime — these may contain
  *      strings like "APIConnectionError: Connection error".
  *   2. HakusAIError messages from apiClient._throwForResponse — like
  *      "Get config failed: 404 Not Found".

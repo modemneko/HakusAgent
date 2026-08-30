@@ -1,8 +1,7 @@
 /**
  * MCP (Model Context Protocol) Panel — Phase 2 round 3.
  *
- * Surfaces the MCP client backend (src/hakusai_server/mcp_ops.py) in the
- * settings UI. Lets users:
+ * Surfaces the MCP client in the Rust Runtime API from the settings UI. Lets users:
  *   - List configured MCP servers with their runtime status
  *   - Add / edit / delete server configs (stdio transport only for now)
  *   - Start / stop a server on demand

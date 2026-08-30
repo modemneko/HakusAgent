@@ -6,7 +6,7 @@ import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
 import { apiClient, HakusAIError } from '@/api/client'
-import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment } from '@/api/types'
+import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
 import { Composer, type QueuedComposerMessage } from './Composer'
@@ -165,6 +165,7 @@ export function ChatView() {
   const toast = useToast()
   const sessions = useSessionStore((s) => s.sessions)
   const activeId = useSessionStore((s) => s.activeSessionId)
+  const createSession = useSessionStore((s) => s.createSession)
   const messages = useSessionStore((s) => s.messages)
   const addMessage = useSessionStore((s) => s.addMessage)
   const updateMessage = useSessionStore((s) => s.updateMessage)
@@ -183,6 +184,9 @@ export function ChatView() {
   const rewindToMessage = useSessionStore((s) => s.rewindToMessage)
 
   const settings = useSettingsStore()
+  const activeProvider = settings.providers.find((provider) => provider.is_default)
+    || settings.providers.find((provider) => provider.id === settings.defaultModel)
+  const activeModel = activeProvider?.model_name || undefined
   const connState = useConnectionStore((s) => s.state)
   const agentMode = useAppStore((s) => s.agentMode)
   const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
@@ -196,10 +200,14 @@ export function ChatView() {
   const [voiceCallLoading, setVoiceCallLoading] = useState(false)
   const [conversationState, setConversationState] = useState<ConversationState>('idle')
   const [voiceAudioLevel, setVoiceAudioLevel] = useState(0)
+  const [goal, setGoal] = useState<ThreadGoal | null>(null)
+  // Long-running mode is armed independently from the persisted goal. The
+  // next normal message becomes the goal objective and starts the first turn.
+  const [longRunningArmed, setLongRunningArmed] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const sendQueueRef = useRef<QueuedSendMessage[]>([])
-  const runSendRef = useRef<((text: string, sessionId: string) => Promise<void>) | null>(null)
+  const runSendRef = useRef<((text: string, sessionId: string, longRunningGoal?: boolean) => Promise<void>) | null>(null)
   const voiceConversationRef = useRef<VoiceConversation | null>(null)
   const voiceCallEngineRef = useRef<VoiceCallEngine | null>(null)
   const abortCtrlRef = useRef<AbortController | null>(null)
@@ -211,6 +219,68 @@ export function ChatView() {
     .reverse()
     .find((msg) => msg.role === 'assistant' && (msg.streaming || msg.task_progress) && msg.task_progress)
     ?.task_progress
+
+  useEffect(() => {
+    let cancelled = false
+    const remoteId = activeSession?.remote_session_id || activeId
+    if (!remoteId) {
+      setGoal(null)
+      return () => { cancelled = true }
+    }
+    void apiClient.getRuntimeThreadGoal(remoteId)
+      .then((next) => { if (!cancelled) setGoal(next) })
+      .catch(() => { if (!cancelled) setGoal(null) })
+    return () => { cancelled = true }
+  }, [activeId, activeSession?.remote_session_id])
+
+  useEffect(() => {
+    // The armed state is a composer affordance for one conversation. Do not
+    // carry it into another thread when the user switches sessions.
+    setLongRunningArmed(false)
+  }, [activeId])
+
+  useEffect(() => {
+    const remoteId = activeSession?.remote_session_id || activeId
+    if (!remoteId || !goal || goal.status !== 'active') return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const next = await apiClient.getRuntimeThreadGoal(remoteId)
+        if (!cancelled) setGoal(next)
+      } catch {
+        // The goal may have been cleared by another client; the next session
+        // refresh will reconcile the empty state.
+      }
+    }
+    const timer = window.setInterval(() => { void refresh() }, 2000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [activeId, activeSession?.remote_session_id, goal?.status])
+
+  const startGoal = useCallback(async (objective: string) => {
+    const remoteId = activeSession?.remote_session_id || activeId
+    if (!remoteId) return
+    const next = await apiClient.upsertRuntimeThreadGoal(remoteId, { objective })
+    setGoal(next)
+    return next
+  }, [activeId, activeSession?.remote_session_id])
+
+  const toggleLongRunning = useCallback(() => {
+    setLongRunningArmed((current) => !current)
+  }, [])
+
+  const applyGoalAction = useCallback(async (action: 'pause' | 'resume' | 'complete' | 'block') => {
+    const remoteId = activeSession?.remote_session_id || activeId
+    if (!remoteId) return
+    const next = action === 'pause'
+      ? await apiClient.pauseRuntimeThreadGoal(remoteId)
+      : action === 'resume'
+        ? await apiClient.resumeRuntimeThreadGoal(remoteId)
+        : action === 'complete'
+          ? await apiClient.completeRuntimeThreadGoal(remoteId)
+          : await apiClient.blockRuntimeThreadGoal(remoteId)
+    setGoal(next)
+    toast.success(action === 'pause' ? '长程任务已暂停' : action === 'resume' ? '长程任务已继续' : action === 'complete' ? '长程任务已完成' : '长程任务已暂停并标记为需处理')
+  }, [activeId, activeSession?.remote_session_id, toast])
 
   useEffect(() => {
     sendQueueRef.current = sendQueue
@@ -253,7 +323,7 @@ export function ChatView() {
   }, [])
 
   const runSend = useCallback(
-    async (text: string, sessionId: string) => {
+    async (text: string, sessionId: string, longRunningGoal = false) => {
       if (!sessionId) return
 
       const userMsgId = addMessage(sessionId, {
@@ -317,6 +387,8 @@ export function ChatView() {
           // effect until runSend is recreated (which never happens
           // because activeProject isn't in the useCallback deps).
           useProjectsStore.getState().activeProject?.id,
+          activeModel,
+          longRunningGoal || goal?.status === 'active',
         )
         updateMessage(sessionId, assistantMsgId, { streaming: false })
         void persistMessage(sessionId, assistantMsgId)
@@ -351,7 +423,7 @@ export function ChatView() {
         setTimeout(runNextQueued, 0)
       }
     },
-    [addMessage, agentMode, getReasoningEffort, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued],
+    [activeModel, addMessage, agentMode, getReasoningEffort, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued, goal?.status],
   )
 
   useEffect(() => {
@@ -393,9 +465,23 @@ export function ChatView() {
         setSendQueue(nextQueue)
         return
       }
-      void runSend(text, activeId)
+      const shouldStartGoal = longRunningArmed && goal?.status !== 'active'
+      if (!shouldStartGoal) {
+        void runSend(text, activeId)
+        return
+      }
+      void (async () => {
+        try {
+          const next = await startGoal(text)
+          setLongRunningArmed(false)
+          await runSend(text, activeId, next?.status === 'active')
+        } catch (error) {
+          const message = error instanceof HakusAIError ? error.message : '无法启动长程任务'
+          toast.error(message)
+        }
+      })()
     },
-    [activeId, runSend],
+    [activeId, goal?.status, longRunningArmed, runSend, startGoal, toast],
   )
 
   const handleRemoveQueued = useCallback((id: string) => {
@@ -508,6 +594,10 @@ export function ChatView() {
 
   // Handle typed AgentEvent from the protocol layer
   const handleAgentEvent = (event: AgentEvent, sessionId: string) => {
+    if (event.event_type === 'goal_updated') {
+      setGoal((event as any).goal || null)
+      return
+    }
     const messageId = useSessionStore.getState().streamingLogId[sessionId]
     if (!messageId) return
 
@@ -566,6 +656,13 @@ export function ChatView() {
         })
         break
       case 'turn_completed':
+        // A host-managed long-running goal can produce several durable turns
+        // on one SSE connection. Keep the composer streaming until the goal
+        // lifecycle event reaches a terminal/non-running state.
+        if (goal?.status === 'active') {
+          if (event.content) appendToStreamingLog(sessionId, event.content)
+          break
+        }
         updateMessage(sessionId, messageId, {
           streaming: false,
           content: event.content || useSessionStore.getState().messages[sessionId]?.find((m) => m.id === messageId)?.content || '',
@@ -709,7 +806,7 @@ export function ChatView() {
   // Empty state
   if (!activeSession) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-background">
+      <div className="empty-state-hero flex flex-1 items-center justify-center bg-background">
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
             <Sparkles className="h-5 w-5" />
@@ -718,6 +815,13 @@ export function ChatView() {
           <p className="mt-1.5 text-sm text-muted-foreground">
             Click the sidebar <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd> to start a new chat
           </p>
+          <Button
+            type="button"
+            className="mt-5 rounded-full px-5"
+            onClick={() => void createSession('New Chat')}
+          >
+            开始新对话
+          </Button>
         </div>
       </div>
     )
@@ -854,6 +958,10 @@ export function ChatView() {
         voiceAudioLevel={voiceAudioLevel}
         onToggleVoiceCall={handleToggleVoiceCall}
         conversationState={conversationState}
+        goal={goal}
+        longRunningArmed={longRunningArmed}
+        onToggleLongRunning={toggleLongRunning}
+        onGoalAction={applyGoalAction}
       />
     </div>
   )

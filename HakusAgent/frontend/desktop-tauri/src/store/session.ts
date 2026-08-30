@@ -644,10 +644,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       streamingAbort: null,
       streamingLogId: { ...get().streamingLogId, [sessionId]: null },
     })
-    // Fire-and-forget server-side clear. If it fails the in-memory state is
-    // already correct for the current session; next app boot will re-load
-    // from server (which will still have the messages, but that's a tolerable
-    // edge case — better than blocking the UI on a network call).
+    // Keep the optimistic UI and the durable Runtime projection in sync.
+    // The Rust endpoint retains the thread while removing its turns/items.
     void apiClient.clearSessionMessages(sessionId).catch((e) => {
       console.error('[session] clearSessionMessages failed:', e)
     })

@@ -162,7 +162,9 @@ export function ResizeHandle({
             : hovering
               ? 'hsl(var(--primary) / 0.3)'
               : 'hsl(var(--border) / 0.5)',
-          transition: dragging ? 'none' : 'background-color 0.15s, width 0.15s',
+          // Keep the hit area stable while avoiding layout-property animation.
+          // The visual line still fades between hover/idle colors.
+          transition: dragging ? 'none' : 'background-color 0.15s',
         }}
       />
       {/* Wider invisible hit area for easier grabbing */}

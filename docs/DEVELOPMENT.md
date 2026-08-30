@@ -34,14 +34,14 @@ pip install -e '.[server,dev]'
 
 准备 `config.yaml`，或从 `config.example.yaml` 复制后配置 Provider。不要提交真实 API Key。
 
-单独启动 Python 后台：
+如需调试旧 WebUI/兼容接口，可单独启动 Python 服务：
 
 ```powershell
 python -m hakusai_server.server
 ```
 
-默认监听 `127.0.0.1:48081`。桌面 Tauri 在非 Android 平台也会尝试自动启动该命令，因此
-它使用的 `python` 必须能导入当前项目。
+默认监听 `127.0.0.1:48081`。Tauri 桌面端和 Android 不再启动此服务，而是在进程内运行
+Rust Runtime；只有旧 WebUI 或兼容回归需要 Python 环境。
 
 ## 3. 桌面端
 
@@ -69,8 +69,8 @@ npm run build
 npm run tauri:build
 ```
 
-当前发布约束：Tauri 配置没有打包 Python sidecar。生成安装包成功不代表目标机器无需 Python
-即可启动 Agent 后台。修改发布流程时需要同时验证 Python 模块、模型依赖和资源定位。
+当前发布约束：Tauri 桌面端和 Android 均在进程内启动 Rust Runtime，不再依赖 Python
+sidecar。生成安装包后应验证 Rust Runtime 的 `/v1/health`、配置目录和资源定位。
 
 ## 4. Rust HakusCLI
 
@@ -125,16 +125,14 @@ cargo test -p hakus-cli
 | 桌面设置页 | `desktop-tauri/src/components/settings/` |
 | 聊天输入和 `@` 菜单 | `desktop-tauri/src/components/chat/Composer.tsx` |
 | 桌面 API 类型/请求 | `desktop-tauri/src/api/types.ts`、`client.ts` |
-| Python REST/SSE | `src/hakusai_server/server.py` |
-| Python AgentCore 适配 | `src/hakusai_server/agent_bridge.py` |
-| Python 工具/权限/模型 | `hakus/` |
 | Rust Runtime API | `frontend/terminal/crates/tui/src/runtime_api.rs` |
+| 旧 Python 兼容 API | `src/hakusai_server/`（不参与 Tauri 发布包） |
 | Rust TUI | `frontend/terminal/crates/tui/src/tui/` |
 | Skills 生命周期 | Python `skills.py`；Rust `crates/tui/src/skills/` |
 
 ## 7. 变更纪律
 
-- API 增加或响应形状改变时，同步更新 Python sidecar 版本和桌面
+- API 增加或响应形状改变时，更新 Rust Runtime API 版本和桌面
   `EXPECTED_BACKEND_API_VERSION_INT`。
 - 桌面共享组件必须同时检查窄屏/触摸布局；Android 使用同一份 React UI。
 - 新功能优先接入 Tauri 主界面，不要默认修改 `webui/` 或 `editor/`。

@@ -34,7 +34,6 @@ import {
   Settings as SettingsIcon,
   Sparkles,
   FolderOpen,
-  Info,
   WandSparkles,
 } from 'lucide-react'
 import { WeChatPanel } from './panels/WeChatPanel'
@@ -218,11 +217,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="settings-dialog-footer flex shrink-0 items-center justify-between border-t border-border/70 bg-card px-6 py-3">
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <Info className="h-3 w-3" />
-            客户端设置本地持久化；模型/角色/工具配置写入 ~/.hakus/config.yaml
-          </span>
+        <div className="settings-dialog-footer flex shrink-0 justify-end border-t border-border/50 bg-card px-6 py-3">
           <button
             onClick={() => onOpenChange(false)}
             className="rounded-md px-4 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"

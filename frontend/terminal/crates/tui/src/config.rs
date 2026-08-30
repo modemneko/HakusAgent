@@ -3536,6 +3536,18 @@ impl LspConfigToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ProviderConfig {
+    /// Optional user-facing label for named custom providers.
+    #[serde(default, alias = "displayName", alias = "name")]
+    pub display_name: Option<String>,
+    /// Optional UI grouping for named custom providers.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Optional longer description shown by GUI provider pickers.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Whether this route should be shown in provider pickers.
+    #[serde(default)]
+    pub enabled: Option<bool>,
     #[serde(alias = "apiKey")]
     pub api_key: Option<String>,
     #[serde(alias = "baseUrl")]
@@ -3875,11 +3887,122 @@ fn validate_provider_context_window(name: &str, value: Option<u32>) -> Result<()
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 struct ConfigFile {
+    base: Config,
+    profiles: Option<HashMap<String, Config>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ConfigFileSerde {
     #[serde(flatten)]
     base: Config,
     profiles: Option<HashMap<String, Config>>,
+}
+
+impl<'de> Deserialize<'de> for ConfigFile {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut document = toml::Value::deserialize(deserializer)?;
+        let root_custom = extract_custom_provider_tables(&mut document)
+            .map_err(serde::de::Error::custom)?;
+        let mut profile_custom = HashMap::new();
+        if let Some(profiles) = document
+            .as_table_mut()
+            .and_then(|table| table.get_mut("profiles"))
+            .and_then(toml::Value::as_table_mut)
+        {
+            for (name, profile) in profiles {
+                let custom = extract_custom_provider_tables(profile)
+                    .map_err(serde::de::Error::custom)?;
+                if !custom.is_empty() {
+                    profile_custom.insert(name.clone(), custom);
+                }
+            }
+        }
+
+        // Parse the sanitized document on a dedicated, generously-sized
+        // stack. ProvidersConfig intentionally uses a flattened map for
+        // named routes; serde's flatten traversal is deep enough that doing
+        // this from an async HTTP handler can exhaust the smaller executor
+        // worker stack during config reload.
+        let raw = toml::to_string(&document).map_err(serde::de::Error::custom)?;
+        let parser = std::thread::Builder::new()
+            .name("hakus-config-parse".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                toml::from_str::<ConfigFileSerde>(&raw).map_err(|error| error.to_string())
+            })
+            .map_err(serde::de::Error::custom)?;
+        let mut parsed = parser
+            .join()
+            .map_err(|_| serde::de::Error::custom("config parser thread panicked"))?
+            .map_err(serde::de::Error::custom)?;
+        insert_custom_provider_tables(&mut parsed.base, root_custom);
+        if let Some(profiles) = parsed.profiles.as_mut() {
+            for (name, custom) in profile_custom {
+                if let Some(profile) = profiles.get_mut(&name) {
+                    insert_custom_provider_tables(profile, custom);
+                }
+            }
+        }
+        Ok(Self {
+            base: parsed.base,
+            profiles: parsed.profiles,
+        })
+    }
+}
+
+fn extract_custom_provider_tables(
+    value: &mut toml::Value,
+) -> std::result::Result<HashMap<String, ProviderConfig>, String> {
+    let Some(table) = value.as_table_mut() else {
+        return Ok(HashMap::new());
+    };
+    let Some(providers) = table
+        .get_mut("providers")
+        .and_then(toml::Value::as_table_mut)
+    else {
+        return Ok(HashMap::new());
+    };
+    let custom_names = providers
+        .keys()
+        .filter(|name| {
+            ApiProvider::parse(name).is_none()
+                || ApiProvider::parse(name) == Some(ApiProvider::Custom)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut custom = HashMap::with_capacity(custom_names.len());
+    for name in custom_names {
+        let raw_entry = providers
+            .remove(&name)
+            .ok_or_else(|| format!("provider table '{name}' disappeared while parsing"))?;
+        let entry = raw_entry
+            .try_into::<ProviderConfig>()
+            .map_err(|error| format!("invalid providers.{name} entry: {error}"))?;
+        custom.insert(name, entry);
+    }
+    // An empty `providers` table still exercises serde's flattened custom
+    // map. Remove it before parsing the typed root/profile config; the
+    // extracted entries are restored immediately after parsing.
+    if providers.is_empty() {
+        table.remove("providers");
+    }
+    Ok(custom)
+}
+
+fn insert_custom_provider_tables(config: &mut Config, custom: HashMap<String, ProviderConfig>) {
+    if custom.is_empty() {
+        return;
+    }
+    config
+        .providers
+        .get_or_insert_with(ProvidersConfig::default)
+        .custom
+        .extend(custom);
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -10180,6 +10303,10 @@ fn merge_skills_config(
 
 fn merge_provider_config(base: ProviderConfig, override_cfg: ProviderConfig) -> ProviderConfig {
     ProviderConfig {
+        display_name: override_cfg.display_name.or(base.display_name),
+        group: override_cfg.group.or(base.group),
+        description: override_cfg.description.or(base.description),
+        enabled: override_cfg.enabled.or(base.enabled),
         api_key: override_cfg.api_key.or(base.api_key),
         base_url: override_cfg.base_url.or(base.base_url),
         model: override_cfg.model.or(base.model),

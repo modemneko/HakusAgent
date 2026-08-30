@@ -2352,7 +2352,11 @@ fn settings_path_candidates_from_environment() -> (Option<PathBuf>, Option<PathB
 
 fn config_override_parent() -> Option<PathBuf> {
     fn read() -> Option<PathBuf> {
-        for var in ["HAKUS_CONFIG_PATH"] {
+        // Keep the legacy DeepSeek variable authoritative as well. The
+        // Runtime still accepts it for config.toml, so settings.toml must
+        // resolve beside that same file or a persisted UI setting can appear
+        // to vanish after a reload.
+        for var in ["HAKUS_CONFIG_PATH", "DEEPSEEK_CONFIG_PATH"] {
             if let Ok(config_path) = std::env::var(var) {
                 let config_path = config_path.trim();
                 if !config_path.is_empty() {

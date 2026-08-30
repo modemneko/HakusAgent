@@ -3870,7 +3870,7 @@ impl Engine {
         // steering loop — the kickoff is a continuation turn, never a raw
         // user message echoing the objective (codex `/goal resume` parity).
         let resumed_into_active = !clear && status == GoalStatus::Active && !was_active;
-        if resumed_into_active && snapshot_has_objective {
+        if resumed_into_active && snapshot_has_objective && !self.host_managed_turns() {
             self.schedule_goal_continuation(Vec::new()).await;
         }
     }
@@ -3914,7 +3914,9 @@ impl Engine {
             .tx_event
             .send(Event::status("Goal set; starting goal work.".to_string()))
             .await;
-        self.schedule_goal_continuation(Vec::new()).await;
+        if !self.host_managed_turns() {
+            self.schedule_goal_continuation(Vec::new()).await;
+        }
     }
 
     /// Build the turn's tool registry and the model-facing tool catalog.

@@ -30,3 +30,12 @@ pub fn store_get_all(app: AppHandle) -> Result<serde_json::Value, String> {
     }
     Ok(serde_json::Value::Object(map))
 }
+
+/// Remove every client-side preference. Runtime-owned sessions, memory and
+/// logs are cleared by the UI before this command is invoked.
+#[tauri::command]
+pub fn store_clear(app: AppHandle) -> Result<(), String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    store.clear();
+    store.save().map_err(|e| e.to_string())
+}

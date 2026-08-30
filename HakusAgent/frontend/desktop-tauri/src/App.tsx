@@ -53,6 +53,7 @@ function App() {
   const loadSessions = useSessionStore((s) => s.loadFromServer)
   const migrateSessions = useSessionStore((s) => s.migrateFromLocalStorage)
   const loadSettings = useSettingsStore((s) => s.load)
+  const loadProviders = useSettingsStore((s) => s.loadProviders)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
   const loadProjects = useProjectsStore((s) => s.load)
@@ -153,7 +154,7 @@ function App() {
 
   // ── Safety: if backend truly fails after 60s, dismiss splash anyway ─
   // This only fires if the backend hasn't connected after a full minute
-  // (Python crashed, antivirus blocked it, etc.). The user will see the
+  // (the Rust Runtime failed to start, antivirus blocked it, etc.). The user will see the
   // main UI with a "not connected" state and can open settings to debug.
   // 60s is generous — normal cold start is <15s even on slow Windows.
   useEffect(() => {
@@ -176,13 +177,19 @@ function App() {
       const url = useSettingsStore.getState().connection.serverUrl
       const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:\d+)?\/?$/i.test(url)
       for (let attempt = 0; attempt < (isLoopback ? 20 : 1) && !cancelled; attempt += 1) {
-        if (await useConnectionStore.getState().check(url)) return
+        if (await useConnectionStore.getState().check(url)) {
+          // Composer can mount before the Rust port is known and cache the
+          // legacy server's provider list. Refresh after the Runtime URL is
+          // confirmed so every surface uses the same provider catalog.
+          await loadProviders()
+          return
+        }
         if (isLoopback) await new Promise((resolve) => setTimeout(resolve, 300))
       }
       if (!isLoopback && !cancelled) setSettingsOpen(true)
     })()
     return () => { cancelled = true }
-  }, [loadSettings, setSettingsOpen])
+  }, [loadProviders, loadSettings, setSettingsOpen])
 
   // ── Initialize sessions AFTER backend is connected ─────────────────
   // Depends on both `appReady` (UI is visible) and `connState === 'connected'`

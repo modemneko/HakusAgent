@@ -2,17 +2,17 @@
  * About / Update panel — Phase 3 round 2.
  *
  * Sections:
- *   1. App version + backend API version + electron/chrome/node versions
+ *   1. App version + API version + desktop runtime/WebView versions
  *   2. Auto-update status (check / download / install-and-restart)
  *   3. Auto-update behavior toggles (autoDownload / autoInstallOnAppQuit)
  *
- * All operations go through the main process via the `electron.updater` IPC
+ * All operations go through the native Tauri updater bridge
  * bridge. In dev mode (isPackaged=false), the panel shows a hint that
  * auto-update is disabled and only manual version info is displayed.
  *
  * The publish channel is the GitHub Releases of modemneko/HakusAgent. The CI
  * workflow uploads `latest.yml` / `latest-mac.yml` / `latest-linux.yml` on
- * every `v*` tag push, which is what electron-updater reads. Nightly builds
+ * every `v*` tag push, which is what the updater reads. Nightly builds
  * (master pushes) are uploaded as a prerelease and are NOT auto-installed —
  * users who want to test nightly must manually download from the nightly
  * Release page.
@@ -158,7 +158,7 @@ export function AboutPanel() {
     }
   }, [])
 
-  // Read platform + electron/chrome/node versions + diagnostics + backend version.
+  // Read platform + desktop runtime/WebView versions + diagnostics + API version.
   useEffect(() => {
     const electron = (window as any).electron
     if (electron?.platform) setPlatform(electron.platform)
@@ -264,14 +264,14 @@ export function AboutPanel() {
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-card/40 p-4 text-xs">
           <VersionRow label="客户端版本" value={`v${currentVersion}`} />
           <VersionRow
-            label="Backend API"
+            label="API 版本"
             value={backendVer ? `v${backendVer.backend_api_version}` : '—'}
           />
-          <VersionRow label="Backend Server" value={backendVer?.server_version || diag?.version || '—'} />
+          <VersionRow label="服务版本" value={backendVer?.server_version || diag?.version || '—'} />
           <VersionRow label="操作系统" value={platform || '—'} />
-          <VersionRow label="Electron" value={versions?.electron || '—'} />
-          <VersionRow label="Chrome" value={versions?.chrome || '—'} />
-          <VersionRow label="Node" value={versions?.node || '—'} />
+          <VersionRow label="桌面运行时" value={versions?.electron || '—'} />
+          <VersionRow label="WebView" value={versions?.chrome || '—'} />
+          <VersionRow label="JavaScript" value={versions?.node || '—'} />
           <VersionRow
             label="默认 Provider"
             value={diag?.configured_provider || '—'}
@@ -293,7 +293,7 @@ export function AboutPanel() {
             <div>
               <div className="font-medium">开发模式下自动更新不可用</div>
               <div className="mt-0.5 opacity-80">
-                electron-updater 只在打包后的应用中工作。要测试自动更新，
+                应用更新只在打包后的应用中工作。要测试自动更新，
                 请先运行 <code className="rounded bg-muted px-1 py-0.5">npm run dist</code>，
                 然后安装生成的安装包。
               </div>

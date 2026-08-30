@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_stream::stream;
+use base64::Engine;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::header;
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
@@ -17,7 +18,7 @@ use axum::middleware;
 use axum::response::Html;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use hakus_protocol::agent_mail::{
@@ -42,6 +43,7 @@ use crate::automation_manager::{
     AutomationManager, AutomationRecord, AutomationRunRecord, AutomationSchedulerConfig,
     CreateAutomationRequest, SharedAutomationManager, UpdateAutomationRequest, spawn_scheduler,
 };
+use crate::config_persistence;
 use crate::config::{
     ApiProvider, Config, DEFAULT_TEXT_MODEL, normalize_model_name_for_provider, validate_route,
 };
@@ -583,7 +585,7 @@ fn default_runtime_capabilities() -> RuntimeCapabilities {
         turn_interrupt: true,
         event_replay: true,
         external_tools: true,
-        environments: false,
+        environments: true,
         worker_runtime: true,
         fleet_run_create: true,
         fleet_run_start: true,
@@ -1356,6 +1358,8 @@ pub fn build_router(state: RuntimeApiState) -> Router {
                 .put(save_current_session),
         )
         .route("/v1/sessions/summary", get(list_sessions_summary))
+        .route("/v1/sessions/export", get(sessions::export_sessions))
+        .route("/v1/sessions/migrate", post(sessions::migrate_sessions))
         .route(
             "/v1/sessions/{id}",
             get(get_session).patch(patch_session).delete(delete_session),
@@ -1426,7 +1430,13 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             "/v1/threads/{id}",
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
-        .route("/v1/threads/{id}/event-log", get(get_thread_event_log))
+        .route(
+            "/v1/threads/{id}/event-log",
+            get(get_thread_event_log).delete(clear_thread_event_log),
+        )
+        .route("/v1/threads/{id}/messages", delete(clear_thread_messages))
+        .route("/v1/threads/{id}/messages/{message_id}", delete(delete_thread_message))
+        .route("/v1/threads/{id}/rewind", post(rewind_thread_to_message))
         .route("/v1/threads/{id}/resume", post(resume_thread))
         .route("/v1/threads/{id}/fork", post(fork_thread))
         .route("/v1/threads/{id}/undo", post(undo_thread_turn))
@@ -1465,6 +1475,8 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         )
         .route("/v1/threads/{id}/goal/complete", post(complete_thread_goal))
         .route("/v1/threads/{id}/goal/block", post(block_thread_goal))
+        .route("/v1/threads/{id}/goal/pause", post(pause_thread_goal))
+        .route("/v1/threads/{id}/goal/resume", post(resume_thread_goal))
         .route("/v1/approvals/{approval_id}", post(decide_approval))
         .route(
             "/v1/user-input/{thread_id}/{input_id}",
@@ -1530,10 +1542,10 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/usage", get(get_usage))
         .route("/v1/snapshots", get(list_snapshots))
         .route("/v1/snapshots/{id}/restore", post(restore_snapshot))
-        .route("/v1/providers", get(list_providers))
+        .route("/v1/providers", get(list_providers).post(create_custom_provider))
         .route(
             "/v1/providers/{id}",
-            post(update_provider),
+            post(update_provider).delete(delete_custom_provider),
         )
         .route(
             "/v1/providers/{id}/models",
@@ -1549,6 +1561,15 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             get(get_provider_headers).put(set_provider_headers),
         )
         .route("/v1/config", get(get_config).post(set_config))
+        .route("/v1/config/import", post(import_config))
+        .route("/v1/upload", post(upload_files))
+        .route("/v1/files", get(list_files))
+        .route("/v1/files/{id}", get(get_file).delete(delete_file))
+        .route("/v1/tts", post(text_to_speech))
+        .route("/v1/tts/voices", get(list_tts_voices))
+        .route("/v1/voice/clone", post(clone_voice))
+        .route("/v1/voice/clone/status", get(clone_voice_status))
+        .route("/v1/voice/asr", post(transcribe_voice))
         .route("/v1/character", get(get_character).patch(update_character))
         .route(
             "/v1/apps/mcp/config",
@@ -1568,6 +1589,13 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/wechat/send", post(wechat_send))
         .route("/v1/wechat/poll", post(wechat_poll))
         .route("/v1/metrics", get(get_metrics))
+        .route("/v1/logs", get(get_runtime_logs).delete(clear_runtime_logs))
+        .route("/v1/logs/files", get(list_runtime_log_files))
+        .route(
+            "/v1/providers/{id}/keys",
+            get(list_provider_keys).post(add_provider_key),
+        )
+        .route("/v1/providers/{id}/keys/{key_id}", delete(delete_provider_key))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_runtime_token,
@@ -1834,6 +1862,400 @@ async fn get_metrics(
         errors,
         turn_wall: hakus_telemetry::session_counters().turn_wall(),
     })
+}
+
+// ── Runtime log and provider key compatibility endpoints ───────────────────
+
+#[derive(Debug, Deserialize, Default)]
+struct RuntimeLogsQuery {
+    name: Option<String>,
+    lines: Option<usize>,
+    level: Option<String>,
+    after_ts: Option<f64>,
+    download: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeLogFileInfo {
+    name: String,
+    size: u64,
+    mtime: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeLogEntry {
+    ts: Option<String>,
+    level: String,
+    logger: String,
+    msg: String,
+    raw: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeLogsResponse {
+    files: Vec<RuntimeLogFileInfo>,
+    logs: Vec<RuntimeLogEntry>,
+}
+
+fn runtime_log_files() -> Result<Vec<(PathBuf, RuntimeLogFileInfo)>, ApiError> {
+    let Some(dir) = crate::runtime_log::log_directory() else {
+        return Ok(Vec::new());
+    };
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = fs::read_dir(&dir)
+        .map_err(|error| ApiError::internal(format!("Failed to read runtime log directory: {error}")))?;
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()).map(str::to_string) else {
+            continue;
+        };
+        if !name.starts_with("tui-") || !name.ends_with(".log") {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => continue,
+        };
+        let mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_secs_f64())
+            .unwrap_or_default();
+        files.push((
+            path,
+            RuntimeLogFileInfo {
+                name,
+                size: metadata.len(),
+                mtime,
+            },
+        ));
+    }
+    files.sort_by(|left, right| {
+        right
+            .1
+            .mtime
+            .partial_cmp(&left.1.mtime)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.1.name.cmp(&right.1.name))
+    });
+    Ok(files)
+}
+
+fn parse_runtime_log_line(raw: &str) -> RuntimeLogEntry {
+    // The file subscriber uses tracing's stable text formatter:
+    // `timestamp LEVEL target: message`. Keep the complete raw line so newer
+    // formatter fields remain inspectable even when they are not recognized.
+    let trimmed = raw.trim_end_matches(['\r', '\n']);
+    let mut parts = trimmed.splitn(3, ' ');
+    let timestamp = parts.next().unwrap_or_default();
+    let level = parts.next().unwrap_or("INFO").to_ascii_uppercase();
+    let remainder = parts.next().unwrap_or_default();
+    let (logger, msg) = remainder
+        .split_once(": ")
+        .map(|(logger, msg)| (logger.trim(), msg.trim()))
+        .unwrap_or(("runtime", remainder.trim()));
+    RuntimeLogEntry {
+        ts: (!timestamp.is_empty()).then(|| timestamp.to_string()),
+        level,
+        logger: if logger.is_empty() { "runtime" } else { logger }.to_string(),
+        msg: msg.to_string(),
+        raw: trimmed.to_string(),
+    }
+}
+
+fn log_entry_timestamp(entry: &RuntimeLogEntry) -> Option<f64> {
+    entry
+        .ts
+        .as_deref()
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+        .map(|timestamp| timestamp.timestamp_millis() as f64 / 1000.0)
+}
+
+async fn list_runtime_log_files() -> Result<Json<RuntimeLogsResponse>, ApiError> {
+    let files = runtime_log_files()?;
+    Ok(Json(RuntimeLogsResponse {
+        files: files.into_iter().map(|(_, info)| info).collect(),
+        logs: Vec::new(),
+    }))
+}
+
+async fn get_runtime_logs(
+    Query(query): Query<RuntimeLogsQuery>,
+) -> Result<Response, ApiError> {
+    let files = runtime_log_files()?;
+    if files.is_empty() {
+        return Ok(Json(RuntimeLogsResponse { files: Vec::new(), logs: Vec::new() }).into_response());
+    }
+    let selected = match query.name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => files
+            .iter()
+            .find(|(_, info)| info.name == name)
+            .ok_or_else(|| ApiError::bad_request("Unknown runtime log file"))?,
+        None => files
+            .first()
+            .ok_or_else(|| ApiError::bad_request("No runtime log files are available"))?,
+    };
+    let limit = query.lines.unwrap_or(200).clamp(1, 5000);
+    let level = query.level.as_deref().map(str::to_ascii_uppercase);
+    let content = fs::read_to_string(&selected.0)
+        .map_err(|error| ApiError::internal(format!("Failed to read runtime log: {error}")))?;
+    let mut logs: Vec<RuntimeLogEntry> = content
+        .lines()
+        .map(parse_runtime_log_line)
+        .filter(|entry| level.as_deref().is_none_or(|wanted| entry.level == wanted))
+        .filter(|entry| query.after_ts.is_none_or(|after| log_entry_timestamp(entry).is_some_and(|ts| ts > after)))
+        .collect();
+    if logs.len() > limit {
+        logs.drain(..logs.len() - limit);
+    }
+    let response = RuntimeLogsResponse {
+        files: files.iter().map(|(_, info)| RuntimeLogFileInfo {
+            name: info.name.clone(),
+            size: info.size,
+            mtime: info.mtime,
+        }).collect(),
+        logs,
+    };
+    if query.download.as_deref().is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true")) {
+        let body = fs::read(&selected.0)
+            .map_err(|error| ApiError::internal(format!("Failed to read runtime log: {error}")))?;
+        let content_disposition = format!("attachment; filename=\"{}\"", selected.1.name);
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                (header::CONTENT_DISPOSITION, content_disposition.as_str()),
+            ],
+            body,
+        )
+            .into_response());
+    }
+    Ok(Json(response).into_response())
+}
+
+async fn clear_runtime_logs(
+    Query(query): Query<RuntimeLogsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let files = runtime_log_files()?;
+    let targets: Vec<PathBuf> = match query.name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => vec![files
+            .iter()
+            .find(|(_, info)| info.name == name)
+            .map(|(path, _)| path.clone())
+            .ok_or_else(|| ApiError::bad_request("Unknown runtime log file"))?],
+        None => files.into_iter().map(|(path, _)| path).collect(),
+    };
+    let mut cleared = Vec::new();
+    for path in targets {
+        fs::write(&path, [])
+            .map_err(|error| ApiError::internal(format!("Failed to clear runtime log: {error}")))?;
+        if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+            cleared.push(name.to_string());
+        }
+    }
+    Ok(Json(json!({ "cleared": cleared })))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProviderKeyRequest {
+    key: String,
+    #[serde(default)]
+    label: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeProviderKeyEntry {
+    id: String,
+    label: String,
+    masked_key: String,
+    enabled: bool,
+    is_primary: bool,
+}
+
+fn provider_key_table_key(route: &RuntimeProviderRoute) -> Result<String, ApiError> {
+    if route.provider == ApiProvider::Custom {
+        return Ok(route.identity.clone());
+    }
+    if let Some(metadata) = route.provider.metadata() {
+        return Ok(metadata.provider_config_key().to_string());
+    }
+    Ok("deepseek_cn".to_string())
+}
+
+fn provider_keys_path(state: &RuntimeApiState) -> Result<PathBuf, ApiError> {
+    config_persistence::config_toml_path(state.config_path.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to resolve config path: {error}")))
+}
+
+fn read_provider_multi_keys(
+    state: &RuntimeApiState,
+    table_key: &str,
+) -> Result<Vec<(String, String, String, bool)>, ApiError> {
+    let path = provider_keys_path(state)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| ApiError::internal(format!("Failed to read provider config: {error}")))?;
+    let value: toml::Value = raw
+        .parse()
+        .map_err(|error| ApiError::internal(format!("Failed to parse provider config: {error}")))?;
+    let Some(entries) = value
+        .get("providers")
+        .and_then(|value| value.get(table_key))
+        .and_then(|value| value.get("api_keys"))
+        .and_then(toml::Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            let table = entry.as_table()?;
+            let id = table.get("id")?.as_str()?.trim().to_string();
+            let key = table.get("key")?.as_str()?.to_string();
+            if id.is_empty() || key.trim().is_empty() {
+                return None;
+            }
+            let label = table
+                .get("label")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let enabled = table
+                .get("enabled")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true);
+            Some((id, key, label, enabled))
+        })
+        .collect())
+}
+
+async fn list_provider_keys(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let config = state.config.read().clone();
+    let route = resolve_runtime_provider(&config, &id)?;
+    let primary = provider_route_config_for_identity(&config, &route.identity)
+        .deepseek_api_key_read_only()
+        .ok()
+        .unwrap_or_default();
+    let mut keys = Vec::new();
+    if !primary.trim().is_empty() {
+        keys.push(RuntimeProviderKeyEntry {
+            id: "__primary__".to_string(),
+            label: "主 Key".to_string(),
+            masked_key: mask_provider_key(&primary),
+            enabled: true,
+            is_primary: true,
+        });
+    }
+    let table_key = provider_key_table_key(&route)?;
+    for (key_id, key, label, enabled) in read_provider_multi_keys(&state, &table_key)? {
+        keys.push(RuntimeProviderKeyEntry {
+            id: key_id,
+            label,
+            masked_key: mask_provider_key(&key),
+            enabled,
+            is_primary: false,
+        });
+    }
+    Ok(Json(json!({ "keys": keys })))
+}
+
+async fn add_provider_key(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ProviderKeyRequest>,
+) -> Result<Json<RuntimeProviderKeyEntry>, ApiError> {
+    let key = req.key.trim();
+    if key.is_empty() {
+        return Err(ApiError::bad_request("key cannot be empty"));
+    }
+    let config = state.config.read().clone();
+    let route = resolve_runtime_provider(&config, &id)?;
+    let table_key = provider_key_table_key(&route)?;
+    let mut entries = read_provider_multi_keys(&state, &table_key)?;
+    let key_id = format!("{}-{}", route.identity, uuid::Uuid::new_v4().simple());
+    entries.push((key_id.clone(), key.to_string(), req.label.trim().to_string(), true));
+    let path = provider_keys_path(&state)?;
+    config_persistence::mutate_config_document(&path, |doc| {
+        let mut array = toml_edit::Array::new();
+        for (id, key, label, enabled) in &entries {
+            let mut table = toml_edit::InlineTable::new();
+            table.insert("id", toml_edit::Value::from(id.as_str()));
+            table.insert("key", toml_edit::Value::from(key.as_str()));
+            if !label.is_empty() {
+                table.insert("label", toml_edit::Value::from(label.as_str()));
+            }
+            table.insert("enabled", toml_edit::Value::from(*enabled));
+            array.push(toml_edit::Value::InlineTable(table));
+        }
+        config_persistence::set_document_value(
+            doc,
+            &["providers", table_key.as_str(), "api_keys"],
+            toml_edit::Value::Array(array),
+        )
+    })
+    .map_err(|error| ApiError::internal(format!("Failed to save provider key: {error}")))?;
+    Ok(Json(RuntimeProviderKeyEntry {
+        id: key_id,
+        label: req.label.trim().to_string(),
+        masked_key: mask_provider_key(key),
+        enabled: true,
+        is_primary: false,
+    }))
+}
+
+async fn delete_provider_key(
+    State(state): State<RuntimeApiState>,
+    Path((id, key_id)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    if key_id == "__primary__" {
+        return Err(ApiError::bad_request("Cannot delete the primary API key"));
+    }
+    let config = state.config.read().clone();
+    let route = resolve_runtime_provider(&config, &id)?;
+    let table_key = provider_key_table_key(&route)?;
+    let mut entries = read_provider_multi_keys(&state, &table_key)?;
+    let before = entries.len();
+    entries.retain(|(entry_id, _, _, _)| entry_id != &key_id);
+    if entries.len() == before {
+        return Err(ApiError { status: StatusCode::NOT_FOUND, message: "Key not found".to_string() });
+    }
+    let path = provider_keys_path(&state)?;
+    config_persistence::mutate_config_document(&path, |doc| {
+        if entries.is_empty() {
+            config_persistence::unset_document_value(
+                doc,
+                &["providers", table_key.as_str(), "api_keys"],
+            )
+            .map(|_| ())
+        } else {
+            let mut array = toml_edit::Array::new();
+            for (entry_id, key, label, enabled) in &entries {
+                let mut table = toml_edit::InlineTable::new();
+                table.insert("id", toml_edit::Value::from(entry_id.as_str()));
+                table.insert("key", toml_edit::Value::from(key.as_str()));
+                if !label.is_empty() {
+                    table.insert("label", toml_edit::Value::from(label.as_str()));
+                }
+                table.insert("enabled", toml_edit::Value::from(*enabled));
+                array.push(toml_edit::Value::InlineTable(table));
+            }
+            config_persistence::set_document_value(
+                doc,
+                &["providers", table_key.as_str(), "api_keys"],
+                toml_edit::Value::Array(array),
+            )
+        }
+    })
+    .map_err(|error| ApiError::internal(format!("Failed to delete provider key: {error}")))?;
+    Ok(Json(json!({ "message": "Key deleted", "key_id": key_id })))
 }
 
 async fn create_task(
@@ -4490,6 +4912,70 @@ async fn get_thread_event_log(
     }))
 }
 
+async fn clear_thread_event_log(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .runtime_threads
+        .clear_thread_event_log(&id)
+        .await
+        .map_err(map_thread_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize)]
+struct ClearThreadMessagesResponse {
+    deleted_items: usize,
+}
+
+async fn clear_thread_messages(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<ClearThreadMessagesResponse>, ApiError> {
+    let deleted_items = state
+        .runtime_threads
+        .clear_thread_history(&id)
+        .await
+        .map_err(map_thread_err)?;
+    Ok(Json(ClearThreadMessagesResponse { deleted_items }))
+}
+
+async fn delete_thread_message(
+    State(state): State<RuntimeApiState>,
+    Path((id, message_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let deleted = state
+        .runtime_threads
+        .delete_thread_item(&id, &message_id)
+        .await
+        .map_err(map_thread_err)?;
+    if deleted { Ok(StatusCode::NO_CONTENT) } else { Err(ApiError { status: StatusCode::NOT_FOUND, message: "Message not found".to_string() }) }
+}
+
+#[derive(Debug, Deserialize)]
+struct RewindThreadRequest {
+    message_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RewindThreadResponse {
+    deleted_messages: usize,
+}
+
+async fn rewind_thread_to_message(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<RewindThreadRequest>,
+) -> Result<Json<RewindThreadResponse>, ApiError> {
+    let deleted_messages = state
+        .runtime_threads
+        .rewind_thread_to_item(&id, &req.message_id)
+        .await
+        .map_err(map_thread_err)?;
+    Ok(Json(RewindThreadResponse { deleted_messages }))
+}
+
 async fn get_character(
     State(state): State<RuntimeApiState>,
 ) -> Result<Json<RuntimeCharacter>, ApiError> {
@@ -4783,6 +5269,7 @@ async fn retry_thread_turn(
                 auto_approve: None,
                 dynamic_tools: Vec::new(),
                 environment_id: None,
+                reasoning_effort: None,
             },
         )
         .await
@@ -5038,6 +5525,11 @@ async fn upsert_thread_goal(
         .save_goal(goal.clone())
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
+    state
+        .runtime_threads
+        .set_goal_objective(&id, goal.objective.clone(), goal.token_budget)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let status_code = if is_new {
         StatusCode::CREATED
     } else {
@@ -5062,6 +5554,13 @@ async fn delete_thread_goal(
         .get_thread(&id)
         .await
         .map_err(map_thread_err)?;
+    // Clear the live engine first so a queued continuation cannot resurrect
+    // an objective that has already been removed from durable storage.
+    state
+        .runtime_threads
+        .set_goal_status(&id, crate::tools::goal::GoalStatus::Active, true)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let deleted = state
         .runtime_threads
         .remove_goal(&id)
@@ -5109,6 +5608,11 @@ async fn complete_thread_goal(
         .save_goal(updated.clone())
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
+    state
+        .runtime_threads
+        .set_goal_status(&id, crate::tools::goal::GoalStatus::Complete, false)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let _ = state
         .runtime_threads
         .emit_goal_updated_event(&id, updated.clone())
@@ -5152,10 +5656,58 @@ async fn block_thread_goal(
         .save_goal(updated.clone())
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
+    state
+        .runtime_threads
+        .set_goal_status(&id, crate::tools::goal::GoalStatus::Blocked, false)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let _ = state
         .runtime_threads
         .emit_goal_updated_event(&id, updated.clone())
         .await;
+    Ok(Json(updated))
+}
+
+/// `POST /v1/threads/{id}/goal/pause` — pause an active goal without
+/// discarding its objective or progress.
+async fn pause_thread_goal(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<hakus_protocol::ThreadGoal>, ApiError> {
+    let goal = state
+        .runtime_threads
+        .get_goal(&id)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found(format!("thread '{id}' has no goal")))?;
+    if matches!(goal.status, hakus_protocol::ThreadGoalStatus::Complete) {
+        return Err(ApiError { status: StatusCode::CONFLICT, message: format!("goal for thread '{id}' is already complete") });
+    }
+    let updated = hakus_protocol::ThreadGoal { status: hakus_protocol::ThreadGoalStatus::Paused, updated_at: chrono::Utc::now().timestamp(), ..goal };
+    state.runtime_threads.save_goal(updated.clone()).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    state.runtime_threads.set_goal_status(&id, crate::tools::goal::GoalStatus::Paused, false).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    let _ = state.runtime_threads.emit_goal_updated_event(&id, updated.clone()).await;
+    Ok(Json(updated))
+}
+
+/// `POST /v1/threads/{id}/goal/resume` — resume a paused or blocked goal.
+async fn resume_thread_goal(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<hakus_protocol::ThreadGoal>, ApiError> {
+    let goal = state
+        .runtime_threads
+        .get_goal(&id)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found(format!("thread '{id}' has no goal")))?;
+    if matches!(goal.status, hakus_protocol::ThreadGoalStatus::Complete) {
+        return Err(ApiError { status: StatusCode::CONFLICT, message: format!("goal for thread '{id}' is already complete") });
+    }
+    let updated = hakus_protocol::ThreadGoal { status: hakus_protocol::ThreadGoalStatus::Active, updated_at: chrono::Utc::now().timestamp(), ..goal };
+    state.runtime_threads.save_goal(updated.clone()).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    state.runtime_threads.set_goal_status(&id, crate::tools::goal::GoalStatus::Active, false).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    let _ = state.runtime_threads.emit_goal_updated_event(&id, updated.clone()).await;
     Ok(Json(updated))
 }
 
@@ -6117,12 +6669,23 @@ struct ProviderEntry {
     has_custom_headers: bool,
     /// UI grouping derived from the shared provider registry.
     group: String,
+    /// True when this entry is a user-managed named route.
+    is_custom: bool,
     /// Effective auth mode, such as `api_key`, `oauth`, or `none`.
     auth_mode: String,
     supports_connection_test: bool,
     supports_live_models: bool,
     supports_headers: bool,
     supports_multi_key: bool,
+    /// Whether this route is enabled in the desktop/mobile model picker.
+    enabled: bool,
+    /// User-curated and catalog model ids available for this route.
+    models: Vec<String>,
+    /// Only the models explicitly curated by the user (without catalog rows).
+    configured_models: Vec<String>,
+    /// Optional user-facing description for named custom routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6138,6 +6701,12 @@ struct ProviderModelEntry {
     /// Canonical model id (suitable for `default_text_model` or
     /// `POST /v1/threads/{id}` `model` field).
     id: String,
+    /// Provider/model-specific reasoning controls from the shared catalog.
+    /// Empty means the route has no authoritative effort ladder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reasoning_options: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    supports_reasoning: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6157,6 +6726,41 @@ struct ProviderUpdateRequest {
     api_key: Option<String>,
     #[serde(default)]
     set_as_default: bool,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    models: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct CreateCustomProviderRequest {
+    /// Stable id used as the `[providers.<id>]` table name.
+    id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    base_url: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    api_key_env: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    models: Vec<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct CustomProviderMutationResponse {
+    provider: String,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -6224,6 +6828,19 @@ fn provider_group(provider: ApiProvider) -> &'static str {
         | ApiProvider::Arcee => "聚合 / 中转",
         ApiProvider::Custom => "自定义",
         _ => "国内服务",
+    }
+}
+
+fn provider_display_name(provider: ApiProvider, identity: &str) -> String {
+    let base = provider.display_name();
+    match identity {
+        "modelstudio-token-plan" => format!("{base} · Token Plan / OpenAI"),
+        "modelstudio-token-plan-anthropic" => format!("{base} · Token Plan / Anthropic"),
+        "modelstudio-coding-plan" => format!("{base} · Coding Plan / OpenAI"),
+        "modelstudio-coding-plan-anthropic" => format!("{base} · Coding Plan / Anthropic"),
+        "deepseek-anthropic" => format!("{base} · Anthropic API"),
+        "minimax-anthropic" => format!("{base} · Anthropic API"),
+        _ => base.to_string(),
     }
 }
 
@@ -6302,6 +6919,42 @@ fn provider_entry_for_identity(
     } else {
         provider.default_base_url().to_string()
     };
+    let route_config = route.provider_config_for(provider);
+    let custom_config = if provider == ApiProvider::Custom {
+        route.provider_config_for(provider)
+    } else {
+        None
+    };
+    let display_name = custom_config
+        .and_then(|entry| entry.display_name.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(display_name);
+    let group = custom_config
+        .and_then(|entry| entry.group.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| provider_group(provider));
+    // New installations only expose routes that are configured (or the
+    // currently active route) in the chat picker. Keyless local routes are
+    // deliberately opt-in: `has_api_key` is true for `local_optional` so the
+    // runtime can connect without credentials, but that must not make every
+    // localhost service appear in a fresh install's model picker.
+    let auth_is_keyless = matches!(auth_mode.as_str(), "none" | "local_optional");
+    let enabled = route_config
+        .and_then(|entry| entry.enabled)
+        .unwrap_or(provider == active_provider || (has_api_key && !auth_is_keyless));
+    let models = provider_models_for_api(
+        config,
+        active_provider,
+        active_identity,
+        provider,
+        identity,
+    );
+    let configured_models = route_config
+        .map(|entry| entry.models.clone())
+        .unwrap_or_default();
+    let description = route_config
+        .and_then(|entry| entry.description.clone())
+        .filter(|value| !value.trim().is_empty());
     ProviderEntry {
         id: identity.to_string(),
         display_name: display_name.to_string(),
@@ -6324,12 +6977,17 @@ fn provider_entry_for_identity(
         has_api_key,
         masked_api_key: key.as_deref().map(mask_provider_key).unwrap_or_default(),
         has_custom_headers,
-        group: provider_group(provider).to_string(),
+        group: group.to_string(),
+        is_custom: provider == ApiProvider::Custom,
         auth_mode,
         supports_connection_test: true,
         supports_live_models: true,
         supports_headers: true,
         supports_multi_key: false,
+        enabled,
+        models,
+        configured_models,
+        description,
     }
 }
 
@@ -6346,7 +7004,7 @@ fn provider_entry_for(
         active_identity,
         provider,
         &identity,
-        provider.display_name(),
+        &provider_display_name(provider, &identity),
     )
 }
 
@@ -6434,6 +7092,11 @@ fn provider_models_for_api(
     {
         push_unique_model(&mut models, model);
     }
+    if let Some(configured) = route.provider_config_for(provider) {
+        for model in &configured.models {
+            push_unique_model(&mut models, model);
+        }
+    }
     if provider == active_provider && identity == active_identity {
         let active_model = route.default_model();
         if !active_model.trim().eq_ignore_ascii_case("auto") {
@@ -6454,6 +7117,19 @@ fn provider_models_for_api(
         push_unique_model(&mut models, &model);
     }
     models
+}
+
+fn provider_model_entry(provider: ApiProvider, id: impl Into<String>) -> ProviderModelEntry {
+    let id = id.into();
+    let offering = crate::provider_lake::catalog_offering_for_model(provider, &id);
+    ProviderModelEntry {
+        id,
+        reasoning_options: offering
+            .as_ref()
+            .map(|offering| offering.reasoning_options.clone())
+            .unwrap_or_default(),
+        supports_reasoning: offering.and_then(|offering| offering.reasoning),
+    }
 }
 
 fn provider_default_model_for_api(
@@ -6492,7 +7168,15 @@ async fn list_providers(
         ));
     }
     if let Some(custom) = config.providers.as_ref().map(|providers| &providers.custom) {
-        for (identity, entry) in custom {
+        let mut custom_entries: Vec<_> = custom
+            .iter()
+            .filter(|(_, entry)| entry.is_openai_compatible_custom())
+            .collect();
+        custom_entries.sort_by_key(|(identity, entry)| (
+            entry.display_name.as_deref().unwrap_or(*identity).to_ascii_lowercase(),
+            (*identity).to_ascii_lowercase(),
+        ));
+        for (identity, entry) in custom_entries {
             if entry.is_openai_compatible_custom() {
                 providers.push(provider_entry_for_identity(
                     &config,
@@ -6500,7 +7184,7 @@ async fn list_providers(
                     &active_identity,
                     ApiProvider::Custom,
                     identity,
-                    &format!("Custom: {identity}"),
+                    entry.display_name.as_deref().unwrap_or(identity),
                 ));
             }
         }
@@ -6519,6 +7203,105 @@ async fn list_providers(
         ));
     }
     Ok(Json(ProvidersResponse { current, providers }))
+}
+
+/// Create a named OpenAI-compatible provider. This is the durable API used by
+/// the desktop/mobile settings surfaces; the TUI's config editor remains
+/// compatible because both paths write the same TOML shape.
+async fn create_custom_provider(
+    State(state): State<RuntimeApiState>,
+    Json(req): Json<CreateCustomProviderRequest>,
+) -> Result<Json<CustomProviderMutationResponse>, ApiError> {
+    use crate::config_persistence;
+
+    let id = req.id.trim();
+    let base_url = validate_provider_base_url(&req.base_url)?;
+    config_persistence::persist_custom_provider(
+        state.config_path.as_deref(),
+        id,
+        &base_url,
+        req.model.as_deref(),
+        req.api_key_env.as_deref(),
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    config_persistence::persist_custom_provider_metadata(
+        state.config_path.as_deref(),
+        id,
+        req.display_name.as_deref(),
+        req.group.as_deref(),
+    )
+    .map_err(|error| ApiError::internal(format!("Failed to save provider metadata: {error}")))?;
+    config_persistence::persist_provider_models_for_identity(
+        state.config_path.as_deref(),
+        ApiProvider::Custom,
+        id,
+        &req.models,
+    )
+    .map_err(|error| ApiError::internal(format!("Failed to save provider models: {error}")))?;
+    if let Some(enabled) = req.enabled {
+        config_persistence::persist_provider_enabled_for_identity(
+            state.config_path.as_deref(),
+            ApiProvider::Custom,
+            id,
+            enabled,
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider state: {error}")))?;
+    }
+
+    let mut reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    if let Some(api_key) = req.api_key.as_deref().map(str::trim).filter(|key| !key.is_empty()) {
+        let identity = reloaded
+            .resolve_provider_identity(id)
+            .map_err(ApiError::bad_request)?;
+        let route = provider_route_config_for_identity(&reloaded, id);
+        crate::config::save_api_key_for_identity(&identity, &route, api_key)
+            .map_err(|error| ApiError::internal(format!("Failed to save provider API key: {error}")))?;
+        reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+            .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    }
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+    Ok(Json(CustomProviderMutationResponse {
+        provider: id.to_string(),
+        message: format!("Custom provider '{id}' saved"),
+    }))
+}
+
+async fn delete_custom_provider(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<CustomProviderMutationResponse>, ApiError> {
+    use crate::config_persistence;
+    {
+        let config = state.config.read();
+        let entry = config
+            .providers
+            .as_ref()
+            .and_then(|providers| providers.custom_provider_config(&id))
+            .ok_or_else(|| ApiError::not_found(format!("Custom provider '{id}' was not found")))?;
+        if !entry.is_openai_compatible_custom() {
+            return Err(ApiError::bad_request(format!("Provider '{id}' is not a custom provider")));
+        }
+    }
+    config_persistence::delete_custom_provider(state.config_path.as_deref(), &id)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+    Ok(Json(CustomProviderMutationResponse {
+        provider: id.clone(),
+        message: format!("Custom provider '{id}' deleted"),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -6548,7 +7331,7 @@ async fn list_provider_models(
         route.id(),
     )
         .into_iter()
-        .map(|id| ProviderModelEntry { id: id.to_string() })
+        .map(|id| provider_model_entry(route.provider, id))
         .collect();
     Ok(Json(ProviderModelsResponse {
         provider: route.id().to_string(),
@@ -6670,6 +7453,37 @@ async fn update_provider(
         .map_err(|error| ApiError::internal(format!("Failed to save provider API key: {error}")))?
         .unwrap_or(false);
 
+    if provider_route.provider == ApiProvider::Custom
+        && (req.display_name.is_some() || req.group.is_some())
+    {
+        config_persistence::persist_custom_provider_metadata(
+            state.config_path.as_deref(),
+            &identity.key,
+            req.display_name.as_deref(),
+            req.group.as_deref(),
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider metadata: {error}")))?;
+    }
+
+    if let Some(enabled) = req.enabled {
+        config_persistence::persist_provider_enabled_for_identity(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            enabled,
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider state: {error}")))?;
+    }
+    if let Some(models) = req.models.as_ref() {
+        config_persistence::persist_provider_models_for_identity(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            models,
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider models: {error}")))?;
+    }
+
     if req.set_as_default {
         config_persistence::persist_root_string_key(
             state.config_path.as_deref(),
@@ -6733,7 +7547,7 @@ async fn fetch_provider_models(
         provider: provider_route.id().to_string(),
         models: models
             .into_iter()
-            .map(|model| ProviderModelEntry { id: model.id })
+            .map(|model| provider_model_entry(provider_route.provider, model.id))
             .collect(),
         source: "provider_api".to_string(),
     }))
@@ -7030,6 +7844,326 @@ async fn switch_provider(
 }
 
 // ── Config endpoints ──
+
+const MAX_RUNTIME_UPLOAD_SIZE: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct UploadFileBody {
+    filename: String,
+    #[serde(default)]
+    content_type: Option<String>,
+    data_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadFilesRequest {
+    files: Vec<UploadFileBody>,
+}
+
+fn runtime_upload_dir() -> Result<PathBuf, ApiError> {
+    // Embedded Tauri/Android runtimes set HAKUS_HOME to their private app
+    // data directory. Keep uploads under that same root so the uninstall
+    // prompt and full user-data wipe cover attachments as well.
+    let home = hakus_config::hakus_home()
+        .map_err(|error| ApiError::internal(format!("Unable to resolve Hakus home: {error}")))?;
+    let dir = home.join("uploads");
+    fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("Failed to create upload directory: {e}")))?;
+    Ok(dir)
+}
+
+fn safe_upload_filename(name: &str) -> String {
+    let candidate = FsPath::new(name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("upload.bin")
+        .trim();
+    let mut safe: String = candidate
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ' ') { ch } else { '_' })
+        .collect();
+    if safe.is_empty() { safe = "upload.bin".to_string(); }
+    safe.chars().take(180).collect()
+}
+
+fn upload_metadata(file_id: &str, filename: &str, size: usize, content_type: &str, data: &[u8]) -> Value {
+    let extension = FsPath::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    let is_text = matches!(extension.as_deref(), Some("txt" | "md" | "py" | "js" | "ts" | "json" | "yaml" | "yml" | "xml" | "html" | "css" | "java" | "c" | "cpp" | "go" | "rs" | "rb" | "sh" | "sql"))
+        || content_type.starts_with("text/");
+    let text_preview = if is_text {
+        std::str::from_utf8(data).ok().map(|text| text.chars().take(2000).collect::<String>())
+    } else { None };
+    json!({
+        "file_id": file_id,
+        "filename": filename,
+        "size": size,
+        "content_type": content_type,
+        "text_preview": text_preview,
+        "is_text": is_text,
+    })
+}
+
+async fn upload_files(
+    Json(req): Json<UploadFilesRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if req.files.is_empty() {
+        return Ok(Json(json!({ "files": [] })));
+    }
+    let dir = runtime_upload_dir()?;
+    let mut result = Vec::with_capacity(req.files.len());
+    for file in req.files {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(file.data_base64.trim())
+            .map_err(|_| ApiError::bad_request(format!("Invalid base64 for {}", file.filename)))?;
+        if data.len() > MAX_RUNTIME_UPLOAD_SIZE {
+            return Err(ApiError::bad_request(format!("{} exceeds the 10 MB upload limit", file.filename)));
+        }
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let filename = safe_upload_filename(&file.filename);
+        let path = dir.join(format!("{id}_{filename}"));
+        fs::write(&path, &data).map_err(|e| ApiError::internal(format!("Failed to save upload: {e}")))?;
+        result.push(upload_metadata(&id, &filename, data.len(), file.content_type.as_deref().unwrap_or("application/octet-stream"), &data));
+    }
+    Ok(Json(json!({ "files": result })))
+}
+
+async fn list_files() -> Result<Json<Value>, ApiError> {
+    let dir = runtime_upload_dir()?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| ApiError::internal(format!("Failed to list uploads: {e}")))? {
+        let entry = entry.map_err(|e| ApiError::internal(format!("Failed to inspect upload: {e}")))?;
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        let Some((id, filename)) = name.split_once('_') else { continue; };
+        if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) { continue; }
+        let data = fs::read(&path).unwrap_or_default();
+        let size = data.len();
+        files.push(upload_metadata(id, filename, size, "application/octet-stream", &data));
+    }
+    files.sort_by_key(|value| {
+        std::cmp::Reverse(
+            value
+                .get("file_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        )
+    });
+    Ok(Json(json!({ "files": files })))
+}
+
+async fn get_file(Path(id): Path<String>) -> Result<Response, ApiError> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request("Invalid file_id"));
+    }
+    let dir = runtime_upload_dir()?;
+    let prefix = format!("{id}_");
+    let path = fs::read_dir(&dir)
+        .map_err(|e| ApiError::internal(format!("Failed to list uploads: {e}")))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with(&prefix)))
+        .ok_or_else(|| ApiError { status: StatusCode::NOT_FOUND, message: "File not found".to_string() })?;
+    let bytes = fs::read(&path).map_err(|e| ApiError::internal(format!("Failed to read upload: {e}")))?;
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
+}
+
+async fn delete_file(Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request("Invalid file_id"));
+    }
+    let dir = runtime_upload_dir()?;
+    let prefix = format!("{id}_");
+    let path = fs::read_dir(&dir)
+        .map_err(|e| ApiError::internal(format!("Failed to list uploads: {e}")))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with(&prefix)));
+    let Some(path) = path else {
+        return Err(ApiError { status: StatusCode::NOT_FOUND, message: "File not found".to_string() });
+    };
+    fs::remove_file(path).map_err(|e| ApiError::internal(format!("Failed to delete upload: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+struct TtsRequestBody {
+    text: String,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    speed: Option<f32>,
+    #[serde(default)]
+    instruction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VoiceCloneRequestBody {
+    audio_base64: String,
+    #[serde(default)]
+    filename: Option<String>,
+}
+
+fn runtime_voice_clone_dir() -> Result<PathBuf, ApiError> {
+    let Some(log_dir) = crate::runtime_log::log_directory() else {
+        return Err(ApiError::internal("Unable to resolve Hakus home"));
+    };
+    let dir = log_dir
+        .parent()
+        .unwrap_or_else(|| FsPath::new("."))
+        .join("voice");
+    fs::create_dir_all(&dir)
+        .map_err(|error| ApiError::internal(format!("Failed to create voice directory: {error}")))?;
+    Ok(dir)
+}
+
+fn runtime_voice_clone_file(voice_id: &str) -> Result<PathBuf, ApiError> {
+    if !voice_id.starts_with("hakus-clone-")
+        || !voice_id["hakus-clone-".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ApiError::bad_request("Invalid voice clone id"));
+    }
+    let dir = runtime_voice_clone_dir()?;
+    ["wav", "mp3"]
+        .iter()
+        .map(|extension| dir.join(format!("{voice_id}.{extension}")))
+        .find(|path| path.exists())
+        .ok_or_else(|| ApiError { status: StatusCode::NOT_FOUND, message: "Voice clone sample not found".to_string() })
+}
+
+async fn clone_voice(
+    Json(req): Json<VoiceCloneRequestBody>,
+) -> Result<Json<Value>, ApiError> {
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(req.audio_base64.trim())
+        .map_err(|_| ApiError::bad_request("Invalid audio base64"))?;
+    if audio.is_empty() {
+        return Err(ApiError::bad_request("Audio cannot be empty"));
+    }
+    if audio.len() > MAX_RUNTIME_UPLOAD_SIZE {
+        return Err(ApiError::bad_request("Audio exceeds the 10 MB limit"));
+    }
+    let extension = req
+        .filename
+        .as_deref()
+        .and_then(|name| FsPath::new(name).extension().and_then(|value| value.to_str()))
+        .unwrap_or("wav")
+        .to_ascii_lowercase();
+    if extension != "wav" && extension != "mp3" {
+        return Err(ApiError::bad_request("Only WAV or MP3 voice samples are supported"));
+    }
+    let voice_id = format!("hakus-clone-{}", uuid::Uuid::new_v4().simple());
+    let dir = runtime_voice_clone_dir()?;
+    let path = dir.join(format!("{voice_id}.{extension}"));
+    fs::write(&path, audio)
+        .map_err(|error| ApiError::internal(format!("Failed to save voice sample: {error}")))?;
+    fs::write(dir.join("active_voice_id"), &voice_id)
+        .map_err(|error| ApiError::internal(format!("Failed to save voice clone status: {error}")))?;
+    Ok(Json(json!({
+        "status": "completed",
+        "voice_id": voice_id,
+        "message": "声音样本已保存，可直接用于 MiMo voice-clone TTS",
+    })))
+}
+
+async fn clone_voice_status() -> Result<Json<Value>, ApiError> {
+    let dir = runtime_voice_clone_dir()?;
+    let status_path = dir.join("active_voice_id");
+    let Some(voice_id) = fs::read_to_string(&status_path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Json(json!({ "status": "pending", "voice_id": null })));
+    };
+    Ok(Json(json!({ "status": "completed", "voice_id": voice_id })))
+}
+
+async fn text_to_speech(
+    State(state): State<RuntimeApiState>,
+    Json(req): Json<TtsRequestBody>,
+) -> Result<Response, ApiError> {
+    let config = state.config.read().clone();
+    let client = crate::client::DeepSeekClient::new(&config)
+        .map_err(|error| ApiError::bad_request(format!("Unable to create speech client: {error}")))?;
+    let model = config.default_model();
+    let voice = if let Some(voice_id) = req.voice.as_deref().filter(|voice| voice.starts_with("hakus-clone-")) {
+        let path = runtime_voice_clone_file(voice_id)?;
+        let clone_uri = crate::tools::speech::encode_voice_clone_sample_data_uri(&path)
+            .map_err(|error| ApiError::bad_request(format!("Unable to load voice clone sample: {error}")))?;
+        Some(clone_uri)
+    } else {
+        req.voice
+    };
+    let response = client
+        .synthesize_speech(crate::client::SpeechSynthesisRequest {
+            model,
+            text: req.text,
+            instruction: req.instruction,
+            audio_format: "mp3".to_string(),
+            voice,
+        })
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    let content_type = if response.audio_format.eq_ignore_ascii_case("wav") { "audio/wav" } else { "audio/mpeg" };
+    let _ = req.speed; // MiMo controls prosody through its instruction surface.
+    Ok(([(header::CONTENT_TYPE, content_type)], response.audio_bytes).into_response())
+}
+
+async fn list_tts_voices() -> Json<Value> {
+    Json(json!({ "voices": ["default"] }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AsrRequestBody {
+    audio_base64: String,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+async fn transcribe_voice(
+    State(state): State<RuntimeApiState>,
+    Json(req): Json<AsrRequestBody>,
+) -> Result<Json<Value>, ApiError> {
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(req.audio_base64.trim())
+        .map_err(|_| ApiError::bad_request("Invalid audio base64"))?;
+    if audio.len() > MAX_RUNTIME_UPLOAD_SIZE {
+        return Err(ApiError::bad_request("Audio exceeds the 10 MB limit"));
+    }
+    let config = state.config.read().clone();
+    let api_key = config
+        .deepseek_api_key()
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    if api_key.trim().is_empty() {
+        return Err(ApiError::bad_request("No API key configured for voice transcription"));
+    }
+    let data_url = format!("data:audio/wav;base64,{}", base64::engine::general_purpose::STANDARD.encode(audio));
+    let language = req.language.unwrap_or_else(|| "auto".to_string());
+    let body = json!({
+        "model": "mimo-v2.5-asr",
+        "messages": [{ "role": "user", "content": [{ "type": "input_audio", "input_audio": { "data": data_url } }] }],
+        "asr_options": { "language": language },
+    });
+    let response = crate::tls::reqwest_client()
+        .post(format!("{}/chat/completions", config.deepseek_base_url().trim_end_matches('/')))
+        .bearer_auth(api_key)
+        .json(&body)
+        .timeout(Duration::from_secs(120))
+        .send()
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Voice transcription request failed: {error}")))?;
+    let status = response.status();
+    let payload: Value = response.json().await.map_err(|error| ApiError::bad_request(format!("Invalid transcription response: {error}")))?;
+    if !status.is_success() {
+        return Err(ApiError::bad_request(format!("Voice transcription failed with HTTP {status}")));
+    }
+    let text = payload.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    Ok(Json(json!({ "text": text })))
+}
 
 /// GUI-relevant config snapshot returned by `GET /v1/config`.
 #[derive(Debug, Clone, Serialize)]
@@ -7388,6 +8522,98 @@ async fn set_config(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct ImportConfigRequest {
+    config: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportConfigResponse {
+    applied: Vec<String>,
+    ignored: Vec<String>,
+    reloaded: bool,
+}
+
+/// Import the portable GUI configuration projection. Secrets are deliberately
+/// excluded from `GET /v1/config`; provider credentials continue to be managed
+/// through the provider endpoints and the OS credential store.
+async fn import_config(
+    State(state): State<RuntimeApiState>,
+    Json(req): Json<ImportConfigRequest>,
+) -> Result<Json<ImportConfigResponse>, ApiError> {
+    let object = req
+        .config
+        .as_object()
+        .ok_or_else(|| ApiError::bad_request("config must be an object"))?;
+    let mut values: Vec<(String, String)> = Vec::new();
+    let mut ignored = Vec::new();
+
+    let mut push_value = |key: &str, value: Option<&Value>| {
+        if let Some(value) = value {
+            if let Some(text) = value.as_str() {
+                values.push((key.to_string(), text.to_string()));
+            } else if let Some(boolean) = value.as_bool() {
+                values.push((key.to_string(), boolean.to_string()));
+            } else if let Some(number) = value.as_number() {
+                values.push((key.to_string(), number.to_string()));
+            } else {
+                ignored.push(key.to_string());
+            }
+        }
+    };
+
+    // Accept both the native flat projection and the legacy nested AppConfig
+    // shape used by the desktop backup dialog.
+    push_value("provider", object.get("provider"));
+    push_value("model", object.get("model"));
+    push_value("default_model", object.get("default_model"));
+    for key in [
+        "reasoning_effort", "approval_mode", "approval_policy", "base_url",
+        "provider_url", "provider_base_url", "cost_currency", "default_mode",
+        "auto_compact", "allow_shell", "mcp_config_path", "subagents_enabled",
+        "subagents_max_depth", "show_thinking", "thinking_default_expanded",
+        "thinking_highlight", "show_tool_details", "inline_diffs", "locale",
+        "max_history", "calm_mode", "workspace_follow_symlinks", "sandbox_mode",
+        "strict_tool_mode", "memory_enabled", "search_provider", "prompt_suggestion",
+    ] {
+        push_value(key, object.get(key));
+    }
+    if let Some(model) = object.get("model").and_then(Value::as_object) {
+        push_value("provider", model.get("provider"));
+        push_value("model", model.get("model_name").or_else(|| model.get("model")));
+        push_value("base_url", model.get("base_url"));
+    }
+
+    // De-duplicate while preserving the import order, with provider first so
+    // model validation uses the intended route.
+    let mut seen = BTreeSet::new();
+    values.retain(|(key, _)| seen.insert(key.clone()));
+    let mut applied = Vec::new();
+    for (key, value) in values {
+        let _ = set_config(
+            State(state.clone()),
+            Json(SetConfigRequest {
+                key: key.clone(),
+                value,
+                persist: true,
+            }),
+        )
+        .await?;
+        applied.push(key);
+    }
+    let reloaded = if applied.is_empty() {
+        false
+    } else {
+        let _ = reload_config(State(state)).await?;
+        true
+    };
+    Ok(Json(ImportConfigResponse {
+        applied,
+        ignored,
+        reloaded,
+    }))
+}
+
 fn normalize_runtime_config_model(provider: ApiProvider, value: &str) -> Result<String, ApiError> {
     let value = value.trim();
     validate_route(provider, value).map_err(ApiError::bad_request)?;
@@ -7743,6 +8969,7 @@ fn cors_layer(extra_origins: &[String]) -> CorsLayer {
         .allow_methods([
             Method::GET,
             Method::POST,
+            Method::PUT,
             Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,

@@ -82,6 +82,12 @@ dist/
 .hakus/
 **/.gradle/
 
+# Legacy Python test/runtime state. User data belongs under the platform
+# application-data directory and must never be shipped from the repository.
+data/user_states/
+data/cache/
+src/data/memories/
+
 # Model files (large)
 *.pt
 *.pth

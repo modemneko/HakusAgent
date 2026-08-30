@@ -1872,3 +1872,1106 @@
     display: none;
   }
 }
+
+/* ========================================================================
+ * iOS 26 mobile sheets
+ *
+ * Compact screens use layered surfaces: the app remains visible through a
+ * restrained material scrim, while focused work rises as a rounded sheet.
+ * The desktop split panes keep their existing layout above this breakpoint.
+ * ====================================================================== */
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .app-panel-scrim {
+    z-index: 25 !important;
+    background: hsl(240 12% 4% / 0.38) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(115%);
+    backdrop-filter: blur(12px) saturate(115%);
+  }
+
+  .sidebar-wrapper,
+  .right-panel-wrapper {
+    top: max(0.5rem, env(safe-area-inset-top)) !important;
+    bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+    width: min(88vw, 23rem) !important;
+    height: auto !important;
+    overflow: visible !important;
+    border: 1px solid hsl(var(--foreground) / 0.14);
+    border-radius: 1.5rem;
+    background: hsl(var(--card) / 0.82);
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    backdrop-filter: blur(30px) saturate(150%);
+    box-shadow: 0 18px 48px hsl(240 20% 2% / 0.34), inset 0 1px 0 hsl(var(--foreground) / 0.08);
+  }
+
+  .sidebar-wrapper {
+    left: max(0.5rem, env(safe-area-inset-left)) !important;
+    right: auto !important;
+    transform: translateX(calc(-100% - 1rem));
+  }
+
+  .right-panel-wrapper {
+    left: auto !important;
+    right: max(0.5rem, env(safe-area-inset-right)) !important;
+    transform: translateX(calc(100% + 1rem));
+  }
+
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"] {
+    transform: translateX(0) !important;
+  }
+
+  .sidebar-wrapper .sidebar,
+  .right-panel-wrapper .right-panel {
+    height: 100%;
+    min-height: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .sidebar-wrapper .sidebar {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .right-panel-wrapper .right-panel {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .sidebar-mobile-close,
+  .right-panel-mobile-close {
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 999px;
+    background: hsl(var(--foreground) / 0.06);
+  }
+
+  .sidebar-mobile-close:active,
+  .right-panel-mobile-close:active {
+    background: hsl(var(--foreground) / 0.14);
+  }
+
+  .right-panel-mobile-header {
+    min-height: 3.75rem;
+    border-bottom-color: hsl(var(--foreground) / 0.1);
+    padding-right: 0.75rem;
+    padding-left: 1.125rem;
+  }
+
+  .right-panel-tabs {
+    border-bottom-color: hsl(var(--foreground) / 0.1);
+  }
+
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] {
+    z-index: 110 !important;
+  }
+
+  /* Secondary dialogs become a compact, self-contained sheet. */
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
+    inset: auto 0 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: min(88dvh, 44rem) !important;
+    border: 1px solid hsl(var(--foreground) / 0.14) !important;
+    border-bottom: 0 !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    padding: 0.5rem 1rem max(1rem, env(safe-area-inset-bottom)) !important;
+    background: hsl(var(--card) / 0.94) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    backdrop-filter: blur(30px) saturate(150%);
+    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+  }
+
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet)::before,
+  .mobile-settings-sheet::before,
+  .settings-dialog-content::before {
+    content: '';
+    display: block;
+    width: 2.25rem;
+    height: 0.25rem;
+    flex: 0 0 auto;
+    align-self: center;
+    margin: 0.125rem auto 0.625rem;
+    border-radius: 999px;
+    background: hsl(var(--foreground) / 0.2);
+  }
+
+  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > button[aria-label="Close"] {
+    top: 0.75rem !important;
+    right: 0.75rem !important;
+  }
+
+  /* Settings is a larger bottom sheet; its internal scroll area stays usable. */
+  .settings-dialog-content {
+    inset: auto 0 0 !important;
+    width: 100vw !important;
+    height: min(92dvh, 48rem) !important;
+    max-height: min(92dvh, 48rem) !important;
+    border: 1px solid hsl(var(--foreground) / 0.14) !important;
+    border-bottom: 0 !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    padding: 0 !important;
+    background: hsl(var(--background) / 0.96) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(145%);
+    backdrop-filter: blur(30px) saturate(145%);
+    box-shadow: 0 -18px 50px hsl(240 20% 2% / 0.34) !important;
+  }
+
+  .settings-dialog-content::before {
+    position: absolute;
+    top: 0.35rem;
+    left: 50%;
+    z-index: 3;
+    transform: translateX(-50%);
+    margin: 0;
+  }
+
+  .settings-dialog-content > button[aria-label="Close"] {
+    top: 0.625rem !important;
+    right: 0.75rem !important;
+    z-index: 4;
+  }
+
+  .settings-dialog-header {
+    padding-top: 1.375rem !important;
+  }
+
+  /* Composer's More menu follows the action-sheet pattern from the reference. */
+  .mobile-settings-sheet {
+    inset: auto 0 0 !important;
+    width: 100vw !important;
+    height: auto !important;
+    max-height: min(82dvh, 42rem) !important;
+    border: 1px solid hsl(var(--foreground) / 0.14) !important;
+    border-bottom: 0 !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    background: hsl(var(--card) / 0.94) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    backdrop-filter: blur(30px) saturate(150%);
+    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+  }
+
+  .mobile-settings-header {
+    min-height: 4.75rem;
+    padding-top: 0.625rem;
+  }
+
+  .mobile-settings-body {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .mobile-settings-list {
+    border-color: hsl(var(--foreground) / 0.11);
+    background: hsl(var(--background) / 0.38);
+  }
+
+  .mobile-settings-row {
+    min-height: 4rem;
+  }
+
+  [data-hakus-overlay="menu-content"] {
+    border-color: hsl(var(--foreground) / 0.14) !important;
+    background: hsl(var(--card) / 0.94) !important;
+  }
+
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"],
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"] {
+    position: absolute !important;
+    inset: auto 0 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: min(74dvh, 38rem) !important;
+    min-height: 0 !important;
+    border: 1px solid hsl(var(--foreground) / 0.14) !important;
+    border-bottom: 0 !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    padding: 0.5rem 0.75rem max(1rem, env(safe-area-inset-bottom)) !important;
+    background: hsl(var(--card) / 0.94) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    backdrop-filter: blur(30px) saturate(150%);
+    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+  }
+
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"]::before,
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"]::before {
+    content: '';
+    display: block;
+    width: 2.25rem;
+    height: 0.25rem;
+    flex: 0 0 auto;
+    align-self: center;
+    margin: 0.125rem auto 0.625rem;
+    border-radius: 999px;
+    background: hsl(var(--foreground) / 0.2);
+  }
+
+  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"] > .hakus-mobile-menu-header {
+    min-height: 3.25rem;
+  }
+
+  .composer-mention-menu {
+    inset: auto 0 0 !important;
+    height: auto !important;
+    max-height: min(74dvh, 38rem) !important;
+    border-radius: 1.5rem 1.5rem 0 0 !important;
+    padding-top: 0.5rem !important;
+  }
+}
+
+/* Landscape phones have enough width for the chat, but not for the desktop
+   option labels. Keep the same compact control contract as portrait phones. */
+@media (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .composer-options > button[aria-label="更多选项"] {
+    display: inline-flex !important;
+  }
+
+  .composer-options .composer-project-trigger,
+  .composer-options > :nth-child(n + 4) {
+    display: none !important;
+  }
+
+  .composer-options {
+    flex-wrap: nowrap !important;
+  }
+
+  .composer-shell {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* ========================================================================
+ * iOS 26 visual language
+ *
+ * The app is a desktop shell with a phone-first surface. These tokens keep
+ * both sizes on the same semantic system: system-background, grouped
+ * surfaces, a single tint, inset separators, and material navigation chrome.
+ * ====================================================================== */
+:root {
+  --background: 240 8% 97%;
+  --foreground: 240 8% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 8% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 8% 10%;
+  --primary: 211 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 5% 92%;
+  --secondary-foreground: 240 8% 14%;
+  --muted: 240 5% 92%;
+  --muted-foreground: 240 4% 43%;
+  --accent: 211 100% 96%;
+  --accent-foreground: 211 85% 35%;
+  --border: 240 5% 84%;
+  --input: 240 5% 76%;
+  --ring: 211 100% 50%;
+  --radius: 0.875rem;
+  --ios-separator: hsl(240 5% 50% / 0.22);
+  --ios-material: hsl(0 0% 100% / 0.72);
+  --ios-grouped: hsl(240 8% 95% / 0.78);
+}
+
+.dark {
+  --background: 240 7% 6%;
+  --foreground: 0 0% 98%;
+  --card: 240 6% 12%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 6% 15%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 211 100% 65%;
+  --primary-foreground: 240 10% 8%;
+  --secondary: 240 5% 17%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 5% 17%;
+  --muted-foreground: 240 5% 70%;
+  --accent: 211 36% 22%;
+  --accent-foreground: 211 100% 92%;
+  --border: 240 5% 26%;
+  --input: 240 5% 32%;
+  --ring: 211 100% 65%;
+  --ios-separator: hsl(0 0% 100% / 0.16);
+  --ios-material: hsl(240 6% 13% / 0.74);
+  --ios-grouped: hsl(240 6% 10% / 0.82);
+}
+
+html,
+body,
+#root {
+  background: hsl(var(--background));
+}
+
+body {
+  letter-spacing: 0;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid hsl(var(--ring) / 0.7);
+  outline-offset: 2px;
+}
+
+/* Material navigation chrome */
+.titlebar,
+.sidebar,
+.right-panel,
+.statusbar,
+.composer-shell {
+  background: var(--ios-material) !important;
+  border-color: var(--ios-separator) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
+  backdrop-filter: blur(26px) saturate(145%);
+}
+
+.titlebar {
+  height: calc(var(--titlebar-height) + 0.25rem);
+  min-height: calc(var(--titlebar-height) + 0.25rem);
+  box-shadow: 0 1px 0 hsl(var(--foreground) / 0.04);
+}
+
+.topbar-session > span:first-child {
+  font-size: 0.9375rem;
+  font-weight: 650;
+}
+
+.topbar-session > span:last-child {
+  color: hsl(var(--muted-foreground) / 0.9) !important;
+}
+
+.topbar-icon-button,
+.topbar-settings-button,
+.topbar-review-button,
+.topbar-clear-button {
+  border-radius: 999px !important;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.topbar-icon-button:hover,
+.topbar-settings-button:hover,
+.topbar-review-button:hover,
+.topbar-clear-button:hover {
+  background: hsl(var(--foreground) / 0.08) !important;
+}
+
+.topbar-icon-button:active,
+.topbar-settings-button:active,
+.topbar-review-button:active,
+.topbar-clear-button:active {
+  transform: scale(0.94);
+}
+
+.segment {
+  border: 1px solid hsl(var(--foreground) / 0.1) !important;
+  border-radius: 999px !important;
+  background: hsl(var(--secondary) / 0.72) !important;
+  padding: 0.1875rem !important;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
+}
+
+.segment-btn {
+  min-height: 1.875rem;
+  border-radius: 999px !important;
+  padding-inline: 0.75rem;
+}
+
+.segment-btn-active {
+  background: hsl(var(--card) / 0.92) !important;
+  color: hsl(var(--foreground)) !important;
+  box-shadow: 0 1px 3px hsl(240 20% 3% / 0.16);
+}
+
+/* Inset/grouped list surfaces */
+.sidebar-item,
+.mobile-settings-row,
+.right-panel-tabs > button,
+.settings-dialog-nav button {
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.sidebar-item {
+  min-height: 2.75rem;
+  border-radius: 0.75rem !important;
+  padding-inline: 0.75rem;
+}
+
+.sidebar-item-active {
+  background: hsl(var(--primary) / 0.14) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+.sidebar-item-inactive:hover,
+.settings-dialog-nav button:hover {
+  background: hsl(var(--foreground) / 0.06) !important;
+}
+
+.sidebar input,
+.settings-dialog-mobile-picker select,
+input:not(.hidden),
+textarea,
+select {
+  border-color: hsl(var(--foreground) / 0.16) !important;
+  border-radius: 0.8rem !important;
+  background: hsl(var(--card) / 0.54) !important;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
+}
+
+.sidebar input {
+  min-height: 2.5rem;
+  border-radius: 999px !important;
+  background: hsl(var(--secondary) / 0.64) !important;
+}
+
+input:not(.hidden):focus,
+textarea:focus,
+select:focus {
+  border-color: hsl(var(--ring) / 0.72) !important;
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.04) !important;
+}
+
+/* Welcome surface and conversation rhythm */
+.empty-state-hero {
+  gap: 1.25rem;
+}
+
+.empty-state-hero > div:first-child {
+  border: 1px solid hsl(var(--primary) / 0.34);
+  background: hsl(var(--primary) / 0.16) !important;
+  color: hsl(var(--primary)) !important;
+  box-shadow: 0 8px 24px hsl(var(--primary) / 0.16), inset 0 1px 0 hsl(var(--foreground) / 0.1);
+}
+
+.empty-state-hero p:first-child {
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.starter-card-grid button {
+  border-color: hsl(var(--foreground) / 0.14) !important;
+  border-radius: 1.25rem !important;
+  background: hsl(var(--card) / 0.58) !important;
+  box-shadow: 0 8px 22px hsl(240 20% 3% / 0.1), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.starter-card-grid button:hover,
+.starter-card-grid button:focus-visible {
+  border-color: hsl(var(--primary) / 0.48) !important;
+  background: hsl(var(--primary) / 0.12) !important;
+  transform: translateY(-2px);
+}
+
+.starter-card-grid button:active {
+  transform: scale(0.98);
+}
+
+.chat-message {
+  padding-block: 0.75rem;
+}
+
+.chat-message-body > .selectable {
+  border-radius: 1.25rem !important;
+}
+
+[data-role="user"] .chat-message-body > .selectable {
+  border-color: hsl(var(--primary) / 0.34) !important;
+  background: hsl(var(--primary) / 0.18) !important;
+  color: hsl(var(--foreground)) !important;
+  box-shadow: none !important;
+}
+
+/* Composer as an inset system surface */
+.composer-shell {
+  padding-top: 0.75rem;
+}
+
+.composer-box {
+  border-color: hsl(var(--foreground) / 0.16) !important;
+  border-radius: 1.5rem !important;
+  background: hsl(var(--card) / 0.74) !important;
+  box-shadow: 0 12px 34px hsl(240 20% 3% / 0.16), inset 0 1px 0 hsl(var(--foreground) / 0.07) !important;
+}
+
+.composer-box:focus-within {
+  border-color: hsl(var(--primary) / 0.52) !important;
+  box-shadow: 0 12px 34px hsl(240 20% 3% / 0.18), 0 0 0 3px hsl(var(--primary) / 0.13), inset 0 1px 0 hsl(var(--foreground) / 0.08) !important;
+}
+
+.composer-options > button,
+.composer-actions > button {
+  border-radius: 999px !important;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.composer-options > button:hover,
+.composer-actions > button:hover {
+  background: hsl(var(--foreground) / 0.08) !important;
+}
+
+.composer-options > button:active,
+.composer-actions > button:active {
+  transform: scale(0.94);
+}
+
+/* Review / terminal surfaces */
+.right-panel-tabs {
+  gap: 0.125rem !important;
+  padding-inline: 0.5rem;
+}
+
+.right-panel-tabs > button {
+  min-height: 2.75rem;
+  border-radius: 0.75rem 0.75rem 0 0 !important;
+}
+
+.right-panel-tabs > button:hover {
+  background: hsl(var(--foreground) / 0.06) !important;
+}
+
+.right-panel-tabs > button.border-primary {
+  background: hsl(var(--primary) / 0.1) !important;
+}
+
+.diff-line,
+.chat-tool-call,
+.right-panel .border-b,
+.right-panel .border-t {
+  border-color: var(--ios-separator) !important;
+}
+
+/* Settings and other configuration pages use inset grouped cards. */
+.settings-dialog-panel .rounded-xl.border,
+.settings-dialog-panel .rounded-lg.border,
+.settings-dialog-panel .rounded-md.border {
+  border-color: hsl(var(--foreground) / 0.12) !important;
+  background: hsl(var(--card) / 0.48) !important;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
+}
+
+.settings-dialog-panel .rounded-xl.border,
+.settings-dialog-panel .rounded-lg.border {
+  border-radius: 1rem !important;
+}
+
+.settings-dialog-nav {
+  background: hsl(var(--secondary) / 0.42) !important;
+  border-color: var(--ios-separator) !important;
+}
+
+.settings-dialog-nav button[aria-current="page"] {
+  background: hsl(var(--primary) / 0.14) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+.settings-dialog-footer button {
+  border-radius: 999px !important;
+}
+
+/* Menus, dialogs, toasts, and grouped overlays share one elevation scale. */
+[data-hakus-overlay="dialog-content"],
+[data-hakus-overlay="menu-content"],
+[data-hakus-overlay="menu-sub-content"] {
+  border-color: hsl(var(--foreground) / 0.14) !important;
+  box-shadow: 0 18px 48px hsl(240 20% 2% / 0.24), inset 0 1px 0 hsl(var(--foreground) / 0.07) !important;
+}
+
+[data-hakus-overlay="menu-content"] [data-highlighted],
+[data-hakus-overlay="menu-content"] [data-state="checked"] {
+  background: hsl(var(--primary) / 0.13) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+[data-hakus-overlay="dialog-overlay"] {
+  background: hsl(240 18% 4% / 0.34) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.24);
+  border-width: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ========================================================================
+ * macOS 26 desktop shell
+ *
+ * Liquid Glass belongs to the navigation layer: the titlebar, side panes,
+ * status bar, and menus float above a quieter content canvas. Keeping the
+ * chat canvas opaque prevents glass-on-glass stacking and preserves reading
+ * contrast while the shell still feels native on macOS, Windows, and Linux.
+ * ====================================================================== */
+@media (min-width: 768px) {
+  :root {
+    --mac-window-radius: 0.875rem;
+    --mac-pane-gap: 0.5rem;
+    --mac-toolbar-height: 3.25rem;
+  }
+
+  .app-shell {
+    box-sizing: border-box;
+    padding: var(--mac-pane-gap);
+    background: hsl(var(--background));
+  }
+
+  .app-main {
+    gap: var(--mac-pane-gap);
+    min-height: 0;
+  }
+
+  .app-content {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid hsl(var(--foreground) / 0.12);
+    border-radius: var(--mac-window-radius);
+    background: hsl(var(--background) / 0.94);
+    box-shadow: 0 12px 34px hsl(240 20% 2% / 0.13), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  }
+
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"] {
+    overflow: hidden !important;
+    border: 1px solid hsl(var(--foreground) / 0.12);
+    border-radius: var(--mac-window-radius);
+    background: var(--ios-material);
+    box-shadow: 0 12px 34px hsl(240 20% 2% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  }
+
+  .sidebar-wrapper:not([data-panel-open="true"]),
+  .right-panel-wrapper:not([data-panel-open="true"]) {
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .sidebar-wrapper .sidebar,
+  .right-panel-wrapper .right-panel {
+    height: 100%;
+    min-height: 0;
+    border: 0 !important;
+    border-radius: inherit;
+    background: var(--ios-material) !important;
+  }
+
+  .titlebar {
+    height: var(--mac-toolbar-height) !important;
+    min-height: var(--mac-toolbar-height) !important;
+    border-radius: var(--mac-window-radius) var(--mac-window-radius) 0 0;
+    background: var(--ios-material) !important;
+  }
+
+  .topbar-leading {
+    min-width: 15rem;
+  }
+
+  .topbar-session {
+    min-width: 12rem;
+  }
+
+  .topbar-session > span:first-child {
+    font-size: 0.875rem;
+    font-weight: 650;
+  }
+
+  .topbar-actions {
+    min-width: 15rem;
+  }
+
+  .statusbar {
+    min-height: 1.75rem;
+    border-radius: 0 0 var(--mac-window-radius) var(--mac-window-radius);
+    background: var(--ios-material) !important;
+  }
+
+  .app-chat {
+    background: hsl(var(--background)) !important;
+  }
+
+  .composer-shell {
+    border-top: 1px solid var(--ios-separator);
+    background: var(--ios-material) !important;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .composer-box {
+    border-radius: 1.125rem !important;
+    background: hsl(var(--card) / 0.94) !important;
+    box-shadow: 0 10px 26px hsl(240 20% 2% / 0.13), inset 0 1px 0 hsl(var(--foreground) / 0.07) !important;
+  }
+
+  /* Content-layer cards stay quiet and legible; only the shell is glass. */
+  .starter-card-grid button {
+    background: hsl(var(--card) / 0.94) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: 0 5px 14px hsl(240 20% 2% / 0.08), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  }
+
+  .starter-card-grid button:hover,
+  .starter-card-grid button:focus-visible {
+    background: hsl(var(--primary) / 0.11) !important;
+  }
+
+  .right-panel-tabs {
+    min-height: 3rem;
+    padding-inline: 0.625rem;
+    border-bottom: 1px solid var(--ios-separator);
+    background: hsl(var(--foreground) / 0.025);
+  }
+
+  .right-panel-tabs > button {
+    min-height: 2.5rem;
+    border-radius: 0.625rem !important;
+  }
+
+  [data-hakus-overlay="dialog-content"],
+  [data-hakus-overlay="menu-content"],
+  [data-hakus-overlay="menu-sub-content"] {
+    border-radius: 0.875rem !important;
+    background: var(--ios-material) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(145%);
+    backdrop-filter: blur(28px) saturate(145%);
+  }
+
+  [data-hakus-overlay="menu-content"] [data-highlighted],
+  [data-hakus-overlay="menu-content"] [data-state="checked"] {
+    border-radius: 0.5rem;
+  }
+}
+
+@media (min-width: 768px) and (prefers-reduced-transparency: reduce) {
+  .titlebar,
+  .sidebar-wrapper[data-panel-open="true"] .sidebar,
+  .right-panel-wrapper[data-panel-open="true"] .right-panel,
+  .statusbar,
+  .composer-shell,
+  [data-hakus-overlay="dialog-content"],
+  [data-hakus-overlay="menu-content"],
+  [data-hakus-overlay="menu-sub-content"] {
+    background: hsl(var(--card)) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (min-width: 768px) and (prefers-contrast: more) {
+  .app-content,
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"] {
+    border-color: hsl(var(--foreground) / 0.28);
+  }
+
+  .titlebar,
+  .statusbar,
+  .composer-shell {
+    border-color: hsl(var(--foreground) / 0.24) !important;
+  }
+}
+
+@media (max-width: 767px) and (prefers-contrast: more) {
+  .mobile-settings-sheet,
+  .app-content,
+  .composer-shell,
+  .composer-box,
+  [data-hakus-overlay="dialog-content"],
+  [data-hakus-overlay="menu-content"] {
+    border-color: hsl(var(--foreground) / 0.3) !important;
+  }
+
+  .mobile-settings-sheet,
+  .composer-shell,
+  .composer-box {
+    box-shadow: 0 0 0 1px hsl(var(--foreground) / 0.08) !important;
+  }
+}
+
+/* Accessibility overrides apply to phone sheets and menus as well as the
+   desktop shell. Reduced transparency must remove blur from every material
+   layer while keeping the same hierarchy through solid semantic surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+  .titlebar,
+  .sidebar,
+  .right-panel,
+  .statusbar,
+  .composer-shell,
+  .composer-box,
+  .sidebar-wrapper,
+  .right-panel-wrapper,
+  .settings-dialog-content,
+  .mobile-settings-sheet,
+  [data-hakus-overlay="dialog-content"],
+  [data-hakus-overlay="menu-content"],
+  [data-hakus-overlay="menu-sub-content"] {
+    background: hsl(var(--card)) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .app-panel-scrim,
+  [data-hakus-overlay="dialog-overlay"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .starter-card-grid button {
+    background: hsl(var(--card)) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  /* Starter cards are content, not navigation chrome; keep them readable and
+     stable over any chat artwork or dynamic background. */
+  .starter-card-grid button {
+    background: hsl(var(--card) / 0.92) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .topbar-session > span:last-child {
+    font-size: 0.6875rem;
+  }
+}
+
+/* Focus and selection refinement
+ *
+ * Keep keyboard focus obvious without turning every click into a blue halo.
+ * The previous combination of component rings, input rings, and composer
+ * shadows made focused controls read as active alerts instead of quiet system
+ * chrome. A single 1px semantic ring is enough here; selected rows use a
+ * low-opacity tint and retain their icon/text affordance.
+ */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 1px solid hsl(var(--ring) / 0.48) !important;
+  outline-offset: 1px !important;
+  box-shadow: none !important;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 1px solid hsl(var(--ring) / 0.34) !important;
+  outline-offset: 1px !important;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: hsl(var(--ring) / 0.46) !important;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04) !important;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 1px solid hsl(var(--ring) / 0.3) !important;
+  outline-offset: -1px !important;
+}
+
+.composer-box > textarea:focus,
+.composer-box > textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+}
+
+.settings-dialog-mobile-picker select:focus-visible {
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04) !important;
+}
+
+.project-picker-search:focus,
+.project-picker-search:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+@media (min-width: 768px) {
+  /* Provider settings use two independent scroll regions. The right form
+     can grow without moving the provider navigation on the left. */
+  .model-provider-layout,
+  .model-provider-sidebar,
+  .model-provider-form {
+    min-height: 0;
+  }
+
+  .model-provider-form {
+    max-height: 55vh;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: 0.25rem;
+  }
+
+  .model-provider-sidebar {
+    align-self: start;
+  }
+
+.model-provider-list-scroll {
+    min-height: 0;
+    scrollbar-gutter: stable;
+  }
+
+  /* Provider selection is state, not keyboard focus chrome. Keep the
+     selected surface quiet while retaining focus treatment for every other
+     actionable control in Settings. */
+  .model-provider-row button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}
+
+.composer-box:focus-within {
+  border-color: hsl(var(--ring) / 0.46) !important;
+  box-shadow: 0 0 0 1px hsl(var(--ring) / 0.22), inset 0 1px 0 hsl(var(--foreground) / 0.08) !important;
+}
+
+.sidebar-item-active,
+.settings-dialog-nav button[aria-current="page"],
+.right-panel-tabs > button.border-primary,
+[data-hakus-overlay="menu-content"] [data-highlighted],
+[data-hakus-overlay="menu-content"] [data-state="checked"],
+[data-hakus-overlay="menu-sub-content"] [data-highlighted],
+[data-hakus-overlay="menu-sub-content"] [data-state="checked"] {
+  background: hsl(var(--primary) / 0.07) !important;
+}
+
+.sidebar-item-active,
+.settings-dialog-nav button[aria-current="page"] {
+  color: hsl(var(--foreground)) !important;
+}
+
+.mobile-settings-row:active,
+.mobile-settings-row:focus-visible {
+  background: hsl(var(--primary) / 0.07) !important;
+  outline: 1px solid hsl(var(--ring) / 0.28) !important;
+  outline-offset: -1px !important;
+}
+
+.starter-card-grid button:hover,
+.starter-card-grid button:focus-visible {
+  border-color: hsl(var(--primary) / 0.3) !important;
+  background: hsl(var(--primary) / 0.06) !important;
+}
+
+.topbar-review-button[class*="bg-accent/60"] {
+  background: hsl(var(--foreground) / 0.07) !important;
+}
+
+.empty-state-hero > div:first-child {
+  box-shadow: 0 6px 18px hsl(var(--primary) / 0.1), inset 0 1px 0 hsl(var(--foreground) / 0.1);
+}
+
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .composer-box:focus-within {
+    box-shadow: 0 0 0 1px hsl(var(--ring) / 0.22), inset 0 1px 0 hsl(var(--foreground) / 0.08) !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  input:focus,
+  textarea:focus,
+  select:focus,
+  .composer-box:focus-within {
+    outline-color: hsl(var(--ring) / 0.82) !important;
+    border-color: hsl(var(--ring) / 0.72) !important;
+    box-shadow: 0 0 0 1px hsl(var(--ring) / 0.34), inset 0 1px 0 hsl(var(--foreground) / 0.08) !important;
+  }
+}
+
+/* The workspace and model selectors belong to the composer chrome, but they
+ * describe the context for the message rather than the message itself. Keep
+ * them attached to the input's upper edge so the text surface stays quiet. */
+.composer-shell {
+  border-top: 0 !important;
+  background: transparent !important;
+}
+
+.composer-edge-controls {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .composer-shell {
+    padding-top: 1.35rem;
+    padding-bottom: 1rem;
+  }
+
+  .composer-edge-controls {
+    position: absolute;
+    left: 0.75rem;
+    bottom: calc(100% + 0.4rem);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    max-width: calc(100% - 1.5rem);
+  }
+
+  .composer-edge-controls .composer-edge-trigger {
+    display: inline-flex !important;
+    min-width: 0;
+    max-width: min(220px, 38vw);
+    border-color: hsl(var(--foreground) / 0.14) !important;
+    border-radius: 999px !important;
+    background: hsl(var(--card) / 0.84) !important;
+    box-shadow: 0 5px 14px hsl(240 20% 2% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+    -webkit-backdrop-filter: blur(20px) saturate(135%);
+    backdrop-filter: blur(20px) saturate(135%);
+  }
+
+  .composer-edge-controls .composer-model-trigger {
+    max-width: min(260px, 42vw);
+  }
+
+  .composer-edge-controls .composer-edge-trigger:hover {
+    border-color: hsl(var(--foreground) / 0.22) !important;
+    background: hsl(var(--foreground) / 0.08) !important;
+  }
+
+  .composer-edge-controls .composer-edge-trigger:active {
+    transform: scale(0.98);
+  }
+}
+
+@media (max-width: 767px) {
+  .composer-shell {
+    padding-top: 0.75rem;
+  }
+}
+
+/* Opening a composer menu should not paint a focus halo around the whole
+ * message surface. Individual controls retain their own keyboard focus state. */
+.composer-box:focus-within {
+  border-color: hsl(var(--foreground) / 0.16) !important;
+  box-shadow: 0 12px 34px hsl(240 20% 3% / 0.16), inset 0 1px 0 hsl(var(--foreground) / 0.07) !important;
+}

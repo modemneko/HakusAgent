@@ -53,8 +53,8 @@ pub fn window_toggle_maximize(app: AppHandle) -> Result<bool, String> {
 /// can re-open it via the tray icon (left-click or "显示/隐藏窗口" menu).
 ///
 /// Otherwise, calls `window.close()` which fires `CloseRequested` — the
-/// `on_window_event` handler in lib.rs will let it through and kill the
-/// Python backend child process before the window actually closes.
+/// `on_window_event` handler in lib.rs will let it through and stop the
+/// in-process Rust Runtime before the window actually closes.
 #[tauri::command]
 pub fn window_close(app: AppHandle) -> Result<bool, String> {
     let (tray_enabled, minimize_to_tray) = read_tray_settings(&app);
@@ -63,8 +63,8 @@ pub fn window_close(app: AppHandle) -> Result<bool, String> {
             window.hide().map_err(|e| e.to_string())?;
         } else {
             // This fires CloseRequested; the on_window_event handler will
-            // let it through (since minimizeToTray is false) and kill the
-            // backend in the process.
+            // let it through (since minimizeToTray is false) and stop the
+            // embedded Rust Runtime.
             window.close().map_err(|e| e.to_string())?;
         }
         Ok(true)

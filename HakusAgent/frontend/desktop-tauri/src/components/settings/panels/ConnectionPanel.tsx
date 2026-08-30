@@ -21,17 +21,20 @@ export function ConnectionPanel() {
   const connError = useConnectionStore((s) => s.error)
   const connHealth = useConnectionStore((s) => s.health)
 
-  const [serverUrl, setServerUrl] = useState(settings.connection.serverUrl)
+  const rustPreview = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('backend')?.toLowerCase() === 'rust'
+  const initialServerUrl = rustPreview ? apiClient.getBaseUrl() : settings.connection.serverUrl
+  const [serverUrl, setServerUrl] = useState(initialServerUrl)
   const [useWebSocket, setUseWebSocket] = useState(settings.connection.useWebSocket)
   const [timeout, setTimeoutValue] = useState(settings.connection.timeout)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
 
   useEffect(() => {
-    setServerUrl(settings.connection.serverUrl)
+    setServerUrl(rustPreview ? apiClient.getBaseUrl() : settings.connection.serverUrl)
     setUseWebSocket(settings.connection.useWebSocket)
     setTimeoutValue(settings.connection.timeout)
-  }, [settings.connection.serverUrl, settings.connection.useWebSocket, settings.connection.timeout])
+  }, [rustPreview, settings.connection.serverUrl, settings.connection.useWebSocket, settings.connection.timeout])
 
   const dirty =
     serverUrl !== settings.connection.serverUrl ||
@@ -65,7 +68,7 @@ export function ConnectionPanel() {
       <Separator />
 
       <div className="space-y-2">
-        <Label htmlFor="server-url">HakusAI Server URL</Label>
+        <Label htmlFor="server-url">{rustPreview ? 'Rust Runtime URL' : 'HakusAI Server URL'}</Label>
         <Input
           id="server-url"
           value={serverUrl}
@@ -74,8 +77,17 @@ export function ConnectionPanel() {
           className="font-mono"
         />
         <p className="text-[11px] text-muted-foreground">
-          桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，
-          例如 <code>http://192.168.1.20:48081</code>。
+          {rustPreview && (
+            <>
+              当前预览已连接到 Rust Runtime（{apiClient.getBaseUrl()}）。
+            </>
+          )}
+          {!rustPreview && (
+            <>
+              桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，
+              例如 <code>http://192.168.1.20:48081</code>。
+            </>
+          )}
         </p>
       </div>
 

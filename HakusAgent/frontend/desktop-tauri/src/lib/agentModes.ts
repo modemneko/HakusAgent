@@ -11,23 +11,48 @@ import type { AgentMode } from '@/api/types'
  * So 'low' / 'high' / 'max' are the three distinct effective levels.
  * See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
  */
-export type ReasoningEffort = 'low' | 'high' | 'max'
+/** Provider-native reasoning token. The backend may expose additional values
+ * such as medium/xhigh, so this intentionally stays open-ended. */
+export type ReasoningEffort = string
 
 export const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'high', 'max']
 
-export const REASONING_EFFORT_META: Record<ReasoningEffort, { label: string; description: string }> = {
+export const REASONING_EFFORT_META: Record<string, { label: string; description: string }> = {
+  auto: {
+    label: '自动',
+    description: '使用当前模型和服务商的默认思考策略',
+  },
+  off: {
+    label: 'off',
+    description: '关闭思考（仅在模型支持时生效）',
+  },
   low: {
-    label: '快速',
-    description: '最快响应，缓存友好，适合日常任务',
+    label: 'low',
+    description: '服务商原生 low 档位',
+  },
+  medium: {
+    label: 'medium',
+    description: '服务商原生 medium 档位',
   },
   high: {
-    label: '深度',
-    description: '完整思考，质量优先，适合复杂推理',
+    label: 'high',
+    description: '服务商原生 high 档位',
+  },
+  xhigh: {
+    label: 'xhigh',
+    description: '服务商原生 xhigh 档位',
   },
   max: {
-    label: '极致',
-    description: '最大思考预算，适合最难的问题',
+    label: 'max',
+    description: '服务商原生 max 档位',
   },
+}
+
+export function getReasoningEffortMeta(effort: ReasoningEffort) {
+  return REASONING_EFFORT_META[effort] || {
+    label: effort,
+    description: `服务商原生 ${effort} 档位`,
+  }
 }
 
 export interface AgentModeMeta {
@@ -57,14 +82,14 @@ export const AGENT_MODE_META: Record<AgentMode, AgentModeMeta> = {
     summary: '日常对话 + 工具调用。文件读写、shell、搜索、git、网页抓取。比 Code 略少：无浏览器自动化、无高级编码工具。',
     // Work = fast path. Low reasoning effort minimizes latency and
     // maximizes KV-cache hit rate.
-    reasoningEffort: 'low',
+    reasoningEffort: 'auto',
   },
   deep: {
     id: 'deep',
     label: 'Code',
     summary: '完整 coding agent。Work 的全部能力 + 浏览器自动化 + subagent + str_replace_editor 高级流程。',
     // Code = quality path. High reasoning effort for thorough analysis.
-    reasoningEffort: 'high',
+    reasoningEffort: 'auto',
   },
   fleet: {
     id: 'fleet',

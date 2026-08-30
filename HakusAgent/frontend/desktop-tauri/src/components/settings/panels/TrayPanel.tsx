@@ -6,9 +6,9 @@
  *   2. Minimize-to-tray toggle (close button hides window instead of quitting)
  *   3. Global shortcut recorder (accelerator picker with live validation)
  *
- * All settings apply at runtime via dedicated IPC handlers — no app restart
- * required. In browser dev mode (no window.electron), the toggles still
- * persist via electron-store fallback but won't have any visible effect.
+ * All settings apply at runtime via dedicated Tauri commands — no app restart
+ * required. In browser dev mode (without the native bridge), the toggles still
+ * persist locally but won't have any visible effect.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -64,7 +64,7 @@ function SwitchRow({
   )
 }
 
-/** Translate a browser KeyboardEvent into an Electron accelerator string. */
+/** Translate a browser KeyboardEvent into the native accelerator format. */
 function eventToAccelerator(e: KeyboardEvent): string | null {
   // Ignore pure modifier presses (just Shift, just Ctrl, etc.) — we need
   // the user to press an actual key on top of modifiers.
@@ -401,7 +401,7 @@ export function TrayPanel() {
 
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           提示：某些组合键可能被操作系统或其它应用独占 (例如 Win+L 锁屏)。
-          如果注册失败，请尝试另一组组合键。Electron 全局快捷键语法参考：
+          如果注册失败，请尝试另一组组合键。系统全局快捷键格式参考：
           <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">Modifier+Key</code>
           ，多个修饰键用 <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">+</code> 连接。
         </p>

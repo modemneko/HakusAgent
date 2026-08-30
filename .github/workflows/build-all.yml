@@ -201,9 +201,10 @@ jobs:
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
 
-  # ── Android client (Tauri 2, arm64 APK) ─────────────────────────
-  # Android is a network client. It packages the React UI and connects to a
-  # separately running HakusAI HTTP server configured in the app settings.
+  # ── Android client (Tauri 2, split ABI APKs) ─────────────────────
+  # Android packages the same React UI and in-process Rust Runtime as the
+  # desktop targets. The LAN/cleartext settings below remain enabled for the
+  # optional remote Runtime connection configured by the user.
   android:
     name: android-apk-${{ matrix.asset }}
     runs-on: ubuntu-22.04

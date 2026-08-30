@@ -114,10 +114,7 @@ export function LogsPanel() {
   const handleClear = async () => {
     if (!confirm('清空当前日志文件？此操作不可恢复。')) return
     try {
-      const res = await fetch(`${apiClient.getBaseUrl()}/api/logs`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) throw new Error('DELETE failed')
+      await apiClient.clearLogs(currentFile || undefined)
       setLogs([])
       toast.success('日志已清空')
     } catch (e: any) {
@@ -125,10 +122,19 @@ export function LogsPanel() {
     }
   }
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!currentFile) return
-    const url = `${apiClient['baseUrl']}/api/logs?download=1&name=${encodeURIComponent(currentFile)}`
-    window.open(url, '_blank')
+    try {
+      const blob = await apiClient.downloadLogs(currentFile)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = currentFile
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      toast.error(`下载失败：${e?.message || e}`)
+    }
   }
 
   const formatMsg = (log: LogEntry): string => {

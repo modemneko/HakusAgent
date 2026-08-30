@@ -5,7 +5,7 @@ HakusCLI 有两个实现：
 | 实现 | 位置 | 状态 |
 |---|---|---|
 | **Rust + ratatui 版** | `frontend/terminal/`（fork 自 DeepSeek-TUI/Codewhale，MIT） | **当前主力** |
-| Python + Textual 版 | `hakus/cli/`（`pip install -e .` 后 `hakuscli` 命令） | 保留，与桌面端共享 AgentCore |
+| Python + Textual 版 | `hakus/cli/`（`pip install -e .` 后 `hakuscli` 命令） | 兼容 CLI/WebUI，不是 Tauri 桌面后端 |
 
 ## Rust 版（推荐）
 
@@ -30,7 +30,7 @@ hakuscli exec "..." # 非交互
 
 详细归属与改动清单见 `frontend/terminal/ATTRIBUTION.md`。
 
-## Python 版（与桌面端共享 AgentCore）
+## Python 兼容版（旧 CLI/WebUI）
 
 ## 前置要求
 
@@ -83,7 +83,7 @@ hakuscli --model glm-4.5  # 指定模型
 | extra | 内容 | 适用端 |
 |---|---|---|
 | （默认） | HakusCLI 终端版最小集 | 四端通用 |
-| `server` | FastAPI sidecar（桌面端 Tauri 用） | 桌面端 |
+| `server` | 旧 FastAPI 兼容服务 | WebUI/兼容回归 |
 | `models` | 多云模型 SDK | 可选 |
 | `voice` | 语音 ASR/TTS | 桌面端/全量 |
 | `memory` | 长期记忆（numpy/chromadb） | 非 Termux |

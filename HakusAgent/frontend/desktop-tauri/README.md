@@ -13,7 +13,7 @@ npm run tauri:dev
 npm run build
 ```
 
-完整环境、Python sidecar 和发布约束见仓库根目录：
+完整环境、Rust Runtime 和发布约束见仓库根目录：
 
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT.md`

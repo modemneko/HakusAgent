@@ -206,7 +206,7 @@ pub enum DynamicToolCallContent {
 ///   "cwd": "/workspace"
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TurnEnvironmentParams {
     pub environment_id: String,
     pub cwd: PathBuf,

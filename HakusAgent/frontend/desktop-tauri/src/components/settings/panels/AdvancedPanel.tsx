@@ -17,6 +17,7 @@ import {
   Database,
   Archive,
   Gauge,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -35,12 +36,15 @@ export function AdvancedPanel() {
   const [loadingDiag, setLoadingDiag] = useState(true)
   const [reloading, setReloading] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [importingConfig, setImportingConfig] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [logPath, setLogPath] = useState<string | null>(null)
   const [fileInputEl, setFileInputEl] = useState<HTMLInputElement | null>(null)
   const [chatFileInputEl, setChatFileInputEl] = useState<HTMLInputElement | null>(null)
   const [exportingChat, setExportingChat] = useState(false)
   const [importingChat, setImportingChat] = useState(false)
+  const [clearingUserData, setClearingUserData] = useState(false)
+  const rustRuntime = apiClient.usesEmbeddedRuntime
   // Phase 5: metrics 自动刷新 (10s 一次, 仅在面板可见时)
   const metricsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -127,6 +131,7 @@ export function AdvancedPanel() {
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    setImportingConfig(true)
     try {
       const text = await file.text()
       const config = JSON.parse(text)
@@ -139,6 +144,7 @@ export function AdvancedPanel() {
     } catch (err: any) {
       toast.error(`导入失败：${err?.message || err}`)
     } finally {
+      setImportingConfig(false)
       // reset input so the same file can be re-selected
       e.target.value = ''
     }
@@ -147,14 +153,14 @@ export function AdvancedPanel() {
   const handleRestart = async () => {
     const electron = (window as any).electron
     if (!electron?.backend?.restart) {
-      toast.error('当前环境不支持重启 backend（仅打包版可用）')
+      toast.error('当前环境不支持重启服务（仅打包版可用）')
       return
     }
     setRestarting(true)
     try {
       const r = await electron.backend.restart()
       if (r.ok) {
-        toast.success(`Backend 已重启 (port: ${r.port})`)
+        toast.success(`服务已重启 (端口: ${r.port})`)
         // 重新拉诊断
         setTimeout(refreshDiag, 1500)
       } else {
@@ -221,6 +227,27 @@ export function AdvancedPanel() {
     } finally {
       setImportingChat(false)
       e.target.value = ''
+    }
+  }
+
+  const handleClearUserData = async () => {
+    if (!window.confirm('清除全部用户数据？这会删除会话、记忆、日志和客户端设置，且无法恢复。')) return
+    setClearingUserData(true)
+    try {
+      await Promise.allSettled([
+        apiClient.wipeAllSessions(),
+        apiClient.clearMemory(),
+        apiClient.clearLogs(),
+      ])
+      const electron = (window as any).electron
+      if (electron?.store?.clear) await electron.store.clear()
+      else localStorage.removeItem('hakusai-settings')
+      await useSessionStore.getState().loadFromServer()
+      toast.success('用户数据已清除，重启后将以空白状态开始')
+    } catch (error: any) {
+      toast.error(`清除失败：${error?.message || error}`)
+    } finally {
+      setClearingUserData(false)
     }
   }
 
@@ -415,7 +442,7 @@ export function AdvancedPanel() {
           </div>
         ) : (
           <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
-            指标不可用（backend 版本过旧或未启动）。
+            指标不可用（服务版本过旧或未启动）。
           </div>
         )}
       </div>
@@ -434,7 +461,7 @@ export function AdvancedPanel() {
             )}
             导出配置
           </Button>
-          <Button variant="outline" size="sm" onClick={handleImportClick}>
+          <Button variant="outline" size="sm" onClick={handleImportClick} disabled={importingConfig}>
             <Upload className="mr-2 h-3.5 w-3.5" />
             导入配置
           </Button>
@@ -455,7 +482,10 @@ export function AdvancedPanel() {
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          导出的 JSON 中 API Key 已脱敏，可直接分享。导入会覆盖 <code>~/.hakus/config.yaml</code>。
+          导出的 JSON 中 API Key 已脱敏，可直接分享。
+          {rustRuntime
+            ? '配置导入会自动热重载，API Key 等密钥不会从导出文件恢复。'
+            : <>导入会覆盖 <code>~/.hakus/config.yaml</code>。</>}
         </p>
       </div>
 
@@ -497,8 +527,10 @@ export function AdvancedPanel() {
             <span>导出包含所有会话 + 消息 + 工具调用记录，格式为 JSON。</span>
           </div>
           <div>
-            换机/重装时点「导出」保存文件，新机器上点「导入」恢复。
-            导入是幂等的（按消息 ID 覆盖），不会重复。
+            {rustRuntime
+              ? '会按会话与消息 ID 幂等迁移导入，并保留现有线程。'
+              : <>换机/重装时点「导出」保存文件，新机器上点「导入」恢复。
+                导入是幂等的（按消息 ID 覆盖），不会重复。</>}
             原始数据仍在 <code>~/.hakus/sessions.db</code>，也可以直接复制这个文件备份。
           </div>
         </div>
@@ -506,23 +538,32 @@ export function AdvancedPanel() {
 
       <Separator />
 
-      {/* Backend 控制 */}
       <div className="space-y-2">
-        <Label>Backend 控制</Label>
+        <Label className="flex items-center gap-2"><Trash2 className="h-3.5 w-3.5" /> 用户数据</Label>
+        <p className="text-[11px] text-muted-foreground">清除本机的会话、记忆、日志和客户端偏好。卸载程序时也会再次询问是否删除这些数据。</p>
+        <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => void handleClearUserData()} disabled={clearingUserData}>
+          {clearingUserData ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-2 h-3.5 w-3.5" />}
+          清除本机用户数据
+        </Button>
+      </div>
+
+      {/* 服务控制 */}
+      <div className="space-y-2">
+        <Label>服务控制</Label>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={handleRestart}
             disabled={restarting || !hasRestartApi}
-            title={hasRestartApi ? '重启内嵌 Python backend' : '当前环境无 backend restart API'}
+            title={hasRestartApi ? '重启本地服务' : '当前环境不支持重启服务'}
           >
             {restarting ? (
               <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
             ) : (
               <RotateCcw className="mr-2 h-3.5 w-3.5" />
             )}
-            重启 Backend
+            重启服务
           </Button>
           {!hasRestartApi && (
             <span className="text-[11px] text-muted-foreground">仅打包版可用</span>
@@ -538,11 +579,11 @@ export function AdvancedPanel() {
         <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
           {logPath ? (
             <>
-              Backend 日志路径：
+              服务日志路径：
               <code className="ml-1 break-all font-mono text-foreground/80">{logPath}</code>
             </>
           ) : (
-            <>请查看 backend.log（开发模式下日志会输出到 stderr）。</>
+            <>开发模式下日志会输出到 stderr。</>
           )}
         </div>
       </div>

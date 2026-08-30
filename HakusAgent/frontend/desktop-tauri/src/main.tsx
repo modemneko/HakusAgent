@@ -2,6 +2,16 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import {
+  backend as tauriBackend,
+  platform as tauriPlatform,
+  shortcuts as tauriShortcuts,
+  store as tauriStore,
+  tray as tauriTray,
+  updater as tauriUpdater,
+  voice as tauriVoice,
+  window as tauriWindow,
+} from "@/api/tauriBridge";
 
 const isAndroidRuntime =
   typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
@@ -9,35 +19,17 @@ const isAndroidRuntime =
 // ── Tauri Bridge: wire window.electron to tauriBridge.invoke() ──────
 // In Tauri desktop mode, legacy components reference window.electron.
 // We bridge them to the Tauri invoke() API so everything works unchanged.
-// NOTE: Do NOT use top-level await here — it blocks React mount and causes
-// a white flash. Instead, fire-and-forget the dynamic import.
+// Install the bridge before React mounts. Settings are loaded from the bridge
+// during the first effect; a lazy dynamic import could race that effect and
+// send the first read/write to the browser-only localStorage fallback.
 if (typeof __TAURI_INTERNALS__ !== "undefined") {
-  import("@/api/tauriBridge").then((mod) => {
-    const isAndroid = isAndroidRuntime;
-    const {
-      store: tauriStore,
-      window: tauriWindow,
-      backend: tauriBackend,
-      tray: tauriTray,
-      shortcuts: tauriShortcuts,
-      updater: tauriUpdater,
-      voice: tauriVoice,
-      platform: tauriPlatform,
-    } = mod;
+  const isAndroid = isAndroidRuntime;
 
     const mobileWindow = {
       minimize: async () => false,
       toggleMaximize: async () => false,
       close: async () => false,
       isMaximized: async () => false,
-    };
-    const mobileBackend = {
-      status: async () => ({ running: false, port: null }),
-      logs: async () => [],
-      start: async () => ({ ok: false, port: null }),
-      stop: async () => ({ ok: true }),
-      restart: async () => ({ ok: false, port: null }),
-      health: async () => ({ healthy: false, reason: "Android 使用远程服务" }),
     };
     const mobileUpdater = {
       getStatus: async () => ({ status: "not-available", info: null, progress: null, error: "Android APK 暂不支持桌面自动更新", autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
@@ -53,13 +45,12 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
       stopCelia: async () => ({ ok: true, running: false, pid: null, error: null }),
     };
 
-    (window as any).electron = {
+  (window as any).electron = {
       store: tauriStore,
       window: isAndroid ? mobileWindow : tauriWindow,
       backend: {
-        ...(isAndroid ? mobileBackend : tauriBackend),
+        ...tauriBackend,
         restart: async () => {
-          if (isAndroid) return { ok: false, port: null, error: "Android 使用远程服务", logPath: null };
           try {
             const r = await tauriBackend.restart();
             return { ok: r.ok, port: r.port, error: null, logPath: null };
@@ -100,8 +91,7 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
       },
     };
 
-    console.log("[Tauri] window.electron bridge installed");
-  });
+  console.log("[Tauri] window.electron bridge installed");
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

@@ -81,6 +81,14 @@ const REQUEST_USER_INPUT_TOOL_NAME: &str = "request_user_input";
 const REDACTED_USER_INPUT_RECEIPT: &str = "User input submitted";
 pub(crate) const MAX_ROUTED_USAGE_RECORDS_PER_TURN: usize = 64;
 
+/// Prevent a delayed engine snapshot from resurrecting a goal after the host
+/// has explicitly deleted it. The engine event loop is asynchronous, so the
+/// control-plane delete can otherwise race a final `GoalUpdated` projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalClearBarrier {
+    Cleared,
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventAppendTestFault {
@@ -638,6 +646,13 @@ pub struct ThreadRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider_id: Option<String>,
     pub workspace: PathBuf,
+    /// Environment targets available to this thread. Legacy records omit the
+    /// field and are treated as a single `local` target at `workspace`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environments: Vec<TurnEnvironmentParams>,
+    /// The environment currently selected for execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
     pub mode: String,
     /// Named default permission posture for new turns. Absent on legacy
     /// records, whose effective posture is derived from the old fields.
@@ -677,6 +692,8 @@ fn thread_execution_state_matches(left: &ThreadRecord, right: &ThreadRecord) -> 
         && left.model_provider == right.model_provider
         && left.model_provider_id == right.model_provider_id
         && left.workspace == right.workspace
+        && left.environments == right.environments
+        && left.environment_id == right.environment_id
         && left.mode == right.mode
         && left.permission_posture == right.permission_posture
         && left.allow_shell == right.allow_shell
@@ -1936,6 +1953,10 @@ pub struct CreateThreadRequest {
     #[serde(default)]
     pub model_provider_id: Option<String>,
     pub workspace: Option<PathBuf>,
+    /// Optional environment selected at creation time. When omitted, `local`
+    /// is preferred, otherwise the first declared environment is selected.
+    #[serde(default)]
+    pub environment_id: Option<String>,
     pub mode: Option<String>,
     #[serde(default)]
     pub permission_posture: Option<String>,
@@ -1989,11 +2010,19 @@ pub struct StartTurnRequest {
     pub dynamic_tools: Vec<DynamicToolSpec>,
     #[serde(default)]
     pub environment_id: Option<String>,
+    /// Optional per-turn reasoning override. Values are validated against the
+    /// canonical runtime vocabulary and normalized for the resolved route
+    /// before the provider request is built.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 enum RuntimeTurnInputSource {
     ExternalUser,
+    GoalContinuation {
+        persisted_summary: String,
+    },
     AgentMail {
         message_id: String,
         persisted_summary: String,
@@ -2004,6 +2033,7 @@ impl RuntimeTurnInputSource {
     fn provenance(&self) -> crate::core::ops::UserInputProvenance {
         match self {
             Self::ExternalUser => crate::core::ops::UserInputProvenance::ExternalUser,
+            Self::GoalContinuation { .. } => crate::core::ops::UserInputProvenance::Runtime,
             Self::AgentMail { .. } => crate::core::ops::UserInputProvenance::AgentMail,
         }
     }
@@ -2011,6 +2041,7 @@ impl RuntimeTurnInputSource {
     fn mail_message_id(&self) -> Option<&str> {
         match self {
             Self::ExternalUser => None,
+            Self::GoalContinuation { .. } => None,
             Self::AgentMail { message_id, .. } => Some(message_id),
         }
     }
@@ -2018,6 +2049,7 @@ impl RuntimeTurnInputSource {
     fn item_detail(&self, prompt: &str) -> Option<String> {
         match self {
             Self::ExternalUser => Some(prompt.to_string()),
+            Self::GoalContinuation { persisted_summary } => Some(persisted_summary.clone()),
             // The provider projection contains runtime-only framing. Persist
             // the bounded canonical mail summary instead, so history and app
             // clients never mistake that projection for typed user input.
@@ -2519,6 +2551,8 @@ pub struct RuntimeThreadManager {
     active: Arc<Mutex<ActiveThreads>>,
     event_emit: Arc<Mutex<()>>,
     projection_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    goal_continuations: Arc<Mutex<HashSet<String>>>,
+    goal_clear_barriers: Arc<Mutex<HashMap<String, GoalClearBarrier>>>,
     event_tx: broadcast::Sender<RuntimeEventRecord>,
     manager_cfg: RuntimeThreadManagerConfig,
     cancel_token: CancellationToken,
@@ -2532,6 +2566,60 @@ pub struct RuntimeThreadManager {
     recovery_flush: Arc<Mutex<()>>,
     #[cfg(test)]
     snapshot_test_hook: Arc<parking_lot::Mutex<Option<mpsc::UnboundedSender<SnapshotTestPoint>>>>,
+}
+
+fn normalize_thread_environments(
+    workspace: &Path,
+    requested: Vec<TurnEnvironmentParams>,
+) -> Result<Vec<TurnEnvironmentParams>> {
+    let mut environments = Vec::with_capacity(requested.len().max(1));
+    let mut ids = HashSet::new();
+    for mut environment in requested {
+        let id = environment.environment_id.trim().to_string();
+        if id.is_empty() {
+            bail!("environment_id must not be empty");
+        }
+        if !ids.insert(id.clone()) {
+            bail!("duplicate environment_id '{id}'");
+        }
+        if environment.cwd.as_os_str().is_empty() {
+            environment.cwd = workspace.to_path_buf();
+        }
+        environments.push(TurnEnvironmentParams {
+            environment_id: id,
+            cwd: environment.cwd,
+        });
+    }
+    if environments.is_empty() {
+        environments.push(TurnEnvironmentParams {
+            environment_id: "local".to_string(),
+            cwd: workspace.to_path_buf(),
+        });
+    }
+    Ok(environments)
+}
+
+fn thread_environment_workspace(
+    thread: &ThreadRecord,
+    environment_id: Option<&str>,
+) -> Result<(String, PathBuf)> {
+    let requested = environment_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .or(thread.environment_id.as_deref())
+        .unwrap_or("local");
+    if thread.environments.is_empty() {
+        if requested.eq_ignore_ascii_case("local") {
+            return Ok(("local".to_string(), thread.workspace.clone()));
+        }
+        bail!("environment '{requested}' is not configured for thread {}", thread.id);
+    }
+    let environment = thread
+        .environments
+        .iter()
+        .find(|environment| environment.environment_id.eq_ignore_ascii_case(requested))
+        .ok_or_else(|| anyhow!("environment '{requested}' is not configured for thread {}", thread.id))?;
+    Ok((environment.environment_id.clone(), environment.cwd.clone()))
 }
 
 #[cfg(test)]
@@ -2873,6 +2961,8 @@ impl RuntimeThreadManager {
             active: Arc::new(Mutex::new(ActiveThreads::default())),
             event_emit: Arc::new(Mutex::new(())),
             projection_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            goal_continuations: Arc::new(Mutex::new(HashSet::new())),
+            goal_clear_barriers: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
             manager_cfg,
             cancel_token: CancellationToken::new(),
@@ -3616,6 +3706,144 @@ impl RuntimeThreadManager {
             .context("goal delete task panicked")?
     }
 
+    /// Apply a durable goal declaration to the live engine. The engine owns
+    /// the continuation scheduler and prompt projection, so persisting JSON
+    /// alone is insufficient for an already-loaded Runtime thread.
+    pub async fn set_goal_objective(
+        &self,
+        thread_id: &str,
+        objective: String,
+        token_budget: Option<i64>,
+    ) -> Result<()> {
+        // A new objective supersedes a prior delete barrier. Clear it before
+        // sending the objective to the engine so its next snapshot can sync
+        // the newly-created goal normally.
+        self.goal_clear_barriers.lock().await.remove(thread_id);
+        let thread = self.get_thread(thread_id).await?;
+        let engine = self.ensure_engine_loaded(&thread).await?;
+        let token_budget = token_budget
+            .and_then(|value| u32::try_from(value.max(0)).ok());
+        engine
+            .send(Op::SetGoalObjective {
+                objective,
+                token_budget,
+            })
+            .await
+            .context("failed to apply goal objective to runtime engine")?;
+        self.spawn_goal_continuation_if_needed(thread_id.to_string());
+        Ok(())
+    }
+
+    /// Apply a goal lifecycle status to the live engine without starting a
+    /// user turn. This is used by pause/resume/complete/block controls.
+    pub async fn set_goal_status(
+        &self,
+        thread_id: &str,
+        status: crate::tools::goal::GoalStatus,
+        clear: bool,
+    ) -> Result<()> {
+        if clear {
+            // Mark the host-side deletion before the asynchronous engine op
+            // is queued. Any late non-empty snapshot is then ignored until
+            // the engine acknowledges the clear with its empty snapshot.
+            self.goal_clear_barriers
+                .lock()
+                .await
+                .insert(thread_id.to_string(), GoalClearBarrier::Cleared);
+        }
+        let thread = self.get_thread(thread_id).await?;
+        let engine = self.ensure_engine_loaded(&thread).await?;
+        engine
+            .send(Op::SetGoalStatus { status, clear })
+            .await
+            .context("failed to apply goal status to runtime engine")?;
+        if !clear && status == crate::tools::goal::GoalStatus::Active {
+            self.spawn_goal_continuation_if_needed(thread_id.to_string());
+        }
+        Ok(())
+    }
+
+    /// Start one host-managed continuation turn. Runtime engines deliberately
+    /// do not self-dispatch continuation turns; this method creates the next
+    /// durable turn so SSE clients can observe every pass and recover after a
+    /// restart.
+    pub fn spawn_goal_continuation_if_needed(&self, thread_id: impl Into<String>) {
+        let manager = self.clone();
+        let thread_id = thread_id.into();
+        tokio::spawn(async move {
+            if let Err(error) = manager.start_goal_continuation(&thread_id).await {
+                tracing::warn!(thread_id = %thread_id, "goal continuation failed: {error}");
+            }
+        });
+    }
+
+    async fn start_goal_continuation(&self, thread_id: &str) -> Result<()> {
+        {
+            let mut scheduled = self.goal_continuations.lock().await;
+            if !scheduled.insert(thread_id.to_string()) {
+                return Ok(());
+            }
+        }
+        let result = self.start_goal_continuation_inner(thread_id).await;
+        self.goal_continuations.lock().await.remove(thread_id);
+        result
+    }
+
+    async fn start_goal_continuation_inner(&self, thread_id: &str) -> Result<()> {
+        {
+            let active = self.active.lock().await;
+            if active
+                .engines
+                .get(thread_id)
+                .and_then(|state| state.active_turn.as_ref())
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+        let Some(goal) = self.get_goal(thread_id).await? else {
+            return Ok(());
+        };
+        if goal.status != hakus_protocol::ThreadGoalStatus::Active {
+            return Ok(());
+        }
+        let max_continuations = self.read_config().goal_max_continuations();
+        if max_continuations > 0 && goal.continuation_count >= i64::from(max_continuations) {
+            let paused = hakus_protocol::ThreadGoal {
+                status: hakus_protocol::ThreadGoalStatus::Paused,
+                updated_at: Utc::now().timestamp(),
+                ..goal
+            };
+            self.save_goal(paused.clone()).await?;
+            self.emit_goal_updated_event(thread_id, paused).await?;
+            return Ok(());
+        }
+        let next_count = goal.continuation_count.saturating_add(1);
+        let updated = hakus_protocol::ThreadGoal {
+            continuation_count: next_count,
+            updated_at: Utc::now().timestamp(),
+            ..goal
+        };
+        self.save_goal(updated.clone()).await?;
+        self.emit_goal_updated_event(thread_id, updated.clone()).await?;
+        let snapshot = crate::tools::goal::GoalSnapshot::from_thread_goal(&updated);
+        let prompt = crate::tools::goal::render_continuation_prompt(&snapshot, next_count as u32);
+        let request = StartTurnRequest {
+            prompt: prompt.clone(),
+            input_summary: Some(format!("长程任务继续：{}", updated.objective)),
+            ..StartTurnRequest::default()
+        };
+        self.start_turn_with_source(
+            thread_id,
+            request,
+            RuntimeTurnInputSource::GoalContinuation {
+                persisted_summary: format!("长程任务继续第 {next_count} 回合：{}", updated.objective),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Persist one canonical Agent Mail envelope in the runtime store. The
     /// caller-supplied id is an idempotency key: an exact replay returns the
     /// existing lifecycle record, while conflicting intent fails closed.
@@ -3894,6 +4122,7 @@ impl RuntimeThreadManager {
                     auto_approve: None,
                     dynamic_tools: Vec::new(),
                     environment_id: None,
+                    reasoning_effort: None,
                 },
                 RuntimeTurnInputSource::AgentMail {
                     message_id: message_id.to_string(),
@@ -4492,7 +4721,29 @@ impl RuntimeThreadManager {
             .model
             .filter(|m| !m.trim().is_empty())
             .unwrap_or(default_model);
-        let workspace = req.workspace.unwrap_or_else(|| self.workspace.clone());
+        let requested_workspace = req.workspace.unwrap_or_else(|| self.workspace.clone());
+        let environments = normalize_thread_environments(
+            &requested_workspace,
+            req.environments,
+        )?;
+        let selected_environment_id = req
+            .environment_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .map(str::trim)
+            .map(str::to_string)
+            .or_else(|| {
+                environments
+                    .iter()
+                    .find(|environment| environment.environment_id == "local")
+                    .or_else(|| environments.first())
+                    .map(|environment| environment.environment_id.clone())
+            });
+        let workspace = selected_environment_id
+            .as_deref()
+            .and_then(|id| environments.iter().find(|environment| environment.environment_id == id))
+            .map(|environment| environment.cwd.clone())
+            .unwrap_or(requested_workspace);
         let requested_mode = req
             .mode
             .filter(|m| !m.trim().is_empty())
@@ -4519,6 +4770,8 @@ impl RuntimeThreadManager {
             model_provider: Some(model_provider),
             model_provider_id,
             workspace,
+            environments,
+            environment_id: selected_environment_id,
             mode,
             permission_posture,
             allow_shell,
@@ -4539,6 +4792,66 @@ impl RuntimeThreadManager {
             None,
             "thread.started",
             json!({ "thread": thread }),
+        )
+        .await?;
+        Ok(thread)
+    }
+
+    /// Select the execution environment for a thread. Switching environments
+    /// is only allowed between turns; the cached engine is evicted so its
+    /// workspace, plugin snapshot, and tool authority are rebuilt together.
+    async fn select_thread_environment(
+        &self,
+        thread_hint: &ThreadRecord,
+        requested_id: &str,
+    ) -> Result<ThreadRecord> {
+        let (environment_id, workspace) = thread_environment_workspace(thread_hint, Some(requested_id))?;
+        if thread_hint.environment_id.as_deref() == Some(environment_id.as_str())
+            && thread_hint.workspace == workspace
+        {
+            return Ok(thread_hint.clone());
+        }
+
+        let evicted_engine = {
+            let mut active = self.active.lock().await;
+            let _thread_mutation = self.store.thread_mutation.lock();
+            let mut thread = self
+                .store
+                .load_thread(&thread_hint.id)
+                .with_context(|| format!("Thread not found: {}", thread_hint.id))?;
+            let (environment_id, workspace) =
+                thread_environment_workspace(&thread, Some(requested_id))?;
+            if let Some(active_thread) = active.engines.get(&thread.id)
+                && active_thread.active_turn.is_some()
+            {
+                bail!("Thread {} has an active turn; interrupt it before switching environments", thread.id);
+            }
+            let changed = thread.environment_id.as_deref() != Some(environment_id.as_str())
+                || thread.workspace != workspace;
+            if !changed {
+                return Ok(thread);
+            }
+            thread.environment_id = Some(environment_id.clone());
+            thread.workspace = workspace;
+            thread.updated_at = Utc::now();
+            self.store.save_thread(&thread)?;
+            active.lru.retain(|thread_id| thread_id != &thread.id);
+            let engine = active.engines.remove(&thread.id).map(|state| state.engine);
+            (thread, engine)
+        };
+        let (thread, engine) = evicted_engine;
+        if let Some(engine) = engine {
+            let _ = engine.send(Op::Shutdown).await;
+        }
+        self.emit_event(
+            &thread.id,
+            None,
+            None,
+            "thread.environment_changed",
+            json!({
+                "environment_id": thread.environment_id,
+                "workspace": thread.workspace,
+            }),
         )
         .await?;
         Ok(thread)
@@ -4701,6 +5014,143 @@ impl RuntimeThreadManager {
             let _ = engine.send(Op::Shutdown).await;
         }
         Ok(())
+    }
+
+    /// Remove all persisted conversation turns/items for a thread while
+    /// keeping the thread record itself. This is the Runtime equivalent of
+    /// the legacy "clear session messages" operation.
+    pub async fn clear_thread_history(&self, id: &str) -> Result<usize> {
+        let _thread_mutation = self.store.thread_mutation.lock();
+        let mut thread = self
+            .store
+            .load_thread(id)
+            .with_context(|| format!("Thread not found: {id}"))?;
+        let turns = self.store.list_turns_for_thread(id)?;
+        let mut deleted = 0usize;
+        for turn in &turns {
+            for item in self.store.list_items_for_turn(&turn.id)? {
+                self.store.remove_item(&item.id)?;
+                deleted = deleted.saturating_add(1);
+            }
+            self.store.remove_turn(&turn.id)?;
+        }
+        self.store.remove_events(id)?;
+        thread.latest_turn_id = None;
+        thread.latest_response_bookmark = None;
+        thread.updated_at = Utc::now();
+        self.store.save_thread(&thread)?;
+        drop(_thread_mutation);
+        self.emit_event(id, None, None, "thread.history_cleared", json!({ "deleted_items": deleted })).await?;
+        Ok(deleted)
+    }
+
+    /// Clear only the append-only event projection for a thread.
+    pub async fn clear_thread_event_log(&self, id: &str) -> Result<()> {
+        self.store
+            .load_thread(id)
+            .with_context(|| format!("Thread not found: {id}"))?;
+        let store = self.store.clone();
+        let thread_id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.with_event_transaction(EVENT_TRANSACTION_LOCK_TIMEOUT, || {
+                store.remove_events(&thread_id)
+            })
+        })
+        .await
+        .context("Runtime event log clear task failed")??;
+        Ok(())
+    }
+
+    /// Delete one projected message item from a thread. The item id is the
+    /// stable id exposed by `GET /v1/threads/{id}` and the desktop client.
+    pub async fn delete_thread_item(&self, thread_id: &str, item_id: &str) -> Result<bool> {
+        let _thread_mutation = self.store.thread_mutation.lock();
+        let mut thread = self
+            .store
+            .load_thread(thread_id)
+            .with_context(|| format!("Thread not found: {thread_id}"))?;
+        let turns = self.store.list_turns_for_thread(thread_id)?;
+        let mut deleted = false;
+        for mut turn in turns {
+            if !turn.item_ids.iter().any(|id| id == item_id) {
+                continue;
+            }
+            self.store.remove_item(item_id)?;
+            turn.item_ids.retain(|id| id != item_id);
+            if turn.item_ids.is_empty() {
+                self.store.remove_turn(&turn.id)?;
+            } else {
+                self.store.save_turn(&turn)?;
+            }
+            deleted = true;
+            break;
+        }
+        if !deleted {
+            return Ok(false);
+        }
+        thread.latest_turn_id = self
+            .store
+            .list_turns_for_thread(thread_id)?
+            .into_iter()
+            .max_by_key(|turn| turn.created_at)
+            .map(|turn| turn.id);
+        thread.updated_at = Utc::now();
+        self.store.save_thread(&thread)?;
+        drop(_thread_mutation);
+        self.emit_event(thread_id, None, None, "thread.item_deleted", json!({ "item_id": item_id })).await?;
+        Ok(true)
+    }
+
+    /// Rewind an existing thread at a projected message item, removing that
+    /// item and everything after it. This mirrors the legacy session rewind
+    /// operation while retaining the Runtime thread id.
+    pub async fn rewind_thread_to_item(&self, thread_id: &str, item_id: &str) -> Result<usize> {
+        let _thread_mutation = self.store.thread_mutation.lock();
+        let mut thread = self
+            .store
+            .load_thread(thread_id)
+            .with_context(|| format!("Thread not found: {thread_id}"))?;
+        let turns = self.store.list_turns_for_thread(thread_id)?;
+        let mut target: Option<(usize, usize)> = None;
+        let mut turn_items = Vec::with_capacity(turns.len());
+        for (turn_index, turn) in turns.iter().enumerate() {
+            let items = self.store.list_items_for_turn(&turn.id)?;
+            if target.is_none() {
+                if let Some(item_index) = items.iter().position(|item| item.id == item_id) {
+                    target = Some((turn_index, item_index));
+                }
+            }
+            turn_items.push(items);
+        }
+        let Some((target_turn, target_item)) = target else {
+            return Err(anyhow!("Message item not found: {item_id}"));
+        };
+        let mut deleted = 0usize;
+        for (turn_index, turn) in turns.iter().enumerate().skip(target_turn) {
+            let start = if turn_index == target_turn { target_item } else { 0 };
+            for item in turn_items[turn_index].iter().skip(start) {
+                self.store.remove_item(&item.id)?;
+                deleted = deleted.saturating_add(1);
+            }
+            let mut kept = turn.clone();
+            kept.item_ids.truncate(start);
+            if kept.item_ids.is_empty() {
+                self.store.remove_turn(&turn.id)?;
+            } else {
+                self.store.save_turn(&kept)?;
+            }
+        }
+        thread.latest_turn_id = self
+            .store
+            .list_turns_for_thread(thread_id)?
+            .into_iter()
+            .max_by_key(|turn| turn.created_at)
+            .map(|turn| turn.id);
+        thread.updated_at = Utc::now();
+        self.store.save_thread(&thread)?;
+        drop(_thread_mutation);
+        self.emit_event(thread_id, None, None, "thread.rewound", json!({ "item_id": item_id, "deleted_items": deleted })).await?;
+        Ok(deleted)
     }
 
     pub async fn update_thread(&self, id: &str, req: UpdateThreadRequest) -> Result<ThreadRecord> {
@@ -5984,7 +6434,12 @@ impl RuntimeThreadManager {
             bail!("prompt is required");
         }
 
-        let thread = self.get_thread(thread_id).await?;
+        let mut thread = self.get_thread(thread_id).await?;
+        if let Some(environment_id) = req.environment_id.as_deref() {
+            thread = self
+                .select_thread_environment(&thread, environment_id)
+                .await?;
+        }
         let policy =
             if req.mode.is_some() || req.permission_posture.is_some() || req.auto_approve.is_some()
             {
@@ -6027,10 +6482,17 @@ impl RuntimeThreadManager {
         let mut thread_config = cfg_snapshot.clone();
         thread_config.scope_to_provider_identity(&identity);
         let verbosity = thread_config.verbosity.clone();
-        let reasoning_preference = thread_config
+        let configured_reasoning_preference = thread_config
             .reasoning_effort()
             .filter(|_| thread_config.reasoning_effort_is_explicit())
             .map(crate::tui::app::ReasoningEffort::from_setting);
+        let request_reasoning_preference = req
+            .reasoning_effort
+            .as_deref()
+            .map(crate::tui::app::ReasoningEffort::parse_strict)
+            .transpose()
+            .map_err(|error| anyhow!(error))?;
+        let reasoning_preference = request_reasoning_preference.or(configured_reasoning_preference);
         let (route, reasoning_effort, auto_controls_reasoning) = if auto_model {
             let selection = crate::model_routing::resolve_auto_route_with_inventory(
                 &thread_config,
@@ -6062,15 +6524,22 @@ impl RuntimeThreadManager {
             });
             (route, reasoning_effort, auto_controls_reasoning)
         } else {
-            (
-                resolve_runtime_thread_route_for_identity(
+            let route = resolve_runtime_thread_route_for_identity(
                     &cfg_snapshot,
                     &identity,
                     Some(&requested_model),
-                )?,
-                None,
-                false,
-            )
+                )?;
+            let reasoning_effort = reasoning_preference.map(|effort| {
+                effort
+                    .normalize_for_route(
+                        route.identity.provider,
+                        &route.candidate.endpoint().base_url,
+                        &route.model,
+                    )
+                    .as_setting()
+                    .to_string()
+            });
+            (route, reasoning_effort, matches!(reasoning_preference, Some(crate::tui::app::ReasoningEffort::Auto)))
         };
         let route = if client_preflight_required {
             route
@@ -6150,14 +6619,33 @@ impl RuntimeThreadManager {
         let allow_shell = req.allow_shell.unwrap_or(thread.allow_shell);
         let trust_mode = req.trust_mode.unwrap_or(thread.trust_mode);
         let auto_approve = policy.auto_approve();
+        let persisted_goal = self.get_goal(thread_id).await?;
+        let (goal_objective, goal_token_budget, goal_status) = persisted_goal
+            .as_ref()
+            .map(|goal| {
+                let status = match goal.status {
+                    hakus_protocol::ThreadGoalStatus::Active => crate::tools::goal::GoalStatus::Active,
+                    hakus_protocol::ThreadGoalStatus::Paused => crate::tools::goal::GoalStatus::Paused,
+                    hakus_protocol::ThreadGoalStatus::Blocked
+                    | hakus_protocol::ThreadGoalStatus::UsageLimited
+                    | hakus_protocol::ThreadGoalStatus::BudgetLimited => crate::tools::goal::GoalStatus::Blocked,
+                    hakus_protocol::ThreadGoalStatus::Complete => crate::tools::goal::GoalStatus::Complete,
+                };
+                (
+                    Some(goal.objective.clone()),
+                    goal.token_budget.and_then(|value| u32::try_from(value.max(0)).ok()),
+                    status,
+                )
+            })
+            .unwrap_or((None, None, crate::tools::goal::GoalStatus::Active));
         let op = Op::SendMessage {
             content: prompt,
             mode,
             route: Box::new(route),
             compaction: Box::new(compaction),
-            goal_objective: None,
-            goal_token_budget: None,
-            goal_status: crate::tools::goal::GoalStatus::Active,
+            goal_objective,
+            goal_token_budget,
+            goal_status,
             reasoning_effort,
             reasoning_effort_auto: auto_controls_reasoning,
             auto_model,
@@ -7107,6 +7595,71 @@ impl RuntimeThreadManager {
         );
     }
 
+    async fn persist_engine_goal_snapshot(
+        &self,
+        thread_id: &str,
+        snapshot: &crate::tools::goal::GoalSnapshot,
+    ) -> Result<()> {
+        // Goal deletion is initiated by the host control plane while the
+        // engine publishes snapshots asynchronously. Ignore any stale
+        // objective-bearing snapshot until the engine publishes the canonical
+        // empty state; otherwise a just-deleted goal can be written back and
+        // appear again on the next DELETE request.
+        if self
+            .goal_clear_barriers
+            .lock()
+            .await
+            .get(thread_id)
+            .is_some_and(|barrier| *barrier == GoalClearBarrier::Cleared)
+        {
+            if snapshot.objective.is_none() {
+                self.goal_clear_barriers.lock().await.remove(thread_id);
+            } else {
+                return Ok(());
+            }
+        }
+        let Some(objective) = snapshot.objective.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+            if self.remove_goal(thread_id).await? {
+                self.emit_goal_cleared_event(thread_id).await?;
+            }
+            return Ok(());
+        };
+        let now = Utc::now().timestamp();
+        let existing = self.get_goal(thread_id).await?;
+        let status = match snapshot.status.as_str() {
+            "paused" => hakus_protocol::ThreadGoalStatus::Paused,
+            "blocked" => hakus_protocol::ThreadGoalStatus::Blocked,
+            "complete" => hakus_protocol::ThreadGoalStatus::Complete,
+            _ => hakus_protocol::ThreadGoalStatus::Active,
+        };
+        // Host-managed continuations increment the durable counter before a
+        // turn starts. The engine snapshot can still carry the pre-turn
+        // value, so never let a late engine write erase that progress.
+        let continuation_count = existing
+            .as_ref()
+            .map(|goal| goal.continuation_count)
+            .unwrap_or(0)
+            .max(i64::from(snapshot.continuation_count));
+        let goal = hakus_protocol::ThreadGoal {
+            thread_id: thread_id.to_string(),
+            goal_id: existing
+                .as_ref()
+                .map(|goal| goal.goal_id.clone())
+                .unwrap_or_else(|| format!("goal-{}", Uuid::new_v4())),
+            objective: objective.to_string(),
+            status,
+            token_budget: snapshot.token_budget.map(i64::from),
+            tokens_used: i64::try_from(snapshot.tokens_used).unwrap_or(i64::MAX),
+            time_used_seconds: i64::try_from(snapshot.time_used_seconds).unwrap_or(i64::MAX),
+            continuation_count,
+            created_at: existing.as_ref().map_or(now, |goal| goal.created_at),
+            updated_at: now,
+        };
+        self.save_goal(goal.clone()).await?;
+        self.emit_goal_updated_event(thread_id, goal).await?;
+        Ok(())
+    }
+
     async fn monitor_turn(
         &self,
         thread_id: String,
@@ -7244,6 +7797,9 @@ impl RuntimeThreadManager {
                         }
                         self.store.save_turn(&turn)?;
                     }
+                }
+                EngineEvent::GoalUpdated { snapshot } => {
+                    self.persist_engine_goal_snapshot(&thread_id, &snapshot).await?;
                 }
                 EngineEvent::MessageStarted { .. } => {
                     let item_id = format!("item_{}", &Uuid::new_v4().to_string()[..8]);
@@ -8293,6 +8849,14 @@ impl RuntimeThreadManager {
         // oldest eligible envelope; its own terminal boundary may advance the
         // next one, keeping every wake explicit and bounded to one turn.
         self.spawn_agent_mail_safe_boundary_delivery(thread_id.clone());
+
+        // Runtime engines are host-managed and therefore do not enqueue their
+        // own `ContinueGoal` operation. Once this durable turn is complete,
+        // create the next claimed turn only while the persisted goal remains
+        // active. Failed/interrupted turns never fan out autonomously.
+        if turn_status == RuntimeTurnStatus::Completed {
+            self.spawn_goal_continuation_if_needed(thread_id.clone());
+        }
 
         Ok(())
     }

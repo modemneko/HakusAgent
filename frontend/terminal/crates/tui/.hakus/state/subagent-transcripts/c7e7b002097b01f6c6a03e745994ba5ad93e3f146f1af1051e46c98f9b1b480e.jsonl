@@ -1,2 +1,0 @@
-{"kind":"subagent_transcript_header","schema_version":1,"agent_id":"agent_noop"}
-{"kind":"message","index":0,"message":{"role":"user","content":[{"type":"text","text":"Assignment metadata:\n- objective: prompt\n- role: worker\n- resolved_type: worker\n\nTask:\nno-op child run"}]}}

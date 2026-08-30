@@ -134,6 +134,14 @@ pub fn is_upstream_auth_header(name: &str) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -200,6 +208,10 @@ impl ProviderConfigToml {
         let blank = |value: Option<&String>| value.is_none_or(|value| value.trim().is_empty());
 
         blank(self.api_key.as_ref())
+            && blank(self.display_name.as_ref())
+            && blank(self.group.as_ref())
+            && blank(self.description.as_ref())
+            && self.enabled.is_none()
             && blank(self.base_url.as_ref())
             && blank(self.model.as_ref())
             && self.models.is_empty()

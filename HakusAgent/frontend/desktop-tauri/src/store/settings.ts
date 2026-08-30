@@ -25,7 +25,7 @@ interface SettingsStore extends AppSettings {
   loadProviders: () => Promise<void>
   /** 强制重置 provider 加载状态（用于从卡死的 loading 中恢复） */
   resetProvidersLoading: () => void
-  setDefaultModel: (provider: string) => Promise<void>
+  setDefaultModel: (provider: string, model?: string) => Promise<void>
   // Phase 3 — tray + shortcuts (Electron-only; no-op in browser dev mode)
   setTrayEnabled: (enabled: boolean) => Promise<void>
   setMinimizeToTray: (enabled: boolean) => Promise<void>
@@ -223,7 +223,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  setDefaultModel: async (provider) => {
+  setDefaultModel: async (provider, model) => {
     // optimistic update
     const prev = get().providers
     set({
@@ -231,7 +231,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       providers: prev.map((p) => ({ ...p, is_default: p.id === provider })),
     })
     try {
-      await apiClient.setDefaultModel(provider)
+      await apiClient.setDefaultModel(provider, model)
       // reload providers to confirm
       await get().loadProviders()
     } catch (e: any) {

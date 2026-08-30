@@ -58,10 +58,8 @@ export function TtsPanel() {
     let cancelled = false
     const refreshCloneStatus = async () => {
       try {
-        const baseUrl = (apiClient as any).baseUrl as string || ''
-        const response = await fetch(`${baseUrl}/api/voice/clone/status`)
-        if (!response.ok || cancelled) return
-        const data = await response.json()
+        const data = await apiClient.getVoiceCloneStatus()
+        if (cancelled) return
         if (data.status === 'completed' || data.status === 'ok') {
           setCloneStatus('ok')
           setCloneVoiceId(data.voice_id || null)
@@ -140,29 +138,20 @@ export function TtsPanel() {
       clonePollRef.current = null
     }
     try {
-      const fd = new FormData()
-      fd.append('audio', file)
-      if (settings.dashscopeApiKey) {
-        fd.append('api_key', settings.dashscopeApiKey)
-      }
-      const baseUrl = (apiClient as any).baseUrl as string || ''
-      const res = await fetch(`${baseUrl}/api/voice/clone`, {
-        method: 'POST',
-        body: fd,
-      })
-      if (!res.ok) {
-        const err = await res.text().catch(() => '')
-        throw new Error(err || `上传失败 (${res.status})`)
+      const cloneResult = await apiClient.cloneVoice(file, file.name)
+      if (cloneResult.status === 'completed' || cloneResult.status === 'ok') {
+        setCloneStatus('ok')
+        setCloneVoiceId(cloneResult.voice_id || null)
+        if (cloneResult.voice_id) settings.update({ ttsVoice: cloneResult.voice_id })
+        setCloneProgress('')
+        return
       }
       setCloneStatus('cloning')
-      setCloneProgress('复刻中，请等待...')
+      setCloneProgress(cloneResult.message || '复刻中，请等待...')
       // 开始轮询状态
       clonePollRef.current = setInterval(async () => {
         try {
-          const baseUrl = (apiClient as any).baseUrl as string || ''
-          const r = await fetch(`${baseUrl}/api/voice/clone/status`)
-          if (!r.ok) return
-          const data = await r.json()
+          const data = await apiClient.getVoiceCloneStatus()
           if (data.status === 'completed' || data.status === 'ok') {
             setCloneStatus('ok')
             setCloneVoiceId(data.voice_id || '')

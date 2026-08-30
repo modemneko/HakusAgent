@@ -1,7 +1,11 @@
 mod embedded_backend;
 #[cfg(not(target_os = "android"))]
+mod updater_cmds;
+#[cfg(not(target_os = "android"))]
 mod shortcut_cmds;
 mod store_cmds;
+#[cfg(not(target_os = "android"))]
+mod voice_cmds;
 #[cfg(not(target_os = "android"))]
 mod tray_cmds;
 #[cfg(not(target_os = "android"))]
@@ -90,6 +94,9 @@ fn kill_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<embedded_backend::EmbeddedBackendState>() {
         state.stop();
     }
+    if let Some(state) = app.try_state::<voice_cmds::VoiceProcessState>() {
+        voice_cmds::stop_process(state.inner());
+    }
 }
 
 /// Toggle the main window's visibility — used by tray left-click and the
@@ -173,6 +180,8 @@ pub fn run() {
             .plugin(tauri_plugin_dialog::init())
             // Desktop-only setup: start the shared Rust Runtime API and tray.
             .setup(|app| {
+                app.manage(updater_cmds::UpdaterCommandState::default());
+                app.manage(voice_cmds::VoiceProcessState::default());
                 match embedded_backend::EmbeddedBackendState::start(app.handle()) {
                     Ok(state) => {
                         app.manage(state);
@@ -194,8 +203,8 @@ pub fn run() {
             // ── Window close interceptor ────────────────────────────
             // If `trayEnabled && minimizeToTray`, hide the window instead of
             // closing it so the app keeps running in the tray. Otherwise let the
-            // close go through and kill the backend child process so it doesn't
-            // orphan after the UI exits.
+            // close go through and stop the embedded Rust Runtime so it does
+            // not outlive the UI.
             .on_window_event(|window, event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     let app = window.app_handle();
@@ -265,6 +274,7 @@ pub fn run() {
         store_cmds::store_get,
         store_cmds::store_set,
         store_cmds::store_get_all,
+        store_cmds::store_clear,
         // Window (was BrowserWindow IPC)
         window_cmds::window_minimize,
         window_cmds::window_toggle_maximize,
@@ -278,13 +288,33 @@ pub fn run() {
         shortcut_cmds::shortcuts_get_config,
         shortcut_cmds::shortcuts_set_accelerator,
         shortcut_cmds::shortcuts_validate,
+        // Updates (Electron-compatible renderer contract)
+        updater_cmds::updater_get_status,
+        updater_cmds::updater_check,
+        updater_cmds::updater_download,
+        updater_cmds::updater_install,
+        updater_cmds::updater_set_auto_download,
+        updater_cmds::updater_set_auto_install_on_app_quit,
+        // External Celia voice process
+        voice_cmds::voice_status,
+        voice_cmds::voice_start_celia,
+        voice_cmds::voice_stop_celia,
     ]);
 
     #[cfg(target_os = "android")]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        // Android runs the same in-process Rust Runtime as desktop. Keep the
+        // lifecycle/status commands available so the settings UI is truthful.
+        embedded_backend::backend_status,
+        embedded_backend::backend_logs,
+        embedded_backend::backend_start,
+        embedded_backend::backend_stop,
+        embedded_backend::backend_restart,
+        embedded_backend::backend_health,
         store_cmds::store_get,
         store_cmds::store_set,
         store_cmds::store_get_all,
+        store_cmds::store_clear,
     ]);
 
     let app = builder
@@ -292,15 +322,15 @@ pub fn run() {
         .expect("error while building tauri application");
 
     #[cfg(not(target_os = "android"))]
-    // Run loop — handle Exit / ExitRequested to clean up the backend child
-    // process for any exit path we didn't catch in on_window_event (e.g.
+    // Run loop — handle Exit / ExitRequested to clean up the embedded Rust
+    // Runtime for any exit path we didn't catch in on_window_event (e.g.
     // process kill, panic, Alt+F4 when minimizeToTray is on but tray is
     // disabled, or the user clicked "退出 HakusAI" in the tray menu).
     app.run(|app_handle, event| {
         match event {
             RunEvent::ExitRequested { .. } => {
-                // Last window is closing — kill the backend before the app
-                // exits so it doesn't linger as an orphan.
+                // Last window is closing — stop the Rust Runtime before the
+                // app exits so it doesn't linger after the UI is gone.
                 kill_backend(app_handle);
             }
             RunEvent::Exit => {

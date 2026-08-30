@@ -136,8 +136,8 @@ function readReasoningEfforts(): Partial<Record<AgentMode, ReasoningEffort>> {
     const valid: Partial<Record<AgentMode, ReasoningEffort>> = {}
     for (const k of ['swift', 'deep', 'fleet'] as AgentMode[]) {
       const v = parsed[k]
-      if (v === 'low' || v === 'high' || v === 'max') {
-        valid[k] = v
+      if (typeof v === 'string' && /^(auto|off|minimal|low|medium|high|xhigh|ultra|max)$/i.test(v)) {
+        valid[k] = v.toLowerCase()
       }
     }
     return valid

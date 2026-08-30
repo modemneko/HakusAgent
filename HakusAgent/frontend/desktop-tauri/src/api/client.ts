@@ -1,7 +1,7 @@
 /**
  * HakusAI API Client
  *
- * 与 HakusAI 后端 (src/hakusai_server/server.py) 通信
+ * 与 HakusAI Runtime API 通信。Tauri 桌面端和 Android 使用进程内 Rust Runtime。
  *
  * 支持三种通信模式:
  *   1. REST     — POST /api/chat (非流式)
@@ -9,7 +9,7 @@
  *   3. WebSocket — ws://host/ws/chat (全双工, 支持中断)
  *
  * 同时解析两种流式数据格式:
- *   - 简单格式 (server.py 当前实现): { content, emotion, actions, done }
+ *   - 兼容流格式: { content, emotion, actions, done }
  *   - AgentEvent 格式 (hakus/protocol): { event_type, ... }
  *     当服务端升级为发送 AgentEvent 时, 本客户端已就绪
  */
@@ -27,6 +27,8 @@ import type {
   WSOutgoingMessage,
   ProvidersResponse,
   UpdateProviderBody,
+  CreateCustomProviderBody,
+  ProviderMutationResponse,
   ProviderMeta,
   ProvidersMetaResponse,
   ConnectionTestResult,
@@ -34,6 +36,7 @@ import type {
   ProviderKeyEntry,
   UpdateCharacterBody,
   ToolsResponse,
+  RuntimeConfigSnapshot,
   PermissionInfo,
   PermissionMode,
   MemoryDetails,
@@ -69,6 +72,7 @@ import type {
   SessionLogStats,
   SkillsResponse,
   SkillMutationReceipt,
+  ThreadGoal,
 } from './types'
 import { EXPECTED_BACKEND_API_VERSION_INT } from './types'
 import { refreshProjectFolder, syncProjectFolder } from './tauriBridge'
@@ -93,8 +97,8 @@ export class HakusAIError extends Error {
  * Error thrown when the running backend is too old to support the endpoint
  * the client just called (HTTP 404 with backend_api_version_int < expected).
  *
- * The user-visible message should explicitly tell the user to reinstall the
- * client, because the bundled backend.exe wasn't replaced during upgrade.
+ * The user-visible message should tell the user to update the connected
+ * Runtime. Tauri packages embed the Rust Runtime in the application process.
  */
 export class BackendOutdatedError extends Error {
   public readonly backendVersion: number | null
@@ -174,8 +178,103 @@ export class HakusAIClient {
   }
 
   private runtimeUnsupported(feature: string): never {
-    throw new HakusAIError(`Rust Runtime 暂不支持${feature}，未调用旧版 Python API。`, 'UNSUPPORTED')
+    throw new HakusAIError(`Rust Runtime 暂不支持${feature}，未调用旧版 API。`, 'UNSUPPORTED')
   }
+
+  /**
+   * Typed escape hatch for the Rust Runtime surface. Keeping this in one
+   * place gives every advanced CLI capability the same timeout, error and
+   * auth handling while allowing the UI to evolve without another API shim.
+   */
+  private async runtimeJson<T = unknown>(
+    path: string,
+    method: string = 'GET',
+    body?: unknown,
+    label: string = 'Runtime request failed',
+  ): Promise<T> {
+    if (!this.usesEmbeddedRuntime) this.runtimeUnsupported('该 Rust Runtime 功能')
+    const init: RequestInit = { method, headers: {} }
+    if (body !== undefined) {
+      init.headers = { 'Content-Type': 'application/json' }
+      init.body = JSON.stringify(body)
+    }
+    const res = await this.runtimeFetch(path, init, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, label)
+    if (res.status === 204) return undefined as T
+    const text = await res.text()
+    return (text ? JSON.parse(text) : undefined) as T
+  }
+
+  // ============ Rust Runtime / HakusCLI parity surface ============
+
+  getRuntimeInfo<T = unknown>(): Promise<T> { return this.runtimeJson('/runtime/info', 'GET', undefined, 'Get Runtime info failed') }
+
+  listRuntimeAgentRuns<T = unknown>(): Promise<T> { return this.runtimeJson('/agent-runs', 'GET', undefined, 'List agent runs failed') }
+  getRuntimeAgentRun<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/agent-runs/${encodeURIComponent(runId)}`, 'GET', undefined, 'Get agent run failed') }
+
+  listRuntimeFleetRuns<T = unknown>(): Promise<T> { return this.runtimeJson('/fleet/runs', 'GET', undefined, 'List fleet runs failed') }
+  createRuntimeFleetRun<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/fleet/runs', 'POST', body, 'Create fleet run failed') }
+  getRuntimeFleetRun<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}`, 'GET', undefined, 'Get fleet run failed') }
+  listRuntimeFleetWorkers<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/workers`, 'GET', undefined, 'List fleet workers failed') }
+  startRuntimeFleetRun<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/start`, 'POST', {}, 'Start fleet run failed') }
+  stopRuntimeFleetRun<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/stop`, 'POST', {}, 'Stop fleet run failed') }
+  listRuntimeFleetReceipts<T = unknown>(runId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/receipts`, 'GET', undefined, 'List fleet receipts failed') }
+  getRuntimeFleetReceipt<T = unknown>(runId: string, taskId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/receipts/${encodeURIComponent(taskId)}`, 'GET', undefined, 'Get fleet receipt failed') }
+  getRuntimeFleetEvidence<T = unknown>(runId: string, taskId: string): Promise<T> { return this.runtimeJson(`/fleet/runs/${encodeURIComponent(runId)}/receipts/${encodeURIComponent(taskId)}/evidence`, 'GET', undefined, 'Get fleet evidence failed') }
+  getRuntimeFleetWorker<T = unknown>(workerId: string): Promise<T> { return this.runtimeJson(`/fleet/workers/${encodeURIComponent(workerId)}`, 'GET', undefined, 'Get fleet worker failed') }
+  interruptRuntimeFleetWorker<T = unknown>(workerId: string): Promise<T> { return this.runtimeJson(`/fleet/workers/${encodeURIComponent(workerId)}/interrupt`, 'POST', {}, 'Interrupt fleet worker failed') }
+  stopRuntimeFleetWorker<T = unknown>(workerId: string): Promise<T> { return this.runtimeJson(`/fleet/workers/${encodeURIComponent(workerId)}/stop`, 'POST', {}, 'Stop fleet worker failed') }
+  restartRuntimeFleetWorker<T = unknown>(workerId: string): Promise<T> { return this.runtimeJson(`/fleet/workers/${encodeURIComponent(workerId)}/restart`, 'POST', {}, 'Restart fleet worker failed') }
+
+  listRuntimeTasks<T = unknown>(): Promise<T> { return this.runtimeJson('/tasks', 'GET', undefined, 'List tasks failed') }
+  createRuntimeTask<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/tasks', 'POST', body, 'Create task failed') }
+  getRuntimeTask<T = unknown>(taskId: string): Promise<T> { return this.runtimeJson(`/tasks/${encodeURIComponent(taskId)}`, 'GET', undefined, 'Get task failed') }
+  cancelRuntimeTask<T = unknown>(taskId: string): Promise<T> { return this.runtimeJson(`/tasks/${encodeURIComponent(taskId)}/cancel`, 'POST', {}, 'Cancel task failed') }
+
+  listRuntimeAutomations<T = unknown>(): Promise<T> { return this.runtimeJson('/automations', 'GET', undefined, 'List automations failed') }
+  createRuntimeAutomation<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/automations', 'POST', body, 'Create automation failed') }
+  getRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'GET', undefined, 'Get automation failed') }
+  updateRuntimeAutomation<T = unknown>(id: string, body: unknown): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'PATCH', body, 'Update automation failed') }
+  deleteRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'DELETE', undefined, 'Delete automation failed') }
+  runRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/run`, 'POST', {}, 'Run automation failed') }
+  pauseRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/pause`, 'POST', {}, 'Pause automation failed') }
+  resumeRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/resume`, 'POST', {}, 'Resume automation failed') }
+  listRuntimeAutomationRuns<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/runs`, 'GET', undefined, 'List automation runs failed') }
+
+  getRuntimeUsage<T = unknown>(): Promise<T> { return this.runtimeJson('/usage', 'GET', undefined, 'Get usage failed') }
+  listRuntimeSnapshots<T = unknown>(): Promise<T> { return this.runtimeJson('/snapshots', 'GET', undefined, 'List snapshots failed') }
+  restoreRuntimeSnapshot<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/snapshots/${encodeURIComponent(id)}/restore`, 'POST', {}, 'Restore snapshot failed') }
+  decideRuntimeApproval<T = unknown>(approvalId: string, body: unknown): Promise<T> { return this.runtimeJson(`/approvals/${encodeURIComponent(approvalId)}`, 'POST', body, 'Decide approval failed') }
+
+  sendRuntimeAgentMail<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/agent-mail', 'POST', body, 'Send agent mail failed') }
+  listRuntimeAgentMail<T = unknown>(threadId: string): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/agent-mail`, 'GET', undefined, 'List agent mail failed') }
+  deliverRuntimeAgentMail<T = unknown>(threadId: string, messageId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/agent-mail/${encodeURIComponent(messageId)}/deliver`, 'POST', body, 'Deliver agent mail failed') }
+  markRuntimeAgentMailRead<T = unknown>(threadId: string, messageId: string): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/agent-mail/${encodeURIComponent(messageId)}/read`, 'POST', {}, 'Mark agent mail failed') }
+
+  forkRuntimeThread<T = unknown>(threadId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/fork`, 'POST', body, 'Fork thread failed') }
+  retryRuntimeThread<T = unknown>(threadId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/retry`, 'POST', body, 'Retry thread failed') }
+  undoRuntimeThread<T = unknown>(threadId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/undo`, 'POST', body, 'Undo thread failed') }
+  patchUndoRuntimeThread<T = unknown>(threadId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/patch-undo`, 'POST', body, 'Patch undo failed') }
+  steerRuntimeThread<T = unknown>(threadId: string, turnId: string, body: unknown): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/steer`, 'POST', body, 'Steer turn failed') }
+  interruptRuntimeThread<T = unknown>(threadId: string, turnId: string): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/interrupt`, 'POST', {}, 'Interrupt turn failed') }
+  compactRuntimeThread<T = unknown>(threadId: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/compact`, 'POST', body, 'Compact thread failed') }
+  submitRuntimeToolCallResult<T = unknown>(threadId: string, turnId: string, callId: string, body: unknown): Promise<T> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/tool-calls/${encodeURIComponent(callId)}/result`, 'POST', body, 'Submit tool result failed') }
+  getRuntimeThreadGoal(threadId: string): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal`, 'GET', undefined, 'Get thread goal failed') }
+  upsertRuntimeThreadGoal(threadId: string, body: { objective: string; token_budget?: number | null }): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal`, 'PUT', body, 'Save thread goal failed') }
+  deleteRuntimeThreadGoal(threadId: string): Promise<void> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal`, 'DELETE', undefined, 'Delete thread goal failed') }
+  completeRuntimeThreadGoal(threadId: string): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal/complete`, 'POST', {}, 'Complete thread goal failed') }
+  blockRuntimeThreadGoal(threadId: string): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal/block`, 'POST', {}, 'Block thread goal failed') }
+  pauseRuntimeThreadGoal(threadId: string): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal/pause`, 'POST', {}, 'Pause thread goal failed') }
+  resumeRuntimeThreadGoal(threadId: string): Promise<ThreadGoal> { return this.runtimeJson(`/threads/${encodeURIComponent(threadId)}/goal/resume`, 'POST', {}, 'Resume thread goal failed') }
+
+  updateRuntimeSkill<T = unknown>(name: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/skills/${encodeURIComponent(name)}/update`, 'POST', body, 'Update skill failed') }
+  trustRuntimeSkill<T = unknown>(name: string, body: unknown = {}): Promise<T> { return this.runtimeJson(`/skills/${encodeURIComponent(name)}/trust`, 'POST', body, 'Trust skill failed') }
+  auditRuntimeSkill<T = unknown>(name: string): Promise<T> { return this.runtimeJson(`/skills/${encodeURIComponent(name)}/audit`, 'GET', undefined, 'Audit skill failed') }
+  createRuntimeMemory<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/memory', 'POST', body, 'Create memory failed') }
+  getRuntimeMemory<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/memory/${encodeURIComponent(id)}`, 'GET', undefined, 'Get memory failed') }
+  listRuntimeMemory<T = unknown>(scope: string = 'all'): Promise<T> { return this.runtimeJson(`/memory?scope=${encodeURIComponent(scope)}&limit=200`, 'GET', undefined, 'List memory failed') }
+  clearRuntimeMemory<T = unknown>(scope: string = 'all'): Promise<T> { return this.runtimeJson(`/memory?scope=${encodeURIComponent(scope)}`, 'DELETE', undefined, 'Clear memory failed') }
+  searchRuntimeMemory<T = unknown>(query: string, scope: string = 'all'): Promise<T> { return this.runtimeJson(`/memory?scope=${encodeURIComponent(scope)}&q=${encodeURIComponent(query)}`, 'GET', undefined, 'Search memory failed') }
 
   private runtimeSession(thread: any): ServerSession {
     const toMillis = (value: unknown) => {
@@ -305,8 +404,8 @@ export class HakusAIClient {
 
       if (isNewEndpoint || backendVersion !== null) {
         throw new BackendOutdatedError(
-          `Backend 版本过旧：端点 ${path} 不存在 (HTTP 404)。` +
-          `请重新下载并安装最新版客户端，让 backend.exe 同步更新。` +
+          `Runtime 版本过旧：端点 ${path} 不存在 (HTTP 404)。` +
+          `请更新或重启当前连接的 Rust Runtime。` +
           (backendVersion !== null ? ` (backend API v${backendVersion})` : ''),
           { backendVersion, path },
         )
@@ -453,6 +552,11 @@ export class HakusAIClient {
           supports_live_models: Boolean(provider.supports_live_models),
           supports_headers: Boolean(provider.supports_headers),
           supports_multi_key: Boolean(provider.supports_multi_key),
+          is_custom: Boolean(provider.is_custom),
+          description: provider.description ? String(provider.description) : undefined,
+          enabled: provider.enabled !== false,
+          models: Array.isArray(provider.models) ? provider.models.map(String) : [],
+          configured_models: Array.isArray(provider.configured_models) ? provider.configured_models.map(String) : [],
         })),
       }
     }
@@ -471,6 +575,8 @@ export class HakusAIClient {
           base_url: body.base_url,
           api_key: body.api_key,
           set_as_default: body.set_as_default ?? false,
+          enabled: body.enabled,
+          models: body.models,
         }),
       }, 30000)
       if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers/${body.provider}`, 'Update Runtime provider failed')
@@ -486,12 +592,12 @@ export class HakusAIClient {
     }
   }
 
-  async setDefaultModel(provider: string): Promise<void> {
+  async setDefaultModel(provider: string, model?: string): Promise<void> {
     if (this.usesEmbeddedRuntime) {
       const res = await this.runtimeFetch(`/providers/${encodeURIComponent(provider)}/switch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(model ? { model } : {}),
       })
       if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers/${provider}/switch`, 'Set Runtime provider failed')
       return
@@ -587,7 +693,13 @@ export class HakusAIClient {
       const data = await res.json()
       const models = (data.models || []).map((model: any) => {
         const id = String(model.id || model)
-        return { id, name: id, owned_by: null }
+        return {
+          id,
+          name: id,
+          owned_by: null,
+          reasoning_options: Array.isArray(model.reasoning_options) ? model.reasoning_options : [],
+          supports_reasoning: typeof model.supports_reasoning === 'boolean' ? model.supports_reasoning : null,
+        }
       })
       return {
         ok: true,
@@ -610,18 +722,40 @@ export class HakusAIClient {
     return res.json()
   }
 
+  /** Read the Rust catalog for a provider without calling the provider. */
+  async listProviderModels(providerId: string): Promise<FetchModelsResult> {
+    if (this.usesEmbeddedRuntime) {
+      const path = `/providers/${encodeURIComponent(providerId)}/models`
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'List Runtime models failed')
+      const data = await res.json()
+      const models = (data.models || []).map((model: any) => {
+        const id = String(model.id || model)
+        return {
+          id,
+          name: id,
+          owned_by: null,
+          reasoning_options: Array.isArray(model.reasoning_options) ? model.reasoning_options : [],
+          supports_reasoning: typeof model.supports_reasoning === 'boolean' ? model.supports_reasoning : null,
+        }
+      })
+      return {
+        ok: true,
+        models,
+        message: models.length > 0 ? `已从 Rust Runtime 读取 ${models.length} 个模型` : '该 provider 未声明模型',
+      }
+    }
+    return { ok: true, models: [], message: '当前后端没有本地模型目录' }
+  }
+
   /** 列出某 provider 的所有 API Key (masked). */
   async listProviderKeys(providerId: string): Promise<ProviderKeyEntry[]> {
     if (this.usesEmbeddedRuntime) {
-      const provider = (await this.getProviders()).providers.find((entry) => entry.id === providerId)
-      if (!provider?.has_api_key) return []
-      return [{
-        id: `${providerId}:primary`,
-        label: '主 Key',
-        masked_key: provider.masked_api_key,
-        enabled: true,
-        is_primary: true,
-      }]
+      const path = `/providers/${encodeURIComponent(providerId)}/keys`
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'List Runtime provider keys failed')
+      const data = await res.json()
+      return data.keys ?? []
     }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys`,
@@ -638,7 +772,14 @@ export class HakusAIClient {
   /** 给某 provider 添加一个额外的 API Key. */
   async addProviderKey(providerId: string, key: string, label: string = ''): Promise<ProviderKeyEntry> {
     if (this.usesEmbeddedRuntime) {
-      throw new HakusAIError('Rust Runtime 目前只支持一个主 API Key，请在 Provider 配置中替换它。', 'UNSUPPORTED')
+      const path = `/providers/${encodeURIComponent(providerId)}/keys`
+      const res = await this.runtimeFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, label }),
+      })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Add Runtime provider key failed')
+      return res.json()
     }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys`,
@@ -658,7 +799,10 @@ export class HakusAIClient {
   /** 删除某 provider 的一个额外 Key (不能删主 Key). */
   async deleteProviderKey(providerId: string, keyId: string): Promise<void> {
     if (this.usesEmbeddedRuntime) {
-      throw new HakusAIError('Rust Runtime 不允许删除主 API Key。', 'UNSUPPORTED')
+      const path = `/providers/${encodeURIComponent(providerId)}/keys/${encodeURIComponent(keyId)}`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Delete Runtime provider key failed')
+      return
     }
     const res = await this.fetchWithHardTimeout(
       `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/keys/${encodeURIComponent(keyId)}`,
@@ -1060,6 +1204,63 @@ export class HakusAIClient {
     await this.fetchWithHardTimeout(`${this.baseUrl}/api/memory/clear`, { method: 'POST' }, 10000)
   }
 
+  /** Read the editable Rust Runtime configuration projection. */
+  async getRuntimeConfig(): Promise<RuntimeConfigSnapshot> {
+    if (!this.usesEmbeddedRuntime) this.runtimeUnsupported('读取服务设置')
+    const res = await this.runtimeFetch('/config')
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Get Runtime config failed')
+    return res.json()
+  }
+
+  /** Persist one Rust Runtime setting and apply it to active sessions. */
+  async setRuntimeConfig(key: string, value: string | boolean | number): Promise<void> {
+    if (!this.usesEmbeddedRuntime) this.runtimeUnsupported('修改服务设置')
+    const res = await this.runtimeFetch('/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: String(value), persist: true }),
+    })
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Set Runtime config failed')
+    await this.reloadConfig()
+  }
+
+  async updateCustomProviderMetadata(providerId: string, body: { display_name?: string; group?: string }): Promise<ProviderMutationResponse> {
+    if (!this.usesEmbeddedRuntime) return this.runtimeUnsupported('编辑自定义模型商')
+    const path = `/providers/${encodeURIComponent(providerId)}`
+    const res = await this.runtimeFetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Update custom provider failed')
+    return res.json()
+  }
+
+  /** Create a durable named OpenAI-compatible provider in Rust Runtime. */
+  async createCustomProvider(body: CreateCustomProviderBody): Promise<ProviderMutationResponse> {
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/providers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }, 30000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers`, 'Create Runtime provider failed')
+      return res.json()
+    }
+    return this.runtimeUnsupported('创建自定义模型商')
+  }
+
+  /** Remove a named custom provider. Built-in providers are rejected by Runtime. */
+  async deleteCustomProvider(providerId: string): Promise<ProviderMutationResponse> {
+    if (this.usesEmbeddedRuntime) {
+      const path = `/providers/${encodeURIComponent(providerId)}`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Delete Runtime provider failed')
+      return res.json()
+    }
+    return this.runtimeUnsupported('删除自定义模型商')
+  }
+
   async getMemoryStats(): Promise<Record<string, any>> {
     if (this.usesEmbeddedRuntime) {
       const memory = await this.getMemoryDetails()
@@ -1075,7 +1276,7 @@ export class HakusAIClient {
     if (this.usesEmbeddedRuntime) {
       // The Rust engine owns the tool catalog per thread and does not expose
       // the old global enable/disable list. Returning an empty list keeps the
-      // settings view honest instead of querying the removed Python API.
+      // Keep the settings view honest instead of querying a removed endpoint.
       return { tools: [] }
     }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tools`, {}, 10000)
@@ -1084,7 +1285,7 @@ export class HakusAIClient {
   }
 
   async toggleTool(tool_id: string, enabled: boolean): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' 工具全局开关')
+    if (this.usesEmbeddedRuntime) return this.runtimeUnsupported(' 工具全局开关')
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tools/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1228,7 +1429,15 @@ export class HakusAIClient {
   }
 
   async importConfig(config: Record<string, any>): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' 配置导入')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/config/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config }),
+      }, 30000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config/import`, 'Import Runtime config failed')
+      return
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1307,8 +1516,51 @@ export class HakusAIClient {
 
   // ============ TTS ============
 
+  async cloneVoice(audio: Blob, filename = 'voice.wav'): Promise<{ status: string; voice_id?: string; message?: string }> {
+    if (this.usesEmbeddedRuntime) {
+      const bytes = new Uint8Array(await audio.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+      }
+      const path = '/voice/clone'
+      const res = await this.runtimeFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_base64: btoa(binary), filename }),
+      }, 60000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Runtime voice clone failed')
+      return res.json()
+    }
+    const form = new FormData()
+    form.append('audio', audio, filename)
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/voice/clone`, { method: 'POST', body: form }, 60000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/voice/clone`, 'Voice clone failed')
+    return res.json()
+  }
+
+  async getVoiceCloneStatus(): Promise<{ status: string; voice_id?: string | null; error?: string; message?: string; progress?: string }> {
+    if (this.usesEmbeddedRuntime) {
+      const path = '/voice/clone/status'
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Get Runtime voice clone status failed')
+      return res.json()
+    }
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/voice/clone/status`, {}, 10000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/voice/clone/status`, 'Get voice clone status failed')
+    return res.json()
+  }
+
   async textToSpeech(text: string, voice?: string, speed?: number): Promise<Blob> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' TTS')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice, speed }),
+      }, 120000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/tts`, 'Runtime TTS failed')
+      return res.blob()
+    }
     const res = await fetch(`${this.baseUrl}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1319,7 +1571,11 @@ export class HakusAIClient {
   }
 
   async getTtsVoices(): Promise<TtsVoicesResponse> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' TTS 音色列表')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/tts/voices')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/tts/voices`, 'Get Runtime TTS voices failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/tts/voices`, {}, 10000)
     if (!res.ok) throw new HakusAIError(`Get TTS voices failed: ${res.status}`)
     return res.json()
@@ -1329,7 +1585,20 @@ export class HakusAIClient {
     audio: Blob,
     options?: { provider?: string; language?: string },
   ): Promise<{ text: string }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('语音转文字')
+    if (this.usesEmbeddedRuntime) {
+      const bytes = new Uint8Array(await audio.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+      }
+      const res = await this.runtimeFetch('/voice/asr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_base64: btoa(binary), language: options?.language }),
+      }, 120000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/voice/asr`, 'Runtime voice transcription failed')
+      return res.json()
+    }
     const form = new FormData()
     form.append('audio', audio, 'voice.wav')
     if (options?.provider) form.append('provider', options.provider)
@@ -1356,7 +1625,24 @@ export class HakusAIClient {
    */
   async uploadFiles(files: File[]): Promise<UploadedFile[]> {
     if (files.length === 0) return []
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported(' 文件上传')
+    if (this.usesEmbeddedRuntime) {
+      const payload = await Promise.all(files.map(async (file) => {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ''
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+        }
+        return { filename: file.name, content_type: file.type || undefined, data_base64: btoa(binary) }
+      }))
+      const res = await this.runtimeFetch('/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: payload }),
+      }, 60000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/upload`, 'Runtime upload failed')
+      const data = await res.json()
+      return data.files as UploadedFile[]
+    }
     const formData = new FormData()
     files.forEach((f) => formData.append('files', f))
     const res = await this.fetchWithHardTimeout(
@@ -1373,7 +1659,12 @@ export class HakusAIClient {
 
   /** 列出已上传的文件 (GET /api/files)。供 @ 提及菜单使用。 */
   async listFiles(): Promise<UploadedFile[]> {
-    if (this.usesEmbeddedRuntime) return []
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/files')
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/files`, 'List Runtime files failed')
+      const data = await res.json()
+      return data.files as UploadedFile[]
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/files`, {}, 10000)
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/files`, 'List files failed')
@@ -1385,7 +1676,20 @@ export class HakusAIClient {
   // ============ Non-streaming chat ============
 
   async chat(message: string, sessionId = 'default', provider?: string): Promise<ChatResponse> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('非流式对话')
+    if (this.usesEmbeddedRuntime) {
+      // The Rust Runtime intentionally exposes one replayable streaming
+      // primitive. Preserve the legacy promise-based API by consuming that
+      // stream internally and returning the accumulated assistant text.
+      let content = ''
+      await this.chatStreamEmbedded(
+        message,
+        sessionId,
+        (chunk) => { if (chunk.content) content += chunk.content },
+        undefined,
+        provider,
+      )
+      return { content, session_id: sessionId }
+    }
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1408,7 +1712,7 @@ export class HakusAIClient {
   /**
    * 使用 fetch + ReadableStream 解析 SSE.
    *
-   * 服务端发送的数据格式 (server.py:chat_stream):
+   * Runtime 服务端发送的数据格式:
    *   data: {"content":"...","emotion":"happy","done":false}\n\n
    *   data: {"done":true}\n\n
    *
@@ -1424,11 +1728,13 @@ export class HakusAIClient {
     signal?: AbortSignal,
     provider?: string,
     runMode?: AgentMode,
-    reasoningEffort?: 'low' | 'high' | 'max',
+    reasoningEffort?: string,
     projectId?: string,
+    model?: string,
+    longRunningGoal = false,
   ): Promise<void> {
     if (this.usesEmbeddedRuntime) {
-      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, provider, runMode, projectId)
+      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, model || provider, runMode, projectId, reasoningEffort, longRunningGoal)
       return
     }
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
@@ -1500,6 +1806,8 @@ export class HakusAIClient {
     provider?: string,
     runMode?: AgentMode,
     projectId?: string,
+    reasoningEffort?: string,
+    longRunningGoal = false,
   ): Promise<void> {
     const project = projectId
       ? (await this.listProjects()).find((candidate) => candidate.id === projectId) || null
@@ -1528,6 +1836,7 @@ export class HakusAIClient {
         prompt: runtimePrompt,
         ...(provider ? { model: provider } : {}),
         ...(runMode ? { mode: runMode } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       }),
       signal,
     })
@@ -1551,6 +1860,7 @@ export class HakusAIClient {
     const decoder = new TextDecoder()
     let buffer = ''
     let eventName = ''
+    let activeGoalStatus = longRunningGoal ? 'active' : 'none'
     try {
       while (true) {
         const { done, value } = await reader.read()
@@ -1565,10 +1875,18 @@ export class HakusAIClient {
           }
           if (!line.startsWith('data:')) continue
           const envelope = JSON.parse(line.slice(5).trim())
-          if (envelope.turn_id && envelope.turn_id !== turnId) continue
+          if (!longRunningGoal && envelope.turn_id && envelope.turn_id !== turnId) continue
           const event = this.runtimeEventToAgentEvent(eventName || envelope.event, envelope.payload || envelope)
           if (event) onChunk(this.eventToChunk(event), event)
+          if (eventName === 'thread_goal_updated') {
+            activeGoalStatus = String((envelope.payload || envelope).goal?.status || 'active')
+          } else if (eventName === 'thread_goal_cleared') {
+            activeGoalStatus = 'cleared'
+          }
           if (eventName === 'turn.completed') {
+            if (longRunningGoal && !['complete', 'blocked', 'paused', 'usage_limited', 'budget_limited', 'cleared'].includes(activeGoalStatus)) {
+              continue
+            }
             onChunk({ done: true })
             if (project) {
               try {
@@ -1649,6 +1967,10 @@ export class HakusAIClient {
       }
       case 'turn.failed':
         return { event_type: 'turn_failed', code: 'RUNTIME_ERROR', error: String(payload.error || payload.message || 'Runtime turn failed') }
+      case 'thread_goal_updated':
+        return { event_type: 'goal_updated', goal: payload.goal || null } as AgentEvent
+      case 'thread_goal_cleared':
+        return { event_type: 'goal_updated', goal: null, cleared: true } as AgentEvent
       default:
         return null
     }
@@ -2065,7 +2387,12 @@ export class HakusAIClient {
 
   /** Delete a single message. */
   async deleteMessage(sessionId: string, messageId: string): Promise<void> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('单条消息删除')
+    if (this.usesEmbeddedRuntime) {
+      const path = `/threads/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Delete Runtime message failed')
+      return
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Delete message failed')
@@ -2080,7 +2407,16 @@ export class HakusAIClient {
    * store (i.e. always, for the "撤回此轮" button).
    */
   async rewindSessionToMessage(sessionId: string, messageId: string): Promise<{ deleted_messages: number }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('按消息回退；Rust Runtime 目前只支持按 turn undo')
+    if (this.usesEmbeddedRuntime) {
+      const path = `/threads/${encodeURIComponent(sessionId)}/rewind`
+      const res = await this.runtimeFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId }),
+      }, 15000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Rewind Runtime session failed')
+      return res.json()
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/rewind`
     const res = await this.fetchWithHardTimeout(
       url,
@@ -2124,7 +2460,14 @@ export class HakusAIClient {
 
   /** Manually trigger session log compaction. */
   async compactSessionLog(sessionId: string): Promise<{ session_id: string; stats: SessionLogStats }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('会话日志压缩')
+    if (this.usesEmbeddedRuntime) {
+      // Runtime event logs are compacted through the thread endpoint. Read
+      // the projection back afterwards so callers keep the legacy stats
+      // contract used by the review panel.
+      await this.compactRuntimeThread(sessionId, {})
+      const compacted = await this.getSessionLog(sessionId)
+      return { session_id: sessionId, stats: compacted.stats }
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/log/compact`
     const res = await this.fetchWithHardTimeout(url, { method: 'POST' }, 15000)
     if (!res.ok) await this._throwForResponse(res, url, 'Compact session log failed')
@@ -2133,7 +2476,12 @@ export class HakusAIClient {
 
   /** Clear the session log (live + archive). */
   async clearSessionLog(sessionId: string): Promise<void> {
-    if (this.usesEmbeddedRuntime) return
+    if (this.usesEmbeddedRuntime) {
+      const path = `/threads/${encodeURIComponent(sessionId)}/event-log`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Clear Runtime session log failed')
+      return
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/log`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Clear session log failed')
@@ -2141,7 +2489,13 @@ export class HakusAIClient {
 
   /** Clear all messages in a session (keeps the session row). */
   async clearSessionMessages(sessionId: string): Promise<{ deleted_messages: number }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('清空会话消息')
+    if (this.usesEmbeddedRuntime) {
+      const path = `/threads/${encodeURIComponent(sessionId)}/messages`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Clear Runtime session messages failed')
+      const data = await res.json()
+      return { deleted_messages: Number(data.deleted_items || 0) }
+    }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
     if (!res.ok) await this._throwForResponse(res, url, 'Clear session messages failed')
@@ -2150,7 +2504,15 @@ export class HakusAIClient {
 
   /** Bulk import sessions + messages (idempotent INSERT OR REPLACE). */
   async migrateSessions(body: BulkImportBody): Promise<{ imported: { sessions: number; messages: number } }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('会话迁移导入')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/sessions/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }, 60000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/sessions/migrate`, 'Migrate Runtime sessions failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions/migrate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2162,7 +2524,11 @@ export class HakusAIClient {
 
   /** Export all sessions + messages as a single JSON (for backup/restore). */
   async exportSessions(): Promise<BulkImportBody & { schema_version: number; exported_at: number }> {
-    if (this.usesEmbeddedRuntime) this.runtimeUnsupported('会话导出')
+    if (this.usesEmbeddedRuntime) {
+      const res = await this.runtimeFetch('/sessions/export', {}, 60000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/sessions/export`, 'Export Runtime sessions failed')
+      return res.json()
+    }
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/sessions/export`, {}, 30000)
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/sessions/export`, 'Export sessions failed')
     return res.json()
@@ -2341,7 +2707,18 @@ export class HakusAIClient {
     level?: string
     after_ts?: number
   }): Promise<LogsResponse> {
-    if (this.usesEmbeddedRuntime) return { files: [], logs: [] }
+    if (this.usesEmbeddedRuntime) {
+      const params = new URLSearchParams()
+      if (opts?.name) params.set('name', opts.name)
+      if (opts?.lines) params.set('lines', String(opts.lines))
+      if (opts?.level) params.set('level', opts.level)
+      if (opts?.after_ts) params.set('after_ts', String(opts.after_ts))
+      const query = params.toString() ? `?${params.toString()}` : ''
+      const path = `/logs${query}`
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Get Runtime logs failed')
+      return res.json()
+    }
     const params = new URLSearchParams()
     if (opts?.name) params.set('name', opts.name)
     if (opts?.lines) params.set('lines', String(opts.lines))
@@ -2354,6 +2731,35 @@ export class HakusAIClient {
       await this._throwForResponse(res, url, 'Get logs failed')
     }
     return res.json()
+  }
+
+  /** Clear one Runtime log file, or every Runtime log when name is omitted. */
+  async clearLogs(name?: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const query = name ? `?name=${encodeURIComponent(name)}` : ''
+      const path = `/logs${query}`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Clear Runtime logs failed')
+      return
+    }
+    const query = name ? `?name=${encodeURIComponent(name)}` : ''
+    const url = `${this.baseUrl}/api/logs${query}`
+    const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Clear logs failed')
+  }
+
+  /** Download one persisted log as a plain-text blob. */
+  async downloadLogs(name: string): Promise<Blob> {
+    if (this.usesEmbeddedRuntime) {
+      const path = `/logs?download=1&name=${encodeURIComponent(name)}`
+      const res = await this.runtimeFetch(path)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Download Runtime logs failed')
+      return res.blob()
+    }
+    const url = `${this.baseUrl}/api/logs?download=1&name=${encodeURIComponent(name)}`
+    const res = await this.fetchWithHardTimeout(url, {}, 30000)
+    if (!res.ok) await this._throwForResponse(res, url, 'Download logs failed')
+    return res.blob()
   }
 
   terminalWsUrl(): string {
