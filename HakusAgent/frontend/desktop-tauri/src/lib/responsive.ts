@@ -8,6 +8,11 @@ export const PHONE_VIEWPORT_QUERY = [
 ].join(', ')
 
 export function isPhoneViewport(): boolean {
-  return typeof window !== 'undefined'
-    && Boolean(window.matchMedia?.(PHONE_VIEWPORT_QUERY).matches)
+  if (typeof window === 'undefined') return false
+  // Android WebViews can report a desktop-sized layout viewport even when the
+  // activity is a phone. The native shell still has touch-first navigation,
+  // so treat Android as the phone composition and let CSS handle the exact
+  // width when the viewport is available.
+  const android = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+  return android || Boolean(window.matchMedia?.(PHONE_VIEWPORT_QUERY).matches)
 }

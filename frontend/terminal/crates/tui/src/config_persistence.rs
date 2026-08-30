@@ -390,6 +390,28 @@ pub(crate) fn persist_provider_enabled_for_identity(
     Ok(path)
 }
 
+/// Persist the explicit API dialect for one provider route.  The dialect is
+/// provider-owned configuration, so it must stay alongside the route's model
+/// and endpoint instead of being inferred from a provider id suffix.
+pub(crate) fn persist_provider_wire_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    wire: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
+    let normalized = wire.map(str::trim).filter(|value| !value.is_empty());
+    mutate_config_document(&path, |doc| {
+        let segments = ["providers", key.as_str(), "wire"];
+        match normalized {
+            Some(value) => set_document_value(doc, &segments, value),
+            None => unset_document_value(doc, &segments).map(|_| ()),
+        }
+    })?;
+    Ok(path)
+}
+
 /// Replace the user-curated model list for one provider. Empty lists are
 /// removed so the runtime can fall back to its live/catalog models.
 pub(crate) fn persist_provider_models_for_identity(

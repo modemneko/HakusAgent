@@ -2534,31 +2534,34 @@ select:focus {
 
   .app-shell {
     box-sizing: border-box;
-    padding: var(--mac-pane-gap);
+    /* The native window already supplies the outer frame. A CSS inset here
+       becomes a black ring in undecorated Tauri windows and is especially
+       visible during resize or first paint. */
+    padding: 0;
     background: hsl(var(--background));
   }
 
   .app-main {
-    gap: var(--mac-pane-gap);
+    gap: 0;
     min-height: 0;
   }
 
   .app-content {
     min-width: 0;
     overflow: hidden;
-    border: 1px solid hsl(var(--foreground) / 0.12);
-    border-radius: var(--mac-window-radius);
+    border: 0;
+    border-radius: 0;
     background: hsl(var(--background) / 0.94);
-    box-shadow: 0 12px 34px hsl(240 20% 2% / 0.13), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+    box-shadow: none;
   }
 
   .sidebar-wrapper[data-panel-open="true"],
   .right-panel-wrapper[data-panel-open="true"] {
     overflow: hidden !important;
-    border: 1px solid hsl(var(--foreground) / 0.12);
-    border-radius: var(--mac-window-radius);
+    border: 0;
+    border-radius: 0;
     background: var(--ios-material);
-    box-shadow: 0 12px 34px hsl(240 20% 2% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+    box-shadow: none;
   }
 
   .sidebar-wrapper:not([data-panel-open="true"]),
@@ -2579,7 +2582,7 @@ select:focus {
   .titlebar {
     height: var(--mac-toolbar-height) !important;
     min-height: var(--mac-toolbar-height) !important;
-    border-radius: var(--mac-window-radius) var(--mac-window-radius) 0 0;
+    border-radius: 0;
     background: var(--ios-material) !important;
   }
 
@@ -2602,7 +2605,7 @@ select:focus {
 
   .statusbar {
     min-height: 1.75rem;
-    border-radius: 0 0 var(--mac-window-radius) var(--mac-window-radius);
+    border-radius: 0;
     background: var(--ios-material) !important;
   }
 
@@ -2878,6 +2881,204 @@ select:focus-visible {
 .starter-card-grid button:focus-visible {
   border-color: hsl(var(--primary) / 0.3) !important;
   background: hsl(var(--primary) / 0.06) !important;
+}
+
+/* Full-viewport settings surface.  Tauri has no native window chrome, so a
+   constrained dialog leaves a visible dark ring on desktop and clips the
+   same content in Android WebView.  Settings owns the whole viewport and
+   returns to chat through its leading navigation control. */
+.settings-dialog-content {
+  inset: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  transform: none !important;
+  translate: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding-top: env(safe-area-inset-top);
+}
+
+.settings-dialog-content > button[aria-label="Close"] {
+  display: none !important;
+}
+
+/* Radix's close control is icon-only and has a visually hidden label rather
+ * than an aria-label attribute. Settings already has its own leading Back
+ * control, so keep that single navigation affordance on every platform. */
+.settings-dialog-content > button {
+  display: none !important;
+}
+
+.settings-dialog-content::before {
+  display: none !important;
+}
+
+.settings-dialog-header {
+  min-height: 4.25rem;
+  padding-left: max(1.25rem, env(safe-area-inset-left));
+  padding-right: max(1.25rem, env(safe-area-inset-right));
+}
+
+.settings-dialog-back {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.settings-dialog-back:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+}
+
+.settings-dialog-body {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.settings-dialog-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-dialog-panel > div {
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.settings-dialog-model-panel > div > div,
+.settings-dialog-model-panel > div > div > div {
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+/* Radix ScrollArea uses a table-like sizing shim. Let the model surface opt
+   into a bounded flex/grid height so its two columns own their scrollbars. */
+.settings-dialog-model-panel [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+.settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.model-provider-layout {
+  min-height: 100%;
+  height: 100%;
+}
+
+.model-provider-sidebar {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.model-provider-list-scroll {
+  max-height: none !important;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.model-provider-form {
+  max-height: none !important;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (min-width: 768px) {
+  .app-shell {
+    padding: 0 !important;
+  }
+
+  .app-main {
+    gap: 0 !important;
+  }
+
+  .app-content,
+  .sidebar-wrapper[data-panel-open="true"],
+  .right-panel-wrapper[data-panel-open="true"],
+  .titlebar,
+  .statusbar {
+    border-radius: 0 !important;
+  }
+
+  .app-content {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .settings-dialog-header {
+    min-height: 4rem;
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  .settings-dialog-panel > div {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+.hakus-splash {
+  background: #0a0a0f;
+  color: #f8f8fb;
+}
+
+.hakus-splash-mark {
+  display: flex;
+  width: 5rem;
+  height: 5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--primary) / 0.52);
+  border-radius: 1.375rem;
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--primary));
+  font-size: 1.875rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  box-shadow: 0 12px 32px hsl(var(--primary) / 0.18);
+  animation: splash-mark-in 520ms ease-out both;
+}
+
+.hakus-splash-wordmark {
+  color: #f4f2ff;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  animation: splash-text-in 520ms ease-out 120ms both;
+}
+
+.hakus-splash-subtitle {
+  margin-top: 0.5rem;
+  color: hsl(var(--muted-foreground) / 0.9);
+  font-size: 0.625rem;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  animation: splash-text-in 520ms ease-out 240ms both;
+}
+
+@keyframes splash-text-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-mark-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .topbar-review-button[class*="bg-accent/60"] {

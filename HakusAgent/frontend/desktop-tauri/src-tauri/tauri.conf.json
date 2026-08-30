@@ -19,8 +19,9 @@
         "minWidth": 800,
         "minHeight": 600,
         "decorations": false,
+        "shadow": false,
         "transparent": false,
-        "backgroundColor": "#17171a"
+        "backgroundColor": "#0e0e10"
       }
     ],
     "security": {

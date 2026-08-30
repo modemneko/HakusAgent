@@ -256,7 +256,7 @@ function App() {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const phoneQuery = window.matchMedia(PHONE_VIEWPORT_QUERY)
     const closePhonePanels = () => {
-      if (!phoneQuery.matches) return
+      if (!isPhoneViewport()) return
       setSidebar(false)
       setRightPanelOpen(false)
     }

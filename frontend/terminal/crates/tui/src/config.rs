@@ -325,6 +325,7 @@ impl ApiProvider {
     #[must_use]
     pub fn catalog_identity(self) -> Self {
         match self {
+            Self::DeepseekCN => Self::Deepseek,
             Self::DeepseekAnthropic => Self::Deepseek,
             Self::MinimaxAnthropic => Self::Minimax,
             Self::ModelstudioTokenPlanAnthropic

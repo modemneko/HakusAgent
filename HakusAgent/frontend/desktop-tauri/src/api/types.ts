@@ -167,6 +167,8 @@ export interface ProviderInfo {
   has_custom_headers?: boolean
   group?: string
   auth_mode?: string
+  /** Explicit request dialect for providers that support more than one API. */
+  wire?: 'openai' | 'anthropic' | string
   supports_connection_test?: boolean
   supports_live_models?: boolean
   supports_headers?: boolean
@@ -229,6 +231,8 @@ export interface UpdateProviderBody {
   set_as_default?: boolean
   enabled?: boolean
   models?: string[]
+  /** Persisted API dialect (for example `openai` or `anthropic`). */
+  wire?: string
 }
 
 // --- Provider 运维操作 (测试连接 / 获取模型 / 多 Key / 自定义 Header) ---

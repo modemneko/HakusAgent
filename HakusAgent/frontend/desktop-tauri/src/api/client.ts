@@ -26,6 +26,7 @@ import type {
   WSIncomingMessage,
   WSOutgoingMessage,
   ProvidersResponse,
+  ProviderInfo,
   UpdateProviderBody,
   CreateCustomProviderBody,
   ProviderMutationResponse,
@@ -110,6 +111,67 @@ export class BackendOutdatedError extends Error {
     this.backendVersion = opts.backendVersion ?? null
     this.path = opts.path ?? ''
   }
+}
+
+/**
+ * Older runtimes exposed API dialects and plan variants as separate provider
+ * ids. Keep that response usable while a desktop/mobile shell is upgraded by
+ * collapsing those ids into the same vendor row the current Rust catalog uses.
+ */
+const LEGACY_PROVIDER_CANONICAL_IDS: Record<string, string> = {
+  'deepseek-anthropic': 'deepseek',
+  'deepseek-cn': 'deepseek',
+  'minimax-anthropic': 'minimax',
+  'modelstudio-token-plan-anthropic': 'modelstudio-token-plan',
+  'modelstudio-coding-plan': 'modelstudio-token-plan',
+  'modelstudio-coding-plan-anthropic': 'modelstudio-token-plan',
+}
+
+const CANONICAL_PROVIDER_LABELS: Record<string, string> = {
+  deepseek: 'DeepSeek',
+  minimax: 'MiniMax',
+  'modelstudio-token-plan': 'Alibaba Cloud Model Studio',
+}
+
+function canonicalProviderId(id: string): string {
+  const normalized = id.trim().toLowerCase().replace(/_/g, '-')
+  return LEGACY_PROVIDER_CANONICAL_IDS[normalized] || normalized
+}
+
+function mergeProviderCatalog(entries: ProviderInfo[], current: string): ProviderInfo[] {
+  const groups = new Map<string, ProviderInfo[]>()
+  for (const entry of entries) {
+    const key = canonicalProviderId(entry.id)
+    const group = groups.get(key) || []
+    group.push(entry)
+    groups.set(key, group)
+  }
+
+  const merged: ProviderInfo[] = []
+  for (const [id, group] of groups) {
+    // Prefer the canonical row when present; otherwise keep the first legacy
+    // row as the persistence target and rewrite its visible id below.
+    const primary = group.find((entry) => entry.id.trim().toLowerCase() === id) || group[0]
+    const hasCanonicalRow = primary.id.trim().toLowerCase() === id
+    const credential = group.find((entry) => entry.has_api_key) || primary
+    const models = Array.from(new Set(group.flatMap((entry) => entry.models || [])))
+    const configuredModels = Array.from(new Set(group.flatMap((entry) => entry.configured_models || [])))
+    const variantWire = !hasCanonicalRow ? group.find((entry) => entry.wire)?.wire : undefined
+    const inferredWire = !hasCanonicalRow && group.some((entry) => /anthropic/i.test(entry.id)) ? 'anthropic' : undefined
+    merged.push({
+      ...primary,
+      id,
+      display_name: CANONICAL_PROVIDER_LABELS[id] || primary.display_name.replace(/\s+·\s+(Anthropic API|Token Plan \/ (?:OpenAI|Anthropic)|Coding Plan \/ (?:OpenAI|Anthropic))$/i, ''),
+      has_api_key: credential.has_api_key,
+      masked_api_key: credential.masked_api_key || primary.masked_api_key,
+      enabled: hasCanonicalRow ? primary.enabled !== false : group.some((entry) => entry.enabled !== false),
+      wire: primary.wire || variantWire || inferredWire,
+      models,
+      configured_models: configuredModels,
+      is_default: canonicalProviderId(current) === id,
+    })
+  }
+  return merged
 }
 
 export class HakusAIClient {
@@ -530,39 +592,49 @@ export class HakusAIClient {
       const res = await this.runtimeFetch('/providers')
       if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers`, 'Get providers failed')
       const data = await res.json()
+      const current = String(data.current || '')
+      const providers: ProviderInfo[] = (data.providers || []).map((provider: any) => ({
+        id: String(provider.id),
+        display_name: String(provider.display_name || provider.id),
+        has_url: Boolean(provider.has_url ?? provider.default_base_url),
+        has_api_key: Boolean(provider.has_api_key),
+        masked_api_key: String(provider.masked_api_key || ''),
+        model_name: String(provider.model || ''),
+        base_url: String(provider.base_url || ''),
+        is_default: provider.id === current,
+        default_base_url: String(provider.default_base_url || ''),
+        default_model: String(provider.default_model || ''),
+        has_model_catalog: Boolean(provider.has_model_catalog),
+        env_vars: Array.isArray(provider.env_vars) ? provider.env_vars.map(String) : [],
+        has_custom_headers: Boolean(provider.has_custom_headers),
+        group: String(provider.group || '其他'),
+        auth_mode: String(provider.auth_mode || ''),
+        wire: provider.wire ? String(provider.wire) : undefined,
+        supports_connection_test: Boolean(provider.supports_connection_test),
+        supports_live_models: Boolean(provider.supports_live_models),
+        supports_headers: Boolean(provider.supports_headers),
+        supports_multi_key: Boolean(provider.supports_multi_key),
+        is_custom: Boolean(provider.is_custom),
+        description: provider.description ? String(provider.description) : undefined,
+        enabled: provider.enabled !== false,
+        models: Array.isArray(provider.models) ? provider.models.map(String) : [],
+        configured_models: Array.isArray(provider.configured_models) ? provider.configured_models.map(String) : [],
+      }))
       return {
-        default_model: String(data.current || 'deepseek'),
-        providers: (data.providers || []).map((provider: any) => ({
-          id: String(provider.id),
-          display_name: String(provider.display_name || provider.id),
-          has_url: Boolean(provider.has_url ?? provider.default_base_url),
-          has_api_key: Boolean(provider.has_api_key),
-          masked_api_key: String(provider.masked_api_key || ''),
-          model_name: String(provider.model || ''),
-          base_url: String(provider.base_url || ''),
-          is_default: provider.id === data.current,
-          default_base_url: String(provider.default_base_url || ''),
-          default_model: String(provider.default_model || ''),
-          has_model_catalog: Boolean(provider.has_model_catalog),
-          env_vars: Array.isArray(provider.env_vars) ? provider.env_vars.map(String) : [],
-          has_custom_headers: Boolean(provider.has_custom_headers),
-          group: String(provider.group || '其他'),
-          auth_mode: String(provider.auth_mode || ''),
-          supports_connection_test: Boolean(provider.supports_connection_test),
-          supports_live_models: Boolean(provider.supports_live_models),
-          supports_headers: Boolean(provider.supports_headers),
-          supports_multi_key: Boolean(provider.supports_multi_key),
-          is_custom: Boolean(provider.is_custom),
-          description: provider.description ? String(provider.description) : undefined,
-          enabled: provider.enabled !== false,
-          models: Array.isArray(provider.models) ? provider.models.map(String) : [],
-          configured_models: Array.isArray(provider.configured_models) ? provider.configured_models.map(String) : [],
-        })),
+        default_model: current || 'deepseek',
+        providers: mergeProviderCatalog(providers, current),
       }
     }
-    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {}, 10000)
-    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config/providers`, 'Get providers failed')
-    return res.json()
+      const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/config/providers`, {}, 10000)
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/config/providers`, 'Get providers failed')
+      const data = await res.json()
+      const providers = Array.isArray(data.providers) ? data.providers as ProviderInfo[] : []
+      const current = String(data.current || providers.find((provider) => provider.is_default)?.id || '')
+      return {
+        ...data,
+        default_model: String(data.default_model || current || 'deepseek'),
+        providers: mergeProviderCatalog(providers, current),
+      }
   }
 
   async updateProvider(body: UpdateProviderBody): Promise<void> {
@@ -577,8 +649,9 @@ export class HakusAIClient {
           set_as_default: body.set_as_default ?? false,
           enabled: body.enabled,
           models: body.models,
+          wire: body.wire,
         }),
-      }, 30000)
+      }, 10000)
       if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers/${body.provider}`, 'Update Runtime provider failed')
       return
     }

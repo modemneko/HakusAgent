@@ -69,7 +69,7 @@ const DEFAULT_BASE_URL_HINTS: Record<string, string> = {
 }
 
 function providerRouteHint(provider: ProviderInfo): string {
-  const protocol = provider.id.endsWith('-anthropic') ? 'Anthropic API' : 'OpenAI 兼容 API'
+  const protocol = provider.wire === 'anthropic' ? 'Anthropic Messages' : 'OpenAI Chat Completions'
   const auth = provider.auth_mode === 'oauth' ? 'OAuth' : provider.auth_mode === 'none' ? '无需密钥' : 'API Key'
   return `${protocol} · ${auth}`
 }
@@ -85,6 +85,7 @@ export function ModelPanel() {
   const [selectedId, setSelectedId] = useState<string>('')
   const [modelName, setModelName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [apiFormat, setApiFormat] = useState<'openai' | 'anthropic'>('openai')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [providerModels, setProviderModels] = useState<string[]>([])
@@ -171,21 +172,24 @@ export function ModelPanel() {
   }, [providers, selectedId])
 
   useEffect(() => {
-    const list = providerListRef.current
-    const row = providerRowRefs.current[selectedId]
-    if (!list || !row) return
-    // Keep the provider navigation as the only scroll owner. scrollIntoView()
-    // can bubble to the settings dialog and move the form column as well.
-    const rowTop = row.offsetTop
-    const rowBottom = rowTop + row.offsetHeight
-    const visibleTop = list.scrollTop
-    const visibleBottom = visibleTop + list.clientHeight
-    if (rowTop < visibleTop) {
-      list.scrollTop = Math.max(0, rowTop - 12)
-    } else if (rowBottom > visibleBottom) {
-      list.scrollTop = Math.min(list.scrollHeight, rowBottom - list.clientHeight + 12)
-    }
-  }, [selectedId])
+    const frame = window.requestAnimationFrame(() => {
+      const list = providerListRef.current
+      const row = providerRowRefs.current[selectedId]
+      if (!list || !row) return
+      // Keep the provider navigation as the only scroll owner. scrollIntoView()
+      // can bubble to the settings dialog and move the form column as well.
+      // Bounding rectangles remain correct even though rows are nested inside
+      // group containers (offsetTop would otherwise be relative to that group).
+      const listRect = list.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      if (rowRect.top < listRect.top) {
+        list.scrollTop -= listRect.top - rowRect.top + 12
+      } else if (rowRect.bottom > listRect.bottom) {
+        list.scrollTop += rowRect.bottom - listRect.bottom + 12
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [selectedId, providers.length])
 
   // 选中变化时同步表单
   const selected: ProviderInfo | undefined = providers.find((p) => p.id === selectedId)
@@ -196,6 +200,7 @@ export function ModelPanel() {
       if (providerFormRef.current) providerFormRef.current.scrollTop = 0
       setModelName(selected.model_name || '')
       setBaseUrl(selected.base_url || '')
+      setApiFormat(selected.wire === 'anthropic' ? 'anthropic' : 'openai')
       setApiKey('')
       setShowKey(false)
       // `models` is the provider's catalog (or a live discovery result), not
@@ -250,6 +255,7 @@ export function ModelPanel() {
       if (selected.id !== 'ollama') body.api_key = apiKey
       body.models = providerModels
       body.enabled = selected.enabled !== false
+      body.wire = apiFormat
       await apiClient.updateProvider(body as any)
       toast.success(`${selected.display_name} 配置已保存`)
       await loadProviders()
@@ -469,6 +475,7 @@ export function ModelPanel() {
         enabled,
         model_name: target.id === selected?.id ? (modelName.trim() || undefined) : (target.model_name || undefined),
         models: target.id === selected?.id ? models : undefined,
+        wire: target.id === selected?.id ? apiFormat : target.wire,
       })
       await loadProviders()
       toast.success(enabled ? `${target.display_name} 已启用` : `${target.display_name} 已停用`)
@@ -595,7 +602,7 @@ export function ModelPanel() {
                       key={p.id}
                       className={cn(
                         'model-provider-row group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 transition-colors duration-150',
-                        active ? 'bg-foreground/[0.055] ring-1 ring-foreground/10' : 'hover:bg-foreground/[0.035]',
+                        active ? 'border-primary/20 bg-primary/[0.08]' : 'border-transparent hover:bg-foreground/[0.035]',
                         !enabled && 'opacity-55',
                       )}
                       data-selected={active ? 'true' : undefined}
@@ -617,6 +624,7 @@ export function ModelPanel() {
                       </button>
                       <Switch
                         checked={enabled}
+                        disabled={saving}
                         onCheckedChange={(value) => {
                           void handleToggleProvider(value, p)
                         }}
@@ -736,10 +744,10 @@ export function ModelPanel() {
                   <Label>模型列表</Label>
                   <p className="text-[11px] text-muted-foreground">一个模型商可以保存多个模型，当前模型用于新对话。</p>
                 </div>
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  <span>{selected.enabled === false ? '已停用' : '已启用'}</span>
+                <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                   <Switch
                     checked={selected.enabled !== false}
+                    disabled={saving}
                     onCheckedChange={(value) => void handleToggleProvider(value)}
                     aria-label={`${selected.display_name}启用状态`}
                   />
@@ -779,6 +787,20 @@ export function ModelPanel() {
                 </p>
               </div>
             )}
+
+            <div className="space-y-2">
+              <Label htmlFor="api-format">API 格式</Label>
+              <select
+                id="api-format"
+                value={apiFormat}
+                onChange={(event) => setApiFormat(event.target.value as 'openai' | 'anthropic')}
+                className="flex h-10 w-full items-center justify-between rounded-xl border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="openai">OpenAI Chat Completions</option>
+                <option value="anthropic">Anthropic Messages</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground">按当前模型商支持的接口选择，保存后立即应用。</p>
+            </div>
 
             {selected.id !== 'ollama' && (
               <div className="space-y-2">

@@ -6673,6 +6673,8 @@ struct ProviderEntry {
     is_custom: bool,
     /// Effective auth mode, such as `api_key`, `oauth`, or `none`.
     auth_mode: String,
+    /// Explicit API dialect selected for this route, when configured.
+    wire: Option<String>,
     supports_connection_test: bool,
     supports_live_models: bool,
     supports_headers: bool,
@@ -6734,6 +6736,8 @@ struct ProviderUpdateRequest {
     enabled: Option<bool>,
     #[serde(default)]
     models: Option<Vec<String>>,
+    #[serde(default)]
+    wire: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -6908,6 +6912,11 @@ fn provider_entry_for_identity(
     let auth_mode = route
         .auth_mode_for_provider(provider)
         .unwrap_or_else(|| provider.credential_help().acquisition.as_str().to_string());
+    let wire = route
+        .provider_config_for(provider)
+        .and_then(|entry| entry.wire.clone())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
     let has_model_catalog = !crate::provider_lake::all_catalog_models_for_provider(provider).is_empty();
     let default_model = if provider == ApiProvider::Custom {
         model.clone()
@@ -6980,6 +6989,7 @@ fn provider_entry_for_identity(
         group: group.to_string(),
         is_custom: provider == ApiProvider::Custom,
         auth_mode,
+        wire,
         supports_connection_test: true,
         supports_live_models: true,
         supports_headers: true,
@@ -6991,21 +7001,40 @@ fn provider_entry_for_identity(
     }
 }
 
-fn provider_entry_for(
+/// Build the one-row-per-vendor entry used by the desktop and mobile pickers.
+///
+/// Older configs can still select a dialect or plan-specific provider kind.
+/// Keep that exact route for reading and persistence while exposing the
+/// canonical catalog id to the UI, so those configs neither disappear nor
+/// create duplicate rows.
+fn provider_entry_for_catalog(
     config: &Config,
     active_provider: ApiProvider,
     active_identity: &str,
-    provider: ApiProvider,
+    catalog_provider: ApiProvider,
 ) -> ProviderEntry {
-    let identity = provider.as_str().to_string();
-    provider_entry_for_identity(
+    let route_provider = if active_provider.catalog_identity() == catalog_provider {
+        active_provider
+    } else {
+        catalog_provider
+    };
+    let route_identity = if route_provider == active_provider {
+        active_identity
+    } else {
+        catalog_provider.as_str()
+    };
+    let mut entry = provider_entry_for_identity(
         config,
         active_provider,
         active_identity,
-        provider,
-        &identity,
-        &provider_display_name(provider, &identity),
-    )
+        route_provider,
+        route_identity,
+        &provider_display_name(catalog_provider, catalog_provider.as_str()),
+    );
+    entry.id = catalog_provider.as_str().to_string();
+    entry.display_name = catalog_provider.display_name().to_string();
+    entry.is_custom = false;
+    entry
 }
 
 fn resolve_runtime_provider(config: &Config, id: &str) -> Result<RuntimeProviderRoute, ApiError> {
@@ -7037,6 +7066,19 @@ fn resolve_runtime_provider(config: &Config, id: &str) -> Result<RuntimeProvider
     }
 
     let provider = parse_runtime_provider(id)?;
+    // A legacy config may currently run a dialect/plan-specific route while
+    // the picker exposes only its canonical vendor row. Route edits and model
+    // switches from that row must continue to target the exact active table.
+    let active_provider = config.api_provider();
+    if active_provider != provider
+        && active_provider != ApiProvider::Custom
+        && active_provider.catalog_identity() == provider.catalog_identity()
+    {
+        return Ok(RuntimeProviderRoute {
+            provider: active_provider,
+            identity: config.provider_identity_for(active_provider),
+        });
+    }
     let identity = config
         .resolve_provider_identity(&config.provider_identity_for(provider))
         .map_err(ApiError::bad_request)?;
@@ -7154,17 +7196,23 @@ async fn list_providers(
     let config = state.config.read().clone();
     let active_provider = config.api_provider();
     let active_identity = config.provider_identity_for(active_provider);
-    let current = active_identity.clone();
+    // Picker ids are canonical catalog identities. Keep the exact active
+    // identity only inside the runtime/config layer for legacy compatibility.
+    let current = if active_provider == ApiProvider::Custom {
+        active_identity.clone()
+    } else {
+        active_provider.catalog_identity().as_str().to_string()
+    };
     let mut providers = Vec::new();
-    for api_provider in ApiProvider::sorted_for_display() {
-        if api_provider == ApiProvider::Custom {
+    for api_provider in ApiProvider::catalog() {
+        if *api_provider == ApiProvider::Custom {
             continue;
         }
-        providers.push(provider_entry_for(
+        providers.push(provider_entry_for_catalog(
             &config,
             active_provider,
             &active_identity,
-            api_provider,
+            *api_provider,
         ));
     }
     if let Some(custom) = config.providers.as_ref().map(|providers| &providers.custom) {
@@ -7482,6 +7530,22 @@ async fn update_provider(
             models,
         )
         .map_err(|error| ApiError::internal(format!("Failed to save provider models: {error}")))?;
+    }
+
+    if let Some(wire) = req.wire.as_deref() {
+        let normalized = wire.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+        let value = match normalized.as_str() {
+            "openai" | "openai-compatible" | "chat-completions" | "completions" => "openai",
+            "anthropic" | "anthropic-messages" | "messages" | "anthropic-compatible" => "anthropic",
+            _ => return Err(ApiError::bad_request("wire must be openai or anthropic")),
+        };
+        config_persistence::persist_provider_wire_for_identity(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            Some(value),
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider API format: {error}")))?;
     }
 
     if req.set_as_default {

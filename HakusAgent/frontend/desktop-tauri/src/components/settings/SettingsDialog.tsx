@@ -35,6 +35,7 @@ import {
   Sparkles,
   FolderOpen,
   WandSparkles,
+  ArrowLeft,
 } from 'lucide-react'
 import { WeChatPanel } from './panels/WeChatPanel'
 import {
@@ -109,8 +110,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
-  const [active, setActive] = useState<CategoryId>(isAndroid ? 'connection' : 'model')
+  const [active, setActive] = useState<CategoryId>('model')
   const activeCat = CATEGORIES.find((c) => c.id === active) || CATEGORIES[0]
   const ActiveIcon = activeCat.icon
 
@@ -120,20 +120,27 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         // Override default `grid` with `flex flex-col` — grid doesn't
         // honor min-h-0 on children, so flex is required for the middle
         // row to shrink and let ScrollArea work (Issue 4 fix).
-        className="settings-dialog-content flex max-w-4xl flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 shadow-lg sm:rounded-lg"
-        // Use flex column with explicit max-height so the dialog itself
-        // never grows taller than the viewport. The middle row (main
-        // content) uses flex-1 + min-h-0 so it shrinks to fit, letting
-        // the inner ScrollArea actually scroll instead of overflowing
-        // into the footer.
-        style={{ maxHeight: '90vh', height: 'min(90vh, 720px)' }}
+        className="settings-dialog-content flex h-full max-w-none flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 shadow-none"
       >
         <DialogHeader className="settings-dialog-header shrink-0 border-b border-border/70 bg-card px-6 py-4">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <ActiveIcon className="h-4 w-4 text-primary" />
-            设置 · {activeCat.label}
-          </DialogTitle>
-          <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="settings-dialog-back inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
+              onClick={() => onOpenChange(false)}
+              aria-label="返回聊天"
+              title="返回聊天"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <div className="min-w-0">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <ActiveIcon className="h-4 w-4 text-primary" />
+                设置 · {activeCat.label}
+              </DialogTitle>
+              <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <label className="settings-dialog-mobile-picker">
@@ -193,7 +200,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {/* Right: panel — flex-1 + min-h-0 so it shrinks; ScrollArea
               with h-full so it actually scrolls when content overflows. */}
-          <div className="settings-dialog-panel min-h-0 flex-1 overflow-hidden">
+          <div
+            className={cn(
+              'settings-dialog-panel min-h-0 flex-1 overflow-hidden',
+              active === 'model' && 'settings-dialog-model-panel',
+            )}
+          >
             <ScrollArea className="h-full">
               <div className="p-6">
                 {active === 'model' && <ModelPanel />}
@@ -216,15 +228,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="settings-dialog-footer flex shrink-0 justify-end border-t border-border/50 bg-card px-6 py-3">
-          <button
-            onClick={() => onOpenChange(false)}
-            className="rounded-md px-4 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-          >
-            关闭
-          </button>
-        </div>
       </DialogContent>
     </Dialog>
   )
