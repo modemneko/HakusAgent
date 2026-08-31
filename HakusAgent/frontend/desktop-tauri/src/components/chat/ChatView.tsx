@@ -19,6 +19,7 @@ import { VoiceConversation, type ConversationState } from '@/lib/voiceConversati
 import { VoiceCallEngine, type VoiceCallState } from '@/lib/voiceCall'
 import { useToast } from '@/components/ui/toast'
 import type { ChatMessage } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 interface TimelineMessageItem {
   kind: 'message'
@@ -162,6 +163,7 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
 }
 
 export function ChatView() {
+  const { t } = useI18n()
   const toast = useToast()
   const sessions = useSessionStore((s) => s.sessions)
   const activeId = useSessionStore((s) => s.activeSessionId)
@@ -808,19 +810,24 @@ export function ChatView() {
     return (
       <div className="empty-state-hero flex flex-1 items-center justify-center bg-background">
         <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+          <div className="empty-state-icon mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
             <Sparkles className="h-5 w-5" />
           </div>
-          <h2 className="text-lg font-semibold tracking-tight">Welcome to HakusAI</h2>
+          <h2 className="text-lg font-semibold tracking-tight">{t('welcomeTitle')}</h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Click the sidebar <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd> to start a new chat
+            {(() => {
+              const hint = t('welcomeHint')
+              const plusIndex = hint.indexOf('+')
+              if (plusIndex < 0) return hint
+              return <>{hint.slice(0, plusIndex)}<kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd>{hint.slice(plusIndex + 1)}</>
+            })()}
           </p>
           <Button
             type="button"
             className="mt-5 rounded-full px-5"
             onClick={() => void createSession('New Chat')}
           >
-            开始新对话
+            {t('startChat')}
           </Button>
         </div>
       </div>
@@ -834,10 +841,10 @@ export function ChatView() {
         <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">
           <div className="flex items-center gap-2">
             <WifiOff className="h-3.5 w-3.5" />
-            <span>无法连接到 HakusAI 服务：{settings.connection.serverUrl}</span>
+            <span>{t('connectionUnavailable')}：{settings.connection.serverUrl}</span>
           </div>
           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => connCheck()}>
-            重试
+            {t('retry')}
           </Button>
         </div>
       )}
@@ -911,7 +918,7 @@ export function ChatView() {
         <div ref={scrollRef} className="h-full overflow-y-auto">
         {activeMessages.length === 0 ? (
           <EmptyStateHero
-            projectName={activeProject ? activeProject.name : '当前目录'}
+            projectName={activeProject ? activeProject.name : t('currentDirectory')}
             onPick={(prompt) => setComposerDraft(prompt)}
           />
         ) : (
@@ -978,29 +985,28 @@ export function ChatView() {
 // =============================================================================
 interface StarterCard {
   icon: typeof Rocket
-  label: string
-  prompt: string
+  labelKey: 'starterBuild' | 'starterReview' | 'starterExplore' | 'starterFix'
+  promptKey: 'starterBuildPrompt' | 'starterReviewPrompt' | 'starterExplorePrompt' | 'starterFixPrompt'
 }
 
 const STARTER_CARDS: StarterCard[] = [
-  { icon: Rocket, label: '构建新功能', prompt: '帮我构建一个新功能、应用或工具' },
-  { icon: GitPullRequest, label: '审查代码', prompt: '请审查代码并提出修改建议' },
-  { icon: Compass, label: '探索代码库', prompt: '探索并理解这个代码库的整体结构' },
-  { icon: Bug, label: '修复问题', prompt: '帮我修复一个 bug 或失败的测试' },
+  { icon: Rocket, labelKey: 'starterBuild', promptKey: 'starterBuildPrompt' },
+  { icon: GitPullRequest, labelKey: 'starterReview', promptKey: 'starterReviewPrompt' },
+  { icon: Compass, labelKey: 'starterExplore', promptKey: 'starterExplorePrompt' },
+  { icon: Bug, labelKey: 'starterFix', promptKey: 'starterFixPrompt' },
 ]
 
 function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: (prompt: string) => void }) {
+  const { t } = useI18n()
   return (
     <div className="empty-state-hero flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+      <div className="empty-state-icon flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
         <Sparkles className="h-5 w-5" />
       </div>
       <div>
-        <p className="text-base font-semibold">
-          你好，我是 HakusAI
-        </p>
+        <p className="text-base font-semibold">{t('helloHakus')}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          准备好在 <span className="font-medium text-foreground/80">{projectName}</span> 里开工了。构建新功能、审查代码、探索代码库，或修复问题 —— 选一个开始吧。
+          {t('readyToWorkPrefix')} <span className="font-medium text-foreground/80">{projectName}</span>{t('readyToWorkSuffix')}
         </p>
       </div>
       {/* ref 容器只用来测宽，本身不可见；内层 flex 真正承载卡片 */}
@@ -1010,16 +1016,16 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
             const Icon = card.icon
             return (
               <button
-                key={card.label}
-                onClick={() => onPick(card.prompt)}
-                title={card.prompt}
+                key={card.labelKey}
+                onClick={() => onPick(t(card.promptKey))}
+                title={t(card.promptKey)}
                 className="group flex w-32 aspect-square flex-col items-start gap-2 rounded-xl border border-border/60 bg-card/60 p-3 text-left backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
               >
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
                   <Icon className="h-4 w-4" />
                 </span>
                 <span className="text-xs font-medium leading-tight text-foreground/90">
-                  {card.label}
+                  {t(card.labelKey)}
                 </span>
               </button>
             )

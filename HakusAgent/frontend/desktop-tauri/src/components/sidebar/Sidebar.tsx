@@ -26,6 +26,7 @@ import { cn, truncate } from '@/lib/utils'
 import { isPhoneViewport } from '@/lib/responsive'
 import { useToast } from '@/components/ui/toast'
 import type { ChatSession } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 interface SessionGroup {
   label: string
@@ -44,7 +45,7 @@ function isWeChatSession(s: ChatSession): boolean {
   return s.provider === 'wechat'
 }
 
-function getSessionGroups(sessions: ChatSession[]): SessionGroup[] {
+function getSessionGroups(sessions: ChatSession[], language: 'zh-CN' | 'en-US'): SessionGroup[] {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const yesterday = new Date(today)
@@ -87,17 +88,19 @@ function getSessionGroups(sessions: ChatSession[]): SessionGroup[] {
   }
 
   const groups: SessionGroup[] = []
-  if (wechat.length) groups.push({ label: '微信', sessions: wechat })
-  if (pinned.length) groups.push({ label: '置顶', sessions: pinned })
-  if (todayList.length) groups.push({ label: '今天', sessions: todayList })
-  if (yesterdayList.length) groups.push({ label: '昨天', sessions: yesterdayList })
-  if (weekList.length) groups.push({ label: '最近 7 天', sessions: weekList })
-  if (monthList.length) groups.push({ label: '最近 30 天', sessions: monthList })
-  if (olderList.length) groups.push({ label: '更早', sessions: olderList })
+  const zh = language === 'zh-CN'
+  if (wechat.length) groups.push({ label: zh ? '微信' : 'WeChat', sessions: wechat })
+  if (pinned.length) groups.push({ label: zh ? '置顶' : 'Pinned', sessions: pinned })
+  if (todayList.length) groups.push({ label: zh ? '今天' : 'Today', sessions: todayList })
+  if (yesterdayList.length) groups.push({ label: zh ? '昨天' : 'Yesterday', sessions: yesterdayList })
+  if (weekList.length) groups.push({ label: zh ? '最近 7 天' : 'Last 7 days', sessions: weekList })
+  if (monthList.length) groups.push({ label: zh ? '最近 30 天' : 'Last 30 days', sessions: monthList })
+  if (olderList.length) groups.push({ label: zh ? '更早' : 'Earlier', sessions: olderList })
   return groups
 }
 
 export function Sidebar() {
+  const { locale, t } = useI18n()
   const sessions = useSessionStore((s) => s.sessions)
   const activeId = useSessionStore((s) => s.activeSessionId)
   const messages = useSessionStore((s) => s.messages)
@@ -131,8 +134,8 @@ export function Sidebar() {
 
   const groups = useMemo(() => {
     const sorted = [...filtered].sort((a, b) => b.updated_at - a.updated_at)
-    return getSessionGroups(sorted)
-  }, [filtered])
+    return getSessionGroups(sorted, locale)
+  }, [filtered, locale])
 
   const handleNew = () => {
     createSession()
@@ -160,9 +163,9 @@ export function Sidebar() {
   const handleDelete = async (id: string) => {
     try {
       await deleteSession(id)
-      toast.success('会话已删除')
+      toast.success(t('deleted'))
     } catch (e: any) {
-      toast.error(`删除失败：${e?.message || e}`)
+      toast.error(`${t('deleteFailed')}: ${e?.message || e}`)
     }
   }
 
@@ -179,7 +182,7 @@ export function Sidebar() {
             variant="ghost"
             className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
             onClick={handleNew}
-            title="New chat"
+            title={t('newChat')}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -187,8 +190,8 @@ export function Sidebar() {
             type="button"
             className="sidebar-mobile-close"
             onClick={() => setSidebar(false)}
-            aria-label="关闭侧栏"
-            title="关闭侧栏"
+            aria-label={t('closeSidebar')}
+            title={t('closeSidebar')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -202,7 +205,7 @@ export function Sidebar() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索会话..."
+            placeholder={t('searchSessions')}
             className="h-7 rounded-md border-border/70 bg-background/90 pl-8 text-[12px] placeholder:text-muted-foreground/60 focus-visible:rounded-md"
           />
         </div>
@@ -214,7 +217,7 @@ export function Sidebar() {
           {groups.length === 0 ? (
             <div className="px-3 py-8 text-center text-xs text-muted-foreground">
               <MessageSquare className="mx-auto mb-2 h-6 w-6 opacity-40" />
-              {search ? '无匹配结果' : '暂无会话'}
+              {search ? t('noMatches') : t('noSessions')}
             </div>
           ) : (
             groups.map((group) => (
@@ -228,7 +231,7 @@ export function Sidebar() {
                   const lastMsg = msgs[msgs.length - 1]
                   const preview = lastMsg
                     ? truncate(lastMsg.content.replace(/\s+/g, ' ').trim(), 34)
-                    : 'No messages yet'
+                    : t('noMessages')
 
                   return (
                     <div
@@ -277,18 +280,18 @@ export function Sidebar() {
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              title="更多操作"
-                              aria-label="更多操作"
+                              title={t('moreActions')}
+                              aria-label={t('moreActions')}
                               className="relative z-20 ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100"
                             >
                               <MoreHorizontal className="h-3.5 w-3.5" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" mobileTitle="会话操作" className="w-36">
+                          <DropdownMenuContent align="end" mobileTitle={t('moreActions')} className="w-36">
                             <DropdownMenuItem
                               onSelect={() => handleStartRename(session.id, session.title)}
                             >
-                              <Pencil className="mr-2 h-3.5 w-3.5" /> 重命名
+                              <Pencil className="mr-2 h-3.5 w-3.5" /> {t('rename')}
                             </DropdownMenuItem>
                             {!isWeChatSession(session) && (
                               <>
@@ -297,11 +300,11 @@ export function Sidebar() {
                                 >
                                   {session.pinned ? (
                                     <>
-                                      <PinOff className="mr-2 h-3.5 w-3.5" /> 取消置顶
+                                      <PinOff className="mr-2 h-3.5 w-3.5" /> {t('unpin')}
                                     </>
                                   ) : (
                                     <>
-                                      <Pin className="mr-2 h-3.5 w-3.5" /> 置顶
+                                      <Pin className="mr-2 h-3.5 w-3.5" /> {t('pin')}
                                     </>
                                   )}
                                 </DropdownMenuItem>
@@ -312,7 +315,7 @@ export function Sidebar() {
                               className="text-destructive focus:text-destructive"
                               onSelect={() => handleDelete(session.id)}
                             >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" /> 删除
+                              <Trash2 className="mr-2 h-3.5 w-3.5" /> {t('delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

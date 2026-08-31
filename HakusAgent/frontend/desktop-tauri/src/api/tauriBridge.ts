@@ -111,14 +111,23 @@ function isAndroid(): boolean {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
 }
 
+function bridgeLocale(): 'zh-CN' | 'en-US' {
+  if (typeof document !== 'undefined' && document.documentElement.lang.toLowerCase().startsWith('zh')) return 'zh-CN'
+  if (typeof navigator !== 'undefined' && String(navigator.language || '').toLowerCase().startsWith('zh')) return 'zh-CN'
+  return 'en-US'
+}
+
 /** Ask before a project folder is exposed to read/write/command tools. */
 export async function confirmProjectAccess(): Promise<boolean> {
   if (typeof __TAURI_INTERNALS__ === "undefined") return false
   try {
     const { confirm } = await import("@tauri-apps/plugin-dialog")
+    const zh = bridgeLocale() === 'zh-CN'
     return await confirm(
-      "HakusAI 将读取所选项目文件夹，并允许项目内的写入和命令工具按权限模式工作。命令工具的工作目录会限制在该项目镜像内。",
-      { title: "允许访问项目文件夹", kind: "info" },
+      zh
+        ? "HakusAI 将读取所选项目文件夹，并允许项目内的写入和命令工具按权限模式工作。命令工具的工作目录会限制在该项目镜像内。"
+        : "HakusAI will read the selected project folder and may write files or run commands according to your permission mode. Command tools stay within the project mirror.",
+      { title: zh ? "允许访问项目文件夹" : "Allow project folder access", kind: "info" },
     )
   } catch (e) {
     console.warn("[tauriBridge] project permission dialog failed:", e)
@@ -141,7 +150,7 @@ export async function pickProjectFolder(): Promise<ProjectFolderSelection | null
 
   try {
     const { open } = await import("@tauri-apps/plugin-dialog")
-    const selected = await open({ directory: true, multiple: false, title: "选择项目文件夹" })
+    const selected = await open({ directory: true, multiple: false, title: bridgeLocale() === 'zh-CN' ? "选择项目文件夹" : "Choose project folder" })
     if (typeof selected !== "string" || !selected) return null
     return { path: selected }
   } catch (e) {

@@ -22,6 +22,22 @@
     <script>
       (function () {
         try {
+          var storedLanguage = 'system';
+          var languageRaw = localStorage.getItem('hakusai-settings');
+          if (languageRaw) {
+            var languageParsed = JSON.parse(languageRaw);
+            if (languageParsed && (languageParsed.language === 'zh-CN' || languageParsed.language === 'en-US' || languageParsed.language === 'system')) {
+              storedLanguage = languageParsed.language;
+            }
+          }
+          var systemLanguages = [];
+          if (Array.isArray(navigator.languages)) systemLanguages = systemLanguages.concat(navigator.languages);
+          if (navigator.language) systemLanguages.push(navigator.language);
+          try { systemLanguages.push(Intl.DateTimeFormat().resolvedOptions().locale); } catch (e) {}
+          var resolvedLanguage = storedLanguage === 'system'
+            ? (systemLanguages.some(function (value) { return String(value || '').toLowerCase().indexOf('zh') === 0; }) ? 'zh-CN' : 'en-US')
+            : storedLanguage;
+          document.documentElement.lang = resolvedLanguage;
           var theme = 'system';
           // 1. Try localStorage (browser dev mode / tauri localStorage mirror)
           var raw = localStorage.getItem('hakusai-settings');

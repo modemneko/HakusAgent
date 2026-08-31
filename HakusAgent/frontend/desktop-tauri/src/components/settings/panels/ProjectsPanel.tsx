@@ -34,6 +34,7 @@ import { useToast } from '@/components/ui/toast'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
@@ -48,6 +49,8 @@ export function ProjectsPanel() {
   const togglePinned = useProjectsStore((s) => s.togglePinned)
   const remove = useProjectsStore((s) => s.remove)
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   // Lock project switching once the current session has any messages.
   // The agent's context (cwd, file scope, fleet sub_dirs) is bound to
   // the project at turn-start; switching mid-conversation would silently
@@ -75,16 +78,16 @@ export function ProjectsPanel() {
     if (adding) return
     setAdding(true)
     try {
-      const allowed = await confirmProjectAccess()
-      if (!allowed) return
       const selected = await pickProjectFolder()
       if (!selected) return
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
       const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
       const created = await create({ name, path: selected.path, source_uri: selected.sourceUri })
-      toast.success(`已添加项目：${created.name}`)
+      toast.success(copy(`已添加项目：${created.name}`, `Project added: ${created.name}`))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      toast.error(`添加项目失败：${msg}`)
+      toast.error(copy(`添加项目失败：${msg}`, `Could not add project: ${msg}`))
     } finally {
       setAdding(false)
     }
@@ -98,16 +101,16 @@ export function ProjectsPanel() {
   const handleSaveRename = async (id: string) => {
     const trimmed = editingName.trim()
     if (!trimmed) {
-      toast.error('项目名不能为空')
+      toast.error(copy('项目名不能为空', 'Project name cannot be empty'))
       return
     }
     try {
       await rename(id, trimmed)
       setEditingId(null)
-      toast.success('已重命名')
+      toast.success(copy('已重命名', 'Project renamed'))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      toast.error(`重命名失败：${msg}`)
+      toast.error(copy(`重命名失败：${msg}`, `Rename failed: ${msg}`))
     }
   }
 
@@ -116,7 +119,7 @@ export function ProjectsPanel() {
       await togglePinned(p.id, !p.pinned)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      toast.error(`置顶失败：${msg}`)
+      toast.error(copy(`置顶失败：${msg}`, `Could not update pin: ${msg}`))
     }
   }
 
@@ -124,10 +127,10 @@ export function ProjectsPanel() {
     try {
       await remove(p.id)
       setConfirmDeleteId(null)
-      toast.success(`已移除项目：${p.name}`)
+      toast.success(copy(`已移除项目：${p.name}`, `Project removed: ${p.name}`))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      toast.error(`移除失败：${msg}`)
+      toast.error(copy(`移除失败：${msg}`, `Remove failed: ${msg}`))
     }
   }
 
@@ -135,18 +138,16 @@ export function ProjectsPanel() {
     <div className="space-y-5">
       {/* Header / description */}
       <div className="space-y-1">
-        <h3 className="text-sm font-semibold">项目管理</h3>
+        <h3 className="text-sm font-semibold">{copy('项目管理', 'Project management')}</h3>
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          项目是磁盘上的一个文件夹。注册后，AI 在该文件夹内执行 read / write / bash
-          等操作时不需要再拼绝对路径。移除项目只删除注册表条目，不会动磁盘上的文件夹。
-          {IS_ANDROID && ' Android 会在应用私有工作区建立镜像，任务结束后同步回你授权的文件夹。'}
+          {copy('项目是磁盘上的一个文件夹。注册后，AI 在该文件夹内执行 read / write / bash 等操作时不需要再拼绝对路径。移除项目只删除注册表条目，不会动磁盘上的文件夹。', 'A project is a folder on disk. Once registered, the AI can use read, write, and bash in it without absolute paths. Removing a project only removes its registry entry; files on disk stay untouched.')}
+          {IS_ANDROID && copy(' Android 会在应用私有工作区建立镜像，任务结束后同步回你授权的文件夹。', ' Android keeps a private workspace mirror and syncs it back to the folder you authorized when the task ends.')}
         </p>
         {projectLocked && (
           <p className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
             <Lock className="mt-0.5 h-3 w-3 shrink-0" />
             <span>
-              当前会话已有对话，项目已锁定无法切换。AI 的工作目录在会话开始时绑定，
-              中途切换会导致上下文错乱。请新建会话后再切换项目。
+              {copy('当前会话已有对话，项目已锁定无法切换。AI 的工作目录在会话开始时绑定，中途切换会导致上下文错乱。请新建会话后再切换项目。', 'This conversation already has messages, so the project is locked. The working directory is bound when a conversation starts; create a new conversation before switching projects.')}
             </span>
           </p>
         )}
@@ -157,7 +158,7 @@ export function ProjectsPanel() {
       {/* Actions */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
-          共 {projects.length} 个项目
+          {copy(`共 ${projects.length} 个项目`, `${projects.length} project${projects.length === 1 ? '' : 's'}`)}
         </span>
         <Button
           size="sm"
@@ -170,7 +171,7 @@ export function ProjectsPanel() {
           ) : (
             <FolderPlus className="h-3.5 w-3.5" />
           )}
-          添加项目
+          {copy('添加项目', 'Add project')}
         </Button>
       </div>
 
@@ -179,14 +180,14 @@ export function ProjectsPanel() {
         {!loaded && (
           <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            加载中...
+            {copy('加载中...', 'Loading...')}
           </div>
         )}
         {loaded && projects.length === 0 && (
           <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-center">
             <FolderOpen className="mx-auto mb-2 h-6 w-6 text-muted-foreground/60" />
             <p className="text-xs text-muted-foreground">
-              暂无项目，点击上方「添加项目」选择一个文件夹
+              {copy('暂无项目，点击上方“添加项目”选择一个文件夹', 'No projects yet. Click “Add project” above to choose a folder.')}
             </p>
           </div>
         )}
@@ -239,7 +240,7 @@ export function ProjectsPanel() {
                         variant="ghost"
                         className="h-7 w-7 p-0"
                         onClick={() => void handleSaveRename(p.id)}
-                        title="保存"
+                        title={copy('保存', 'Save')}
                       >
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                       </Button>
@@ -248,7 +249,7 @@ export function ProjectsPanel() {
                         variant="ghost"
                         className="h-7 w-7 p-0"
                         onClick={() => setEditingId(null)}
-                        title="取消"
+                        title={copy('取消', 'Cancel')}
                       >
                         <X className="h-3.5 w-3.5" />
                       </Button>
@@ -263,7 +264,7 @@ export function ProjectsPanel() {
                       )}
                       {isActive && (
                         <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                          当前
+                          {copy('当前', 'Current')}
                         </span>
                       )}
                     </div>
@@ -284,7 +285,7 @@ export function ProjectsPanel() {
                         variant="ghost"
                         className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                         onClick={() => handleTogglePin(p)}
-                        title={p.pinned ? '取消置顶' : '置顶'}
+                        title={p.pinned ? copy('取消置顶', 'Unpin') : copy('置顶', 'Pin')}
                       >
                         <Pin
                           className={cn(
@@ -298,7 +299,7 @@ export function ProjectsPanel() {
                         variant="ghost"
                         className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                         onClick={() => handleStartRename(p)}
-                        title="重命名"
+                        title={copy('重命名', 'Rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -307,7 +308,7 @@ export function ProjectsPanel() {
                         variant="ghost"
                         className="h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => setConfirmDeleteId(p.id)}
-                        title="移除项目（不删除文件夹）"
+                        title={copy('移除项目（不删除文件夹）', 'Remove project (keep folder)')}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -322,7 +323,7 @@ export function ProjectsPanel() {
                 <div className="mt-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
                   <span className="flex-1 text-destructive">
-                    确认移除「{p.name}」？只删除注册表条目，不会动磁盘文件夹。
+                    {copy(`确认移除“${p.name}”？只删除注册表条目，不会动磁盘文件夹。`, `Remove “${p.name}”? Only the registry entry will be deleted; files on disk stay untouched.`)}
                   </span>
                   <Button
                     size="sm"
@@ -330,7 +331,7 @@ export function ProjectsPanel() {
                     className="h-6 px-2 text-xs"
                     onClick={() => setConfirmDeleteId(null)}
                   >
-                    取消
+                    {copy('取消', 'Cancel')}
                   </Button>
                   <Button
                     size="sm"
@@ -338,7 +339,7 @@ export function ProjectsPanel() {
                     className="h-6 px-2 text-xs"
                     onClick={() => void handleDelete(p)}
                   >
-                    移除
+                    {copy('移除', 'Remove')}
                   </Button>
                 </div>
               )}
@@ -352,11 +353,11 @@ export function ProjectsPanel() {
                   <button
                     type="button"
                     disabled
-                    title="当前会话已有对话，无法切换项目。请新建会话后再切换。"
+                    title={copy('当前会话已有对话，无法切换项目。请新建会话后再切换。', 'This conversation has messages. Create a new conversation before switching projects.')}
                     className="mt-2 cursor-not-allowed text-[11px] text-muted-foreground/60"
                   >
                     <Lock className="mr-1 inline h-3 w-3" />
-                    会话进行中，无法切换
+                    {copy('会话进行中，无法切换', 'Cannot switch during a conversation')}
                   </button>
                 ) : (
                   <button
@@ -364,7 +365,7 @@ export function ProjectsPanel() {
                     onClick={() => setActive(p.id)}
                     className="mt-2 text-[11px] text-primary transition-colors hover:text-primary/80"
                   >
-                    设为当前项目
+                    {copy('设为当前项目', 'Set as current')}
                   </button>
                 )
               )}
@@ -377,11 +378,10 @@ export function ProjectsPanel() {
 
       <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-        项目注册表存储在{' '}
+        {copy('项目注册表存储在', 'The project registry is stored at')}{' '}
         <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
-          {IS_ANDROID ? 'Android 应用私有 workspace/projects.json' : '~/.hakus/projects.json'}
-        </code>，
-        可手动备份或迁移。
+          {IS_ANDROID ? 'Android private workspace/projects.json' : '~/.hakus/projects.json'}
+        </code>{copy('，可手动备份或迁移。', '; you can back it up or migrate it manually.')}
       </p>
     </div>
   )

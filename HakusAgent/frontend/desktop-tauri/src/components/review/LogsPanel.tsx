@@ -5,6 +5,7 @@ import type { LogEntry, LogFileInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast'
+import { useI18n } from '@/lib/i18n'
 
 const LEVELS = ['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR']
 const POLL_INTERVAL_MS = 2000
@@ -34,6 +35,8 @@ const LEVEL_BG: Record<string, string> = {
 }
 
 export function LogsPanel() {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const toast = useToast()
   const [files, setFiles] = useState<LogFileInfo[]>([])
   const [currentFile, setCurrentFile] = useState<string>('')
@@ -53,7 +56,7 @@ export function LogsPanel() {
         setCurrentFile(res.files[0].name)
       }
     } catch (e: any) {
-      toast.error(`读取日志文件列表失败：${e?.message || e}`)
+      toast.error(`${copy('读取日志文件列表失败：', 'Could not read log files: ')}${e?.message || e}`)
     }
   }
 
@@ -83,7 +86,7 @@ export function LogsPanel() {
       }
       setFiles(res.files)
     } catch (e: any) {
-      toast.error(`读取日志失败：${e?.message || e}`)
+      toast.error(`${copy('读取日志失败：', 'Could not read logs: ')}${e?.message || e}`)
     } finally {
       setLoading(false)
     }
@@ -112,13 +115,13 @@ export function LogsPanel() {
   }, [logs, autoScroll])
 
   const handleClear = async () => {
-    if (!confirm('清空当前日志文件？此操作不可恢复。')) return
+    if (!confirm(copy('清空当前日志文件？此操作不可恢复。', 'Clear the current log file? This cannot be undone.'))) return
     try {
       await apiClient.clearLogs(currentFile || undefined)
       setLogs([])
-      toast.success('日志已清空')
+      toast.success(copy('日志已清空', 'Log cleared'))
     } catch (e: any) {
-      toast.error(`清空失败：${e?.message || e}`)
+      toast.error(`${copy('清空失败：', 'Could not clear logs: ')}${e?.message || e}`)
     }
   }
 
@@ -133,7 +136,7 @@ export function LogsPanel() {
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (e: any) {
-      toast.error(`下载失败：${e?.message || e}`)
+      toast.error(`${copy('下载失败：', 'Download failed: ')}${e?.message || e}`)
     }
   }
 
@@ -155,7 +158,7 @@ export function LogsPanel() {
           onChange={(e) => setCurrentFile(e.target.value)}
           className="h-7 min-w-[140px] rounded-md border border-border/60 bg-background/60 px-2 text-[11px] outline-none focus:border-primary"
         >
-          {files.length === 0 && <option value="">无日志文件</option>}
+          {files.length === 0 && <option value="">{copy('无日志文件', 'No log files')}</option>}
           {files.map((f) => (
             <option key={f.name} value={f.name}>
               {f.name} ({(f.size / 1024).toFixed(1)} KB)
@@ -185,7 +188,7 @@ export function LogsPanel() {
         >
           {[100, 200, 500, 1000, 2000, 5000].map((n) => (
             <option key={n} value={n}>
-              最近 {n} 行
+              {copy(`最近 ${n} 行`, `Last ${n} lines`)}
             </option>
           ))}
         </select>
@@ -197,7 +200,7 @@ export function LogsPanel() {
             className="h-7 w-7"
             onClick={() => loadLogs({ reset: true })}
             disabled={loading}
-            title="刷新"
+            title={copy('刷新', 'Refresh')}
           >
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
           </Button>
@@ -207,7 +210,7 @@ export function LogsPanel() {
             className="h-7 w-7"
             onClick={handleDownload}
             disabled={!currentFile}
-            title="下载当前日志"
+            title={copy('下载当前日志', 'Download current log')}
           >
             <Download className="h-3.5 w-3.5" />
           </Button>
@@ -217,7 +220,7 @@ export function LogsPanel() {
             className="h-7 w-7"
             onClick={handleClear}
             disabled={!currentFile}
-            title="清空当前日志"
+            title={copy('清空当前日志', 'Clear current log')}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -237,7 +240,7 @@ export function LogsPanel() {
         {logs.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
             <ScrollText className="h-8 w-8 opacity-40" />
-            <p className="text-[11px]">暂无日志</p>
+            <p className="text-[11px]">{copy('暂无日志', 'No logs yet')}</p>
           </div>
         ) : (
           <div className="space-y-1">
@@ -273,7 +276,7 @@ export function LogsPanel() {
       {/* Footer */}
       <div className="flex shrink-0 items-center justify-between border-t border-border/60 px-3 py-1.5 text-[10px] text-muted-foreground">
         <span>
-          {currentFile || '—'} · {logs.length} 行
+          {currentFile || '—'} · {logs.length} {copy('行', logs.length === 1 ? 'line' : 'lines')}
         </span>
         <label className="flex items-center gap-1.5">
           <input
@@ -282,7 +285,7 @@ export function LogsPanel() {
             onChange={(e) => setAutoScroll(e.target.checked)}
             className="h-3 w-3 rounded border-border/60"
           />
-          自动滚动
+          {copy('自动滚动', 'Auto-scroll')}
         </label>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { apiClient } from '@/api/client'
 import { useSettingsStore } from '@/store/settings'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/lib/i18n'
 
 import '@xterm/xterm/css/xterm.css'
 
@@ -18,6 +19,8 @@ import '@xterm/xterm/css/xterm.css'
  * are forwarded so the shell knows the terminal dimensions.
  */
 export function TerminalPanel() {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -110,7 +113,7 @@ export function TerminalPanel() {
       try {
         ws = new WebSocket(url)
       } catch (e: any) {
-        terminalRef.current?.writeln(`\x1b[31m连接失败：${e?.message || e}\x1b[0m`)
+        terminalRef.current?.writeln(`\x1b[31m${copy('连接失败：', 'Connection failed: ')}${e?.message || e}\x1b[0m`)
         return
       }
       wsRef.current = ws
@@ -134,7 +137,7 @@ export function TerminalPanel() {
             try {
               const msg = JSON.parse(e.data)
               if (msg.type === 'error') {
-                terminalRef.current?.writeln(`\x1b[31m错误：${msg.message}\x1b[0m`)
+                terminalRef.current?.writeln(`\x1b[31m${copy('错误：', 'Error: ')}${msg.message}\x1b[0m`)
                 return
               }
             } catch {
@@ -145,12 +148,12 @@ export function TerminalPanel() {
         }
       }
       ws.onerror = () => {
-        terminalRef.current?.writeln('\x1b[31mWebSocket 错误\x1b[0m')
+        terminalRef.current?.writeln(`\x1b[31m${copy('WebSocket 错误', 'WebSocket error')}\x1b[0m`)
       }
       ws.onclose = () => {
         setConnected(false)
         if (reconnectRef.current) {
-          terminalRef.current?.writeln('\x1b[33m连接已断开，3s 后重连...\x1b[0m')
+          terminalRef.current?.writeln(`\x1b[33m${copy('连接已断开，3s 后重连...', 'Disconnected; reconnecting in 3s...')}\x1b[0m`)
           setTimeout(() => {
             if (reconnectRef.current) connect()
           }, 3000)
@@ -175,7 +178,7 @@ export function TerminalPanel() {
       <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
         <div className="flex items-center gap-1.5 text-xs">
           <TerminalSquare className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="font-medium">内置终端</span>
+          <span className="font-medium">{copy('内置终端', 'Built-in terminal')}</span>
           <span
             className={cn(
               'ml-1 inline-flex h-1.5 w-1.5 rounded-full',
@@ -188,7 +191,7 @@ export function TerminalPanel() {
           variant="ghost"
           className="h-6 w-6 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
           onClick={handleClear}
-          title="清空 (Ctrl+L)"
+          title={copy('清空 (Ctrl+L)', 'Clear (Ctrl+L)')}
         >
           <Trash2 className="h-3 w-3" />
         </Button>
@@ -199,7 +202,7 @@ export function TerminalPanel() {
         {!connected && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0b]/80 text-xs text-muted-foreground">
             <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-            连接中...
+            {copy('连接中...', 'Connecting...')}
           </div>
         )}
         <div ref={containerRef} className="h-full w-full" />

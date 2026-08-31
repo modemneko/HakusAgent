@@ -61,17 +61,18 @@ import type {
   McpToolInfo,
   McpTestResult,
 } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 // ─── Status metadata ────────────────────────────────────────────────────────
 
 type ServerStatus = McpServerInfo['status']
 
-const STATUS_META: Record<ServerStatus, { label: string; tone: string; icon: typeof Activity }> = {
-  stopped: { label: '已停止', tone: 'text-muted-foreground bg-muted', icon: Square },
-  starting: { label: '启动中', tone: 'text-primary bg-primary/15', icon: Loader2 },
-  running: { label: '运行中', tone: 'text-emerald-500 bg-emerald-500/15', icon: CheckCircle2 },
-  failed: { label: '失败', tone: 'text-rose-500 bg-rose-500/15', icon: XCircle },
-  disabled: { label: '已禁用', tone: 'text-amber-500 bg-amber-500/15', icon: Power },
+const STATUS_META: Record<ServerStatus, { labelZh: string; labelEn: string; tone: string; icon: typeof Activity }> = {
+  stopped: { labelZh: '已停止', labelEn: 'Stopped', tone: 'text-muted-foreground bg-muted', icon: Square },
+  starting: { labelZh: '启动中', labelEn: 'Starting', tone: 'text-primary bg-primary/15', icon: Loader2 },
+  running: { labelZh: '运行中', labelEn: 'Running', tone: 'text-emerald-500 bg-emerald-500/15', icon: CheckCircle2 },
+  failed: { labelZh: '失败', labelEn: 'Failed', tone: 'text-rose-500 bg-rose-500/15', icon: XCircle },
+  disabled: { labelZh: '已禁用', labelEn: 'Disabled', tone: 'text-amber-500 bg-amber-500/15', icon: Power },
 }
 
 // ─── Default form values ────────────────────────────────────────────────────
@@ -147,6 +148,8 @@ function serverToForm(s: McpServerInfo): McpServerFormValues {
 
 export function McpPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const [loading, setLoading] = useState(true)
   const [servers, setServers] = useState<McpServerInfo[]>([])
   const [globalCfg, setGlobalCfg] = useState<McpGlobalConfig>({
@@ -173,7 +176,7 @@ export function McpPanel() {
         setOutdatedError(e)
       } else {
         // Silent on background polls — only toast on first load.
-        if (loading) toast.error(`加载 MCP 服务器列表失败：${e?.message || e}`)
+        if (loading) toast.error(copy(`加载 MCP 服务器列表失败：${e?.message || e}`, `Could not load MCP servers: ${e?.message || e}`))
       }
     } finally {
       setLoading(false)
@@ -196,10 +199,10 @@ export function McpPanel() {
     setBusyAction(`toggle-${s.name}`)
     try {
       await apiClient.updateMcpServer(s.name, { enabled: next })
-      toast.success(`${s.name} 已${next ? '启用' : '禁用'}`)
+      toast.success(copy(`${s.name} 已${next ? '启用' : '禁用'}`, `${s.name} ${next ? 'enabled' : 'disabled'}`))
       await refresh()
     } catch (e: any) {
-      toast.error(`切换失败：${e?.message || e}`)
+      toast.error(copy(`切换失败：${e?.message || e}`, `Update failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -210,17 +213,17 @@ export function McpPanel() {
     try {
       const result = await apiClient.startMcpServer(s.name)
       if (result.ok) {
-        toast.success(`${s.name} 已启动，发现 ${result.tools.length} 个工具`)
+        toast.success(copy(`${s.name} 已启动，发现 ${result.tools.length} 个工具`, `${s.name} started with ${result.tools.length} tool${result.tools.length === 1 ? '' : 's'}`))
         if (result.tools.length > 0) {
           setToolsByServer((prev) => ({ ...prev, [s.name]: result.tools }))
           setExpanded((prev) => new Set(prev).add(s.name))
         }
       } else {
-        toast.error(`${s.name} 启动失败：${result.message}`)
+        toast.error(copy(`${s.name} 启动失败：${result.message}`, `${s.name} failed to start: ${result.message}`))
       }
       await refresh()
     } catch (e: any) {
-      toast.error(`启动失败：${e?.message || e}`)
+      toast.error(copy(`启动失败：${e?.message || e}`, `Start failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -230,10 +233,10 @@ export function McpPanel() {
     setBusyAction(`stop-${s.name}`)
     try {
       await apiClient.stopMcpServer(s.name)
-      toast.success(`${s.name} 已停止`)
+      toast.success(copy(`${s.name} 已停止`, `${s.name} stopped`))
       await refresh()
     } catch (e: any) {
-      toast.error(`停止失败：${e?.message || e}`)
+      toast.error(copy(`停止失败：${e?.message || e}`, `Stop failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -245,12 +248,12 @@ export function McpPanel() {
       const result = await apiClient.testMcpServer(s.name)
       setTesting(result)
       if (result.ok) {
-        toast.success(`${s.name} 测试成功，发现 ${result.tools.length} 个工具`)
+        toast.success(copy(`${s.name} 测试成功，发现 ${result.tools.length} 个工具`, `${s.name} test passed with ${result.tools.length} tool${result.tools.length === 1 ? '' : 's'}`))
       } else {
-        toast.error(`${s.name} 测试失败：${result.message}`)
+        toast.error(copy(`${s.name} 测试失败：${result.message}`, `${s.name} test failed: ${result.message}`))
       }
     } catch (e: any) {
-      toast.error(`测试失败：${e?.message || e}`)
+      toast.error(copy(`测试失败：${e?.message || e}`, `Test failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -270,7 +273,7 @@ export function McpPanel() {
             setToolsByServer((prev) => ({ ...prev, [s.name]: resp.tools }))
           }
         } catch (e: any) {
-          toast.error(`获取工具列表失败：${e?.message || e}`)
+          toast.error(copy(`获取工具列表失败：${e?.message || e}`, `Could not load tool list: ${e?.message || e}`))
         }
       }
     }
@@ -279,11 +282,11 @@ export function McpPanel() {
 
   const handleSaveServer = async (v: McpServerFormValues) => {
     if (!v.name.trim()) {
-      toast.error('服务器名称不能为空')
+      toast.error(copy('服务器名称不能为空', 'Server name is required'))
       return
     }
     if (!v.command.trim()) {
-      toast.error('command 不能为空')
+      toast.error(copy('command 不能为空', 'Command is required'))
       return
     }
     const config = formToConfig(v)
@@ -291,7 +294,7 @@ export function McpPanel() {
     try {
       if (editing?.mode === 'create') {
         await apiClient.saveMcpServer(v.name.trim(), config)
-        toast.success(`已添加 MCP server：${v.name}`)
+        toast.success(copy(`已添加 MCP server：${v.name}`, `MCP server added: ${v.name}`))
       } else if (editing?.mode === 'edit') {
         // Save under possibly-new name: delete + create (the backend PATCH
         // doesn't rename, only field updates).
@@ -311,12 +314,12 @@ export function McpPanel() {
             tool_timeout: config.tool_timeout,
           })
         }
-        toast.success(`${v.name} 已更新`)
+        toast.success(copy(`${v.name} 已更新`, `${v.name} updated`))
       }
       setEditing(null)
       await refresh()
     } catch (e: any) {
-      toast.error(`保存失败：${e?.message || e}`)
+      toast.error(copy(`保存失败：${e?.message || e}`, `Save failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -326,11 +329,11 @@ export function McpPanel() {
     setBusyAction(`delete-${s.name}`)
     try {
       await apiClient.deleteMcpServer(s.name)
-      toast.success(`${s.name} 已删除`)
+      toast.success(copy(`${s.name} 已删除`, `${s.name} deleted`))
       setConfirmDelete(null)
       await refresh()
     } catch (e: any) {
-      toast.error(`删除失败：${e?.message || e}`)
+      toast.error(copy(`删除失败：${e?.message || e}`, `Delete failed: ${e?.message || e}`))
     } finally {
       setBusyAction(null)
     }
@@ -340,9 +343,9 @@ export function McpPanel() {
     try {
       const resp = await apiClient.updateMcpGlobalConfig(patch)
       setGlobalCfg(resp.global)
-      toast.success('全局设置已更新')
+      toast.success(copy('全局设置已更新', 'Global settings updated'))
     } catch (e: any) {
-      toast.error(`更新失败：${e?.message || e}`)
+      toast.error(copy(`更新失败：${e?.message || e}`, `Update failed: ${e?.message || e}`))
     }
   }
 
@@ -370,7 +373,7 @@ export function McpPanel() {
           size="sm"
           onClick={() => setEditing({ mode: 'create', initial: EMPTY_FORM })}
         >
-          <Plus className="mr-1 h-3.5 w-3.5" /> 添加
+          <Plus className="mr-1 h-3.5 w-3.5" /> {copy('添加', 'Add')}
         </Button>
       </div>
 
@@ -380,15 +383,14 @@ export function McpPanel() {
       <div className="space-y-3">
         {loading && servers.length === 0 ? (
           <div className="flex items-center justify-center py-12 text-xs text-muted-foreground">
-            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> 加载中…
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> {copy('加载中…', 'Loading…')}
           </div>
         ) : servers.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-muted/30 p-8 text-center">
             <Plug className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium text-foreground">还没有配置任何 MCP server</p>
+            <p className="text-sm font-medium text-foreground">{copy('还没有配置任何 MCP server', 'No MCP servers configured')}</p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              添加一个 stdio MCP server（如 npx -y @modelcontextprotocol/server-filesystem），
-              让 HakusAI 调用其工具。
+              {copy('添加一个 stdio MCP server（如 npx -y @modelcontextprotocol/server-filesystem），让 HakusAI 调用其工具。', 'Add a stdio MCP server (for example, npx -y @modelcontextprotocol/server-filesystem) so HakusAI can call its tools.')}
             </p>
             <Button
               variant="outline"
@@ -396,7 +398,7 @@ export function McpPanel() {
               className="mt-3"
               onClick={() => setEditing({ mode: 'create', initial: EMPTY_FORM })}
             >
-              <Plus className="mr-1 h-3.5 w-3.5" /> 添加第一个
+              <Plus className="mr-1 h-3.5 w-3.5" /> {copy('添加第一个', 'Add your first')}
             </Button>
           </div>
         ) : (
@@ -414,6 +416,7 @@ export function McpPanel() {
               onExpand={() => handleExpand(s)}
               onEdit={() => setEditing({ mode: 'edit', initial: serverToForm(s) })}
               onDelete={() => setConfirmDelete(s)}
+              copy={copy}
             />
           ))
         )}
@@ -424,32 +427,32 @@ export function McpPanel() {
       {/* Global MCP options */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <Zap className="h-3.5 w-3.5" /> 全局选项
+          <Zap className="h-3.5 w-3.5" /> {copy('全局选项', 'Global options')}
         </div>
 
         <GlobalToggleRow
           id="mcp-auto-start"
-          title="启动 backend 时自动启动所有 enabled 的 MCP server"
-          desc="关闭则需在列表里手动点启动按钮。"
+          title={copy('启动 backend 时自动启动所有 enabled 的 MCP server', 'Start all enabled MCP servers with the backend')}
+          desc={copy('关闭则需在列表里手动点启动按钮。', 'When off, start servers manually from the list.')}
           checked={globalCfg.auto_start}
           onChange={(v) => handleUpdateGlobal({ auto_start: v })}
         />
 
         <GlobalToggleRow
           id="mcp-fail-fast"
-          title="快速失败（任一 server 启动失败则中止后续）"
-          desc='关闭则继续启动其它 server，失败的标记为 "failed"。'
+          title={copy('快速失败（任一 server 启动失败则中止后续）', 'Fail fast (stop when a server fails to start)')}
+          desc={copy('关闭则继续启动其它 server，失败的标记为“failed”。', 'When off, continue starting other servers and mark failures as “failed”.')}
           checked={globalCfg.fail_fast}
           onChange={(v) => handleUpdateGlobal({ fail_fast: v })}
         />
 
         <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4">
           <div className="flex-1 pr-4">
-            <Label className="text-sm font-medium">工具命名方式</Label>
+            <Label className="text-sm font-medium">{copy('工具命名方式', 'Tool naming')}</Label>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               <code className="rounded bg-muted px-1 py-0.5 text-[10px]">namespace</code>:
-              servername__toolname（避免冲突，默认）;
-              <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">flat</code>: 直接用 toolname。
+              {copy('servername__toolname（避免冲突，默认）；', 'servername__toolname (default, avoids collisions);')}
+              <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">flat</code>: {copy('直接用 toolname。', 'use toolname directly.')}
             </p>
           </div>
           <div className="flex gap-1 rounded-lg bg-muted p-1">
@@ -472,9 +475,9 @@ export function McpPanel() {
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        MCP 配置写入 <code className="rounded bg-muted px-1 py-0.5">~/.hakus/config.yaml</code> 的{' '}
-        <code className="rounded bg-muted px-1 py-0.5">mcp.servers</code> 节。
-        环境变量的值在服务端持久化，但通过 API 返回时只暴露 key（值被 mask 成 ***）。
+        {copy('MCP 配置写入', 'MCP configuration is written to')} <code className="rounded bg-muted px-1 py-0.5">~/.hakus/config.yaml</code>{' '}
+        {copy('的', 'under')} <code className="rounded bg-muted px-1 py-0.5">mcp.servers</code>.
+        {copy('环境变量的值在服务端持久化，但通过 API 返回时只暴露 key（值被 mask 成 ***）。', 'Environment values are persisted server-side; the API only returns their keys (values are masked as ***).')}
       </p>
 
       {/* Edit / Create dialog */}
@@ -494,16 +497,16 @@ export function McpPanel() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 text-rose-500" /> 删除 MCP server
+                <AlertCircle className="h-4 w-4 text-rose-500" /> {copy('删除 MCP server', 'Delete MCP server')}
               </DialogTitle>
               <DialogDescription>
-                确认删除 <span className="font-mono font-medium text-foreground">{confirmDelete.name}</span>？
-                该 server 的所有配置将永久移除，运行中的实例会被立即停止。
+                {copy('确认删除', 'Delete')} <span className="font-mono font-medium text-foreground">{confirmDelete.name}</span>?{' '}
+                {copy('该 server 的所有配置将永久移除，运行中的实例会被立即停止。', 'All configuration for this server will be removed and running instances stopped.')}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>
-                取消
+                {copy('取消', 'Cancel')}
               </Button>
               <Button
                 variant="destructive"
@@ -515,7 +518,7 @@ export function McpPanel() {
                 ) : (
                   <Trash2 className="mr-1 h-3.5 w-3.5" />
                 )}
-                删除
+                {copy('删除', 'Delete')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -533,7 +536,7 @@ export function McpPanel() {
                 ) : (
                   <XCircle className="h-4 w-4 text-rose-500" />
                 )}
-                MCP 测试结果
+                {copy('MCP 测试结果', 'MCP test result')}
               </DialogTitle>
               <DialogDescription className="font-mono text-[11px]">
                 {testing.message}
@@ -543,7 +546,7 @@ export function McpPanel() {
               {testing.detail && (
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    详细信息
+                    {copy('详细信息', 'Details')}
                   </div>
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-[11px] text-foreground/80">
                     {testing.detail}
@@ -552,10 +555,10 @@ export function McpPanel() {
               )}
               <div>
                 <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  发现的工具 ({testing.tools.length})
+                  {copy(`发现的工具 (${testing.tools.length})`, `Tools found (${testing.tools.length})`)}
                 </div>
                 {testing.tools.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">无</p>
+                  <p className="text-[11px] text-muted-foreground">{copy('无', 'None')}</p>
                 ) : (
                   <ul className="space-y-1">
                     {testing.tools.map((t) => (
@@ -569,7 +572,7 @@ export function McpPanel() {
                           </code>
                           {t.is_dangerous && (
                             <Badge className="bg-rose-500/15 text-[9px] text-rose-500">
-                              危险
+                              {copy('危险', 'Risky')}
                             </Badge>
                           )}
                         </div>
@@ -585,7 +588,7 @@ export function McpPanel() {
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={() => setTesting(null)}>关闭</Button>
+              <Button onClick={() => setTesting(null)}>{copy('关闭', 'Close')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -608,6 +611,7 @@ interface ServerCardProps {
   onExpand: () => void
   onEdit: () => void
   onDelete: () => void
+  copy: (zh: string, en: string) => string
 }
 
 function ServerCard({
@@ -622,6 +626,7 @@ function ServerCard({
   onExpand,
   onEdit,
   onDelete,
+  copy,
 }: ServerCardProps) {
   const statusMeta = STATUS_META[server.status]
   const StatusIcon = statusMeta.icon
@@ -640,7 +645,7 @@ function ServerCard({
         <button
           onClick={onExpand}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          aria-label={expanded ? '收起' : '展开'}
+          aria-label={expanded ? copy('收起', 'Collapse') : copy('展开', 'Expand')}
         >
           {expanded ? (
             <ChevronDown className="h-4 w-4" />
@@ -665,11 +670,11 @@ function ServerCard({
               <StatusIcon
                 className={cn('h-2.5 w-2.5', (server.status === 'starting' || isBusy) && 'animate-spin')}
               />
-              {statusMeta.label}
+              {copy(statusMeta.labelZh, statusMeta.labelEn)}
             </span>
             {server.tool_count > 0 && isRunning && (
               <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">
-                <Wrench className="h-2.5 w-2.5" /> {server.tool_count} 工具
+                <Wrench className="h-2.5 w-2.5" /> {copy(`${server.tool_count} 工具`, `${server.tool_count} tool${server.tool_count === 1 ? '' : 's'}`)}
               </span>
             )}
           </div>
@@ -687,7 +692,7 @@ function ServerCard({
             checked={server.enabled}
             onCheckedChange={onToggleEnabled}
             disabled={isBusy}
-            aria-label="启用/禁用"
+            aria-label={copy('启用/禁用', 'Enable/disable')}
           />
           {isRunning ? (
             <Button
@@ -724,7 +729,7 @@ function ServerCard({
             onClick={onTest}
             disabled={isBusy}
             className="h-7 px-2"
-            aria-label="测试连接"
+            aria-label={copy('测试连接', 'Test connection')}
           >
             {busyAction === `test-${server.name}` ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -738,7 +743,7 @@ function ServerCard({
             onClick={onEdit}
             disabled={isBusy}
             className="h-7 px-2"
-            aria-label="编辑"
+            aria-label={copy('编辑', 'Edit')}
           >
             <Pencil className="h-3 w-3" />
           </Button>
@@ -748,7 +753,7 @@ function ServerCard({
             onClick={onDelete}
             disabled={isBusy}
             className="h-7 px-2 hover:border-rose-500/50 hover:text-rose-500"
-            aria-label="删除"
+            aria-label={copy('删除', 'Delete')}
           >
             <Trash2 className="h-3 w-3" />
           </Button>
@@ -760,26 +765,26 @@ function ServerCard({
         <div className="border-t border-border bg-muted/20 p-3">
           <div className="grid grid-cols-2 gap-3 text-[11px]">
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">传输方式</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{copy('传输方式', 'Transport')}</div>
               <div className="mt-0.5 font-mono">{server.transport}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">工作目录</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{copy('工作目录', 'Working directory')}</div>
               <div className="mt-0.5 font-mono">{server.cwd || '—'}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">启动超时</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{copy('启动超时', 'Startup timeout')}</div>
               <div className="mt-0.5 font-mono">{server.startup_timeout}s</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">工具超时</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{copy('工具超时', 'Tool timeout')}</div>
               <div className="mt-0.5 font-mono">{server.tool_timeout}s</div>
             </div>
             <div className="col-span-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">环境变量</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{copy('环境变量', 'Environment')}</div>
               <div className="mt-0.5 flex flex-wrap gap-1">
                 {server.env_keys.length === 0 ? (
-                  <span className="text-muted-foreground">无</span>
+                  <span className="text-muted-foreground">{copy('无', 'None')}</span>
                 ) : (
                   server.env_keys.map((k) => (
                     <code
@@ -798,14 +803,14 @@ function ServerCard({
           {isRunning && (
             <div className="mt-3">
               <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                <Wrench className="h-3 w-3" /> 已注册工具
+                <Wrench className="h-3 w-3" /> {copy('已注册工具', 'Registered tools')}
               </div>
               {!tools ? (
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                  <Loader2 className="h-3 w-3 animate-spin" /> {copy('加载中…', 'Loading…')}
                 </div>
               ) : tools.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">该 server 未注册任何工具</p>
+                <p className="text-[11px] text-muted-foreground">{copy('该 server 未注册任何工具', 'This server has no registered tools')}</p>
               ) : (
                 <ul className="space-y-1">
                   {tools.map((t) => (
@@ -817,7 +822,7 @@ function ServerCard({
                         <code className="text-[11px] font-medium text-foreground">{t.name}</code>
                         {t.is_dangerous && (
                           <Badge className="bg-rose-500/15 text-[9px] text-rose-500">
-                            危险
+                            {copy('危险', 'Risky')}
                           </Badge>
                         )}
                       </div>
@@ -877,6 +882,8 @@ interface McpServerDialogProps {
 }
 
 function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDialogProps) {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const [form, setForm] = useState<McpServerFormValues>(initial)
 
   const update = <K extends keyof McpServerFormValues>(key: K, value: McpServerFormValues[K]) => {
@@ -889,17 +896,17 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plug className="h-4 w-4 text-primary" />
-            {mode === 'create' ? '添加 MCP Server' : `编辑 ${initial.name}`}
+            {mode === 'create' ? copy('添加 MCP Server', 'Add MCP server') : copy(`编辑 ${initial.name}`, `Edit ${initial.name}`)}
           </DialogTitle>
           <DialogDescription>
-            配置一个外部 MCP server。stdio 传输方式会 spawn 一个子进程并通过 stdin/stdout 通信。
+            {copy('配置一个外部 MCP server。stdio 传输方式会启动子进程并通过 stdin/stdout 通信。', 'Configure an external MCP server. stdio transport starts a child process and communicates over stdin/stdout.')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="max-h-[60vh] space-y-4 overflow-y-auto py-2">
           {/* Name */}
           <div className="space-y-1.5">
-            <Label htmlFor="mcp-name" className="text-xs">服务器名称 *</Label>
+            <Label htmlFor="mcp-name" className="text-xs">{copy('服务器名称 *', 'Server name *')}</Label>
             <Input
               id="mcp-name"
               value={form.name}
@@ -909,15 +916,15 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
               className="font-mono text-sm"
             />
             <p className="text-[10px] text-muted-foreground">
-              唯一标识符，作为工具命名空间的前缀。命名后不可修改。
+              {copy('唯一标识符，作为工具命名空间的前缀。命名后不可修改。', 'Unique identifier used as the tool namespace prefix. Cannot be changed later.')}
             </p>
           </div>
 
           {/* Enabled toggle */}
           <div className="flex items-center justify-between rounded-lg border border-border bg-card/40 p-3">
             <div>
-              <Label htmlFor="mcp-enabled" className="text-sm font-medium">启用</Label>
-              <p className="text-[11px] text-muted-foreground">关闭则该 server 不会自动启动。</p>
+              <Label htmlFor="mcp-enabled" className="text-sm font-medium">{copy('启用', 'Enabled')}</Label>
+              <p className="text-[11px] text-muted-foreground">{copy('关闭则该 server 不会自动启动。', 'When off, this server will not start automatically.')}</p>
             </div>
             <Switch
               id="mcp-enabled"
@@ -928,7 +935,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
 
           {/* Transport */}
           <div className="space-y-1.5">
-            <Label className="text-xs">传输方式</Label>
+            <Label className="text-xs">{copy('传输方式', 'Transport')}</Label>
             <div className="flex gap-1 rounded-lg bg-muted p-1">
               {(['stdio', 'sse', 'http'] as const).map((t) => (
                 <button
@@ -947,7 +954,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
             </div>
             {form.transport !== 'stdio' && (
               <p className="text-[10px] text-amber-500">
-                当前仅 stdio 传输经过完整测试，sse/http 可用但可能不稳定。
+                {copy('当前仅 stdio 传输经过完整测试，sse/http 可用但可能不稳定。', 'Only stdio transport is fully tested; sse/http may be unstable.')}
               </p>
             )}
           </div>
@@ -966,14 +973,14 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
             />
             <p className="text-[10px] text-muted-foreground">
               {form.transport === 'stdio'
-                ? '可执行文件名（需在 PATH 中）或绝对路径。'
-                : '远程 server 的 URL。'}
+                ? copy('可执行文件名（需在 PATH 中）或绝对路径。', 'Executable name (must be on PATH) or absolute path.')
+                : copy('远程 server 的 URL。', 'Remote server URL.')}
             </p>
           </div>
 
           {/* Args */}
           <div className="space-y-1.5">
-            <Label htmlFor="mcp-args" className="text-xs">参数 (空格分隔)</Label>
+            <Label htmlFor="mcp-args" className="text-xs">{copy('参数（空格分隔）', 'Arguments (space separated)')}</Label>
             <Input
               id="mcp-args"
               value={form.args}
@@ -982,13 +989,13 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
               className="font-mono text-sm"
             />
             <p className="text-[10px] text-muted-foreground">
-              多个参数用空格分隔。如果参数本身包含空格，请用引号包裹。
+              {copy('多个参数用空格分隔。如果参数本身包含空格，请用引号包裹。', 'Separate arguments with spaces. Quote arguments that contain spaces.')}
             </p>
           </div>
 
           {/* Env */}
           <div className="space-y-1.5">
-            <Label htmlFor="mcp-env" className="text-xs">环境变量 (每行 KEY=value)</Label>
+            <Label htmlFor="mcp-env" className="text-xs">{copy('环境变量（每行 KEY=value）', 'Environment (one KEY=value per line)')}</Label>
             <textarea
               id="mcp-env"
               value={form.env}
@@ -999,15 +1006,15 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
             />
             <p className="text-[10px] text-muted-foreground">
               {mode === 'edit' && (
-                <>现有值显示为 <code className="rounded bg-muted px-1">***</code>。如需保留原值，请勿修改该行；如需覆盖，请输入新值。</>
+                <>{copy('现有值显示为', 'Existing values appear as')} <code className="rounded bg-muted px-1">***</code>{copy('。如需保留原值，请勿修改该行；如需覆盖，请输入新值。', '. Leave the line unchanged to keep it, or enter a new value to replace it.')}</>
               )}
-              {' '}值会以明文保存到 <code className="rounded bg-muted px-1">~/.hakus/config.yaml</code>。
+              {' '}{copy('值会以明文保存到', 'Values are stored in plain text in')} <code className="rounded bg-muted px-1">~/.hakus/config.yaml</code>{copy('。', '.')}
             </p>
           </div>
 
           {/* cwd */}
           <div className="space-y-1.5">
-            <Label htmlFor="mcp-cwd" className="text-xs">工作目录 (可选)</Label>
+            <Label htmlFor="mcp-cwd" className="text-xs">{copy('工作目录（可选）', 'Working directory (optional)')}</Label>
             <Input
               id="mcp-cwd"
               value={form.cwd}
@@ -1020,7 +1027,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
           {/* Timeouts */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="mcp-startup-timeout" className="text-xs">启动超时 (秒)</Label>
+              <Label htmlFor="mcp-startup-timeout" className="text-xs">{copy('启动超时（秒）', 'Startup timeout (seconds)')}</Label>
               <Input
                 id="mcp-startup-timeout"
                 type="number"
@@ -1032,7 +1039,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="mcp-tool-timeout" className="text-xs">工具调用超时 (秒)</Label>
+              <Label htmlFor="mcp-tool-timeout" className="text-xs">{copy('工具调用超时（秒）', 'Tool timeout (seconds)')}</Label>
               <Input
                 id="mcp-tool-timeout"
                 type="number"
@@ -1048,7 +1055,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            取消
+            {copy('取消', 'Cancel')}
           </Button>
           <Button onClick={() => onSave(form)} disabled={busy || !form.name.trim() || !form.command.trim()}>
             {busy ? (
@@ -1056,7 +1063,7 @@ function McpServerDialog({ mode, initial, busy, onClose, onSave }: McpServerDial
             ) : (
               <RefreshCw className="mr-1 h-3.5 w-3.5" />
             )}
-            {mode === 'create' ? '添加' : '保存'}
+            {mode === 'create' ? copy('添加', 'Add') : copy('保存', 'Save')}
           </Button>
         </DialogFooter>
       </DialogContent>

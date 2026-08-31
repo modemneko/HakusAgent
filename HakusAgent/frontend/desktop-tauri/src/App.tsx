@@ -8,6 +8,7 @@ import { ResizeHandle } from '@/components/layout/ResizeHandle'
 import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { AwakenSplash } from '@/components/AwakenSplash'
+import { FirstRunSetup } from '@/components/FirstRunSetup'
 
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
@@ -17,6 +18,7 @@ import { useProjectsStore } from '@/store/projects'
 import { apiClient } from '@/api/client'
 import { isPhoneViewport, PHONE_VIEWPORT_QUERY } from '@/lib/responsive'
 import { cn } from '@/lib/utils'
+import { localeForRuntime, useI18n, useLocaleStore } from '@/lib/i18n'
 
 const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
 const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
@@ -29,6 +31,7 @@ function App() {
   const [showSplash, setShowSplash] = useState(IS_TAURI && !IS_ANDROID)
   const [splashExiting, setSplashExiting] = useState(false)
   const [appReady, setAppReady] = useState(!IS_TAURI || IS_ANDROID)
+  const [showFirstRun, setShowFirstRun] = useState(false)
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
@@ -53,10 +56,46 @@ function App() {
   const loadSessions = useSessionStore((s) => s.loadFromServer)
   const migrateSessions = useSessionStore((s) => s.migrateFromLocalStorage)
   const loadSettings = useSettingsStore((s) => s.load)
+  const settingsLoaded = useSettingsStore((s) => s.loaded)
+  const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted)
+  const locale = useLocaleStore((s) => s.locale)
+  const languagePreference = useLocaleStore((s) => s.language)
+  const { t } = useI18n()
   const loadProviders = useSettingsStore((s) => s.loadProviders)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const connState = useConnectionStore((s) => s.state)
   const loadProjects = useProjectsStore((s) => s.load)
+
+  // Desktop first launch gets a short, optional setup after the runtime and
+  // initial shell are ready. Android follows the WebView/system language and
+  // intentionally skips this desktop-oriented flow.
+  useEffect(() => {
+    if (!IS_TAURI || IS_ANDROID || !appReady || !settingsLoaded) return
+    setShowFirstRun(!onboardingCompleted)
+  }, [appReady, onboardingCompleted, settingsLoaded])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.documentElement.lang = locale
+    document.documentElement.dir = 'ltr'
+  }, [locale])
+
+  // Keep system-language mode live on Android/WebView. WebViews can emit a
+  // languagechange event when the device locale changes while the app remains
+  // open; explicit user choices stay untouched.
+  useEffect(() => {
+    if (typeof window === 'undefined' || languagePreference !== 'system') return
+    const handleLanguageChange = () => useLocaleStore.getState().initialize('system')
+    window.addEventListener('languagechange', handleLanguageChange)
+    return () => window.removeEventListener('languagechange', handleLanguageChange)
+  }, [languagePreference])
+
+  // The UI and embedded Rust Runtime share the same resolved locale. This is
+  // best-effort so browser preview and older remote runtimes remain usable.
+  useEffect(() => {
+    if (connState !== 'connected') return
+    void apiClient.setRuntimeConfig('locale', localeForRuntime(locale)).catch(() => undefined)
+  }, [connState, locale])
 
   // ── Dismiss splash: respects MIN_SPLASH_MS so animation plays fully ──
   const tryDismissSplash = useCallback(() => {
@@ -289,7 +328,7 @@ function App() {
                 className="app-panel-scrim fixed inset-0 z-20 bg-black/25 backdrop-blur-[1px]"
                 data-sidebar-open={sidebarOpen}
                 data-right-panel-open={rightPanelOpen}
-                aria-label="关闭打开的面板"
+                aria-label={t('closeSidebar')}
                 onClick={() => {
                   setSidebar(false)
                   setRightPanelOpen(false)
@@ -354,6 +393,7 @@ function App() {
             </div>
           </div>
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+          {showFirstRun && <FirstRunSetup onComplete={() => setShowFirstRun(false)} />}
           <Toaster />
         </div>
       </TooltipProvider>

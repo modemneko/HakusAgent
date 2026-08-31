@@ -13,9 +13,12 @@ import { Separator } from '@/components/ui/separator'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { apiClient } from '@/api/client'
+import { useI18n } from '@/lib/i18n'
 
 export function ConnectionPanel() {
   const settings = useSettingsStore()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const connCheck = useConnectionStore((s) => s.check)
   const connState = useConnectionStore((s) => s.state)
   const connError = useConnectionStore((s) => s.error)
@@ -79,20 +82,19 @@ export function ConnectionPanel() {
         <p className="text-[11px] text-muted-foreground">
           {rustPreview && (
             <>
-              当前预览已连接到 Rust Runtime（{apiClient.getBaseUrl()}）。
+              {copy(`当前预览已连接到 Rust Runtime（${apiClient.getBaseUrl()}）。`, `This preview is connected to the Rust Runtime (${apiClient.getBaseUrl()}).`)}
             </>
           )}
           {!rustPreview && (
             <>
-              桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，
-              例如 <code>http://192.168.1.20:48081</code>。
+              {copy('桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，例如', 'Desktop can use the local service. On Android, enter the computer or server running HakusAI, for example')} <code>http://192.168.1.20:48081</code>{copy('。', '.')}
             </>
           )}
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="timeout">请求超时 (ms)</Label>
+        <Label htmlFor="timeout">{copy('请求超时 (ms)', 'Request timeout (ms)')}</Label>
         <Input
           id="timeout"
           type="number"
@@ -107,9 +109,9 @@ export function ConnectionPanel() {
       <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4">
         <div className="flex items-start gap-3">
           <div>
-            <Label className="text-sm font-medium">使用 WebSocket（实验性）</Label>
+            <Label className="text-sm font-medium">{copy('使用 WebSocket（实验性）', 'Use WebSocket (experimental)')}</Label>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              改用全双工 WebSocket 而非 SSE，支持流式中断。
+              {copy('改用全双工 WebSocket 而非 SSE，支持流式中断。', 'Use full-duplex WebSocket instead of SSE for interruptible streams.')}
             </p>
           </div>
         </div>
@@ -126,12 +128,12 @@ export function ConnectionPanel() {
             {connState === 'disconnected' && <div className="h-2 w-2 rounded-full bg-muted-foreground" />}
             <span className="text-sm font-medium">
               {connState === 'connected'
-                ? '已连接'
+                ? copy('已连接', 'Connected')
                 : connState === 'connecting'
-                  ? '连接中...'
+                  ? copy('连接中...', 'Connecting...')
                   : connState === 'error'
-                    ? '连接失败'
-                    : '未连接'}
+                    ? copy('连接失败', 'Connection failed')
+                    : copy('未连接', 'Disconnected')}
             </span>
             {connHealth && (
               <span className="text-[11px] text-muted-foreground">
@@ -151,19 +153,19 @@ export function ConnectionPanel() {
         <Button onClick={handleSave} disabled={saving || !dirty}>
           {saving ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 保存中...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('保存中...', 'Saving...')}
             </>
           ) : (
-            '保存'
+            copy('保存', 'Save')
           )}
         </Button>
         <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
           {testing ? (
             <>
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> 测试中...
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> {copy('测试中...', 'Testing...')}
             </>
           ) : (
-            '测试连接'
+            copy('测试连接', 'Test connection')
           )}
         </Button>
       </div>

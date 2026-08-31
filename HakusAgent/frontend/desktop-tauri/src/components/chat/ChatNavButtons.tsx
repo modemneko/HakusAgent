@@ -32,6 +32,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 
 interface ChatNavButtonsProps {
   /** Ref to the scroll container (the div with overflow-y-auto). */
@@ -51,6 +52,8 @@ const BOTTOM_THRESHOLD = 24
 const TOP_THRESHOLD = 24
 
 export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   // Three pieces of state drive the two buttons:
   //   - hasOverflow: does the content overflow the viewport at all?
   //   - atTop: are we currently scrolled to the top?
@@ -170,14 +173,14 @@ export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) 
   return (
     <div
       className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-1.5"
-      aria-label="聊天记录导航"
+      aria-label={copy('聊天记录导航', 'Chat navigation')}
     >
       {showUp && (
         <button
           type="button"
           onClick={goPrevUserMessage}
-          title="上一条用户消息"
-          aria-label="上一条用户消息"
+          title={copy('上一条用户消息', 'Previous user message')}
+          aria-label={copy('上一条用户消息', 'Previous user message')}
           className={cn(
             'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground/80 shadow-sm backdrop-blur-md transition-colors',
             'hover:bg-foreground/[0.06] hover:text-foreground',
@@ -191,8 +194,8 @@ export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) 
         <button
           type="button"
           onClick={goNextUserMessage}
-          title="下一条用户消息"
-          aria-label="下一条用户消息"
+          title={copy('下一条用户消息', 'Next user message')}
+          aria-label={copy('下一条用户消息', 'Next user message')}
           className={cn(
             'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground/80 shadow-sm backdrop-blur-md transition-colors',
             'hover:bg-foreground/[0.06] hover:text-foreground',

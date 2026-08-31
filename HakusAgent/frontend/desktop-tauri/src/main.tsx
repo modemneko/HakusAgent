@@ -12,9 +12,11 @@ import {
   voice as tauriVoice,
   window as tauriWindow,
 } from "@/api/tauriBridge";
+import { detectSystemLocale } from "@/lib/i18n";
 
 const isAndroidRuntime =
   typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+const mobileCopy = (zh: string, en: string) => detectSystemLocale() === "zh-CN" ? zh : en;
 
 // ── Tauri Bridge: wire window.electron to tauriBridge.invoke() ──────
 // In Tauri desktop mode, legacy components reference window.electron.
@@ -32,16 +34,16 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
       isMaximized: async () => false,
     };
     const mobileUpdater = {
-      getStatus: async () => ({ status: "not-available", info: null, progress: null, error: "Android APK 暂不支持桌面自动更新", autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
-      check: async () => ({ status: "not-available", info: null, progress: null, error: "Android APK 暂不支持桌面自动更新", autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
-      download: async () => ({ status: "not-available", info: null, progress: null, error: "Android APK 暂不支持桌面自动更新", autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
+      getStatus: async () => ({ status: "not-available", info: null, progress: null, error: mobileCopy("Android APK 暂不支持桌面自动更新", "Desktop updates are not available in the Android APK"), autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
+      check: async () => ({ status: "not-available", info: null, progress: null, error: mobileCopy("Android APK 暂不支持桌面自动更新", "Desktop updates are not available in the Android APK"), autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
+      download: async () => ({ status: "not-available", info: null, progress: null, error: mobileCopy("Android APK 暂不支持桌面自动更新", "Desktop updates are not available in the Android APK"), autoDownload: false, autoInstallOnAppQuit: false, currentVersion: "0.3.0", isPackaged: true }),
       install: async () => ({ ok: false }),
       setAutoDownload: async () => ({ status: "not-available" }),
       setAutoInstallOnAppQuit: async () => ({ status: "not-available" }),
     };
     const mobileVoice = {
-      status: async () => ({ running: false, pid: null, startedAt: null, lastError: "Android 暂不支持桌面 Celia 进程" }),
-      startCelia: async () => ({ ok: false, running: false, pid: null, error: "Android 暂不支持桌面 Celia 进程" }),
+      status: async () => ({ running: false, pid: null, startedAt: null, lastError: mobileCopy("Android 暂不支持桌面 Celia 进程", "The desktop Celia process is not available on Android") }),
+      startCelia: async () => ({ ok: false, running: false, pid: null, error: mobileCopy("Android 暂不支持桌面 Celia 进程", "The desktop Celia process is not available on Android") }),
       stopCelia: async () => ({ ok: true, running: false, pid: null, error: null }),
     };
 
@@ -72,7 +74,7 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
       shortcuts: isAndroid
         ? {
             getConfig: async () => ({ accelerator: "", default: "" }),
-            setAccelerator: async () => ({ ok: false, error: "Android 不支持全局快捷键" }),
+            setAccelerator: async () => ({ ok: false, error: mobileCopy("Android 不支持全局快捷键", "Global shortcuts are not available on Android") }),
             validate: async () => ({ valid: false }),
           }
         : tauriShortcuts,

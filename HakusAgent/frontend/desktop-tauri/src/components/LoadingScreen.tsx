@@ -1,26 +1,25 @@
 import { Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useI18n } from '@/lib/i18n'
 
 interface LoadingScreenProps {
   status?: string
 }
 
-const STATUS_MESSAGES = [
-  '正在初始化 HakusAI…',
-  '正在加载 Agent 核心…',
-  '正在准备工作区…',
-]
-
 export function LoadingScreen({ status }: LoadingScreenProps) {
+  const { locale } = useI18n()
+  const statusMessages = locale === 'zh-CN'
+    ? ['正在初始化 HakusAI…', '正在加载 Agent 核心…', '正在准备工作区…']
+    : ['Initializing HakusAI…', 'Loading the agent core…', 'Preparing the workspace…']
   const [messageIndex, setMessageIndex] = useState(0)
 
   useEffect(() => {
     if (status) return // Use provided status, don't cycle
     const id = setInterval(() => {
-      setMessageIndex((prev) => (prev + 1) % STATUS_MESSAGES.length)
+      setMessageIndex((prev) => (prev + 1) % statusMessages.length)
     }, 1800)
     return () => clearInterval(id)
-  }, [status])
+  }, [status, statusMessages.length])
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-5 bg-background">
@@ -35,7 +34,7 @@ export function LoadingScreen({ status }: LoadingScreenProps) {
       {/* Status text */}
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-        {status || STATUS_MESSAGES[messageIndex]}
+        {status || statusMessages[messageIndex]}
       </p>
     </div>
   )

@@ -13,9 +13,12 @@ import { useToast } from '@/components/ui/toast'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import type { MemoryDetails } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 export function MemoryPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const [loading, setLoading] = useState(true)
   const [details, setDetails] = useState<MemoryDetails | null>(null)
   const [clearing, setClearing] = useState(false)
@@ -35,7 +38,7 @@ export function MemoryPanel() {
       if (e instanceof BackendOutdatedError) {
         setOutdatedError(e)
       } else {
-        toast.error(`加载记忆状态失败：${e?.message || e}`)
+        toast.error(copy(`加载记忆状态失败：${e?.message || e}`, `Could not load memory status: ${e?.message || e}`))
       }
     } finally {
       setLoading(false)
@@ -55,11 +58,11 @@ export function MemoryPanel() {
     setClearing(true)
     try {
       await apiClient.clearMemory()
-      toast.success('短期记忆已清空')
+      toast.success(copy('短期记忆已清空', 'Short-term memory cleared'))
       setConfirmingClear(false)
       await refresh()
     } catch (e: any) {
-      toast.error(`清空失败：${e?.message || e}`)
+      toast.error(copy(`清空失败：${e?.message || e}`, `Could not clear memory: ${e?.message || e}`))
     } finally {
       setClearing(false)
     }
@@ -83,7 +86,7 @@ export function MemoryPanel() {
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          刷新
+          {copy('刷新', 'Refresh')}
         </Button>
       </div>
 
@@ -91,7 +94,7 @@ export function MemoryPanel() {
 
       {loading ? (
         <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中...
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('加载中...', 'Loading...')}
         </div>
       ) : details ? (
         <div className="space-y-5">
@@ -99,32 +102,32 @@ export function MemoryPanel() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatCard
               icon={Database}
-              label="短期记忆"
-              value={details.enabled ? '已启用' : '已禁用'}
+              label={copy('短期记忆', 'Short-term memory')}
+              value={details.enabled ? copy('已启用', 'Enabled') : copy('已禁用', 'Disabled')}
               tone={details.enabled ? 'success' : 'muted'}
             />
             <StatCard
               icon={Brain}
-              label="长期记忆"
-              value={details.long_term_enabled ? '已启用' : '已禁用'}
+              label={copy('长期记忆', 'Long-term memory')}
+              value={details.long_term_enabled ? copy('已启用', 'Enabled') : copy('已禁用', 'Disabled')}
               tone={details.long_term_enabled ? 'success' : 'muted'}
             />
             <StatCard
               icon={FileText}
-              label="短期容量上限"
+              label={copy('短期容量上限', 'Short-term limit')}
               value={String(details.short_term_max)}
             />
             <StatCard
               icon={Clock}
-              label="总结间隔"
-              value={`${details.summary_interval} 轮`}
+              label={copy('总结间隔', 'Summary interval')}
+              value={`${details.summary_interval} ${copy('轮', 'turns')}`}
             />
           </div>
 
           {/* 统计详情 */}
           {statEntries.length > 0 && (
             <div className="space-y-2">
-              <Label>统计详情</Label>
+              <Label>{copy('统计详情', 'Statistics')}</Label>
               <div className="rounded-xl border border-border bg-card/40 p-4">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 md:grid-cols-3">
                   {statEntries.map(([k, v]) => (
@@ -143,9 +146,9 @@ export function MemoryPanel() {
             <div className="flex items-start gap-3">
               <Brain className="mt-0.5 h-4 w-4 text-muted-foreground" />
               <div>
-                <Label className="text-sm font-medium">长期记忆</Label>
+                <Label className="text-sm font-medium">{copy('长期记忆', 'Long-term memory')}</Label>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  向量化长期记忆。开关仅本地展示，重启 backend 时由配置文件决定。
+                  {copy('向量化长期记忆。开关仅本地展示，重启 backend 时由配置文件决定。', 'Vectorized long-term memory. This switch is read-only; the backend config controls it on restart.')}
                 </p>
               </div>
             </div>
@@ -162,14 +165,14 @@ export function MemoryPanel() {
             <div className="flex items-start gap-3">
               <FileText className="mt-0.5 h-4 w-4 text-muted-foreground" />
               <div>
-                <Label className="text-sm font-medium">自动总结</Label>
+                <Label className="text-sm font-medium">{copy('自动总结', 'Auto-summary')}</Label>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  每 {details.summary_interval} 轮自动总结对话历史。
+                  {copy(`每 ${details.summary_interval} 轮自动总结对话历史。`, `Summarizes chat history every ${details.summary_interval} turns.`)}
                 </p>
               </div>
             </div>
             <Badge variant={details.auto_summary ? 'success' : 'secondary'}>
-              {details.auto_summary ? '开启' : '关闭'}
+              {details.auto_summary ? copy('开启', 'On') : copy('关闭', 'Off')}
             </Badge>
           </div>
 
@@ -178,9 +181,9 @@ export function MemoryPanel() {
           {/* 清空按钮 */}
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm font-medium text-destructive">清空短期记忆</div>
+              <div className="text-sm font-medium text-destructive">{copy('清空短期记忆', 'Clear short-term memory')}</div>
               <p className="text-[11px] text-muted-foreground">
-                清空当前会话的对话历史与短期缓存。长期记忆不受影响。
+                {copy('清空当前会话的对话历史与短期缓存。长期记忆不受影响。', 'Clears this session\'s chat history and short-term cache. Long-term memory is not affected.')}
               </p>
             </div>
             <Button
@@ -194,16 +197,16 @@ export function MemoryPanel() {
               ) : (
                 <Trash2 className="mr-2 h-3.5 w-3.5" />
               )}
-              {confirmingClear ? '确认清空' : '清空'}
+              {confirmingClear ? copy('确认清空', 'Confirm clear') : copy('清空', 'Clear')}
             </Button>
           </div>
           {confirmingClear && (
-            <p className="text-[11px] text-amber-500">再次点击确认清空操作（4 秒内有效）</p>
+            <p className="text-[11px] text-amber-500">{copy('再次点击确认清空操作（4 秒内有效）', 'Click again to confirm (valid for 4 seconds)')}</p>
           )}
         </div>
       ) : (
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
-          加载失败
+          {copy('加载失败', 'Loading failed')}
         </div>
       )}
     </div>

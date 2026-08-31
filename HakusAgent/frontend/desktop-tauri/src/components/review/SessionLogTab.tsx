@@ -4,6 +4,7 @@ import { apiClient } from '@/api/client'
 import type { SessionLogEvent, SessionLogStats } from '@/api/types'
 import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 
 /**
  * SessionLogTab — append-only JSONL event stream viewer.
@@ -21,6 +22,8 @@ import { cn } from '@/lib/utils'
  *  - Auto-refresh while streaming
  */
 export function SessionLogTab() {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const activeId = useSessionStore((s) => s.activeSessionId)
   const isStreaming = useSessionStore((s) => s.isStreaming)
   const [events, setEvents] = useState<SessionLogEvent[]>([])
@@ -69,7 +72,7 @@ export function SessionLogTab() {
 
   const handleClear = async () => {
     if (!activeId) return
-    if (!confirm('清空 session log? 这个操作不可撤销 (但不影响聊天记录).')) return
+    if (!confirm(copy('清空 session log? 这个操作不可撤销 (但不影响聊天记录).', 'Clear the session log? This cannot be undone (chat history is kept).'))) return
     try {
       await apiClient.clearSessionLog(activeId)
       fetchLog()
@@ -91,8 +94,8 @@ export function SessionLogTab() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
         <ScrollText className="h-7 w-7 text-muted-foreground/40" />
-        <p className="font-medium">Session Log</p>
-        <p className="text-[11px]">选择一个会话查看 append-only 事件流</p>
+        <p className="font-medium">{copy('会话日志', 'Session log')}</p>
+        <p className="text-[11px]">{copy('选择一个会话查看 append-only 事件流', 'Select a conversation to view its append-only event stream')}</p>
       </div>
     )
   }
@@ -124,7 +127,7 @@ export function SessionLogTab() {
           <button
             onClick={fetchLog}
             disabled={loading}
-            title="刷新"
+            title={copy('刷新', 'Refresh')}
             className="rounded p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-50"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
@@ -132,7 +135,7 @@ export function SessionLogTab() {
           <button
             onClick={handleCompact}
             disabled={loading || !stats?.live_size_bytes}
-            title="压缩 (归档最旧的 50%)"
+            title={copy('压缩 (归档最旧的 50%)', 'Compact (archive the oldest 50%)')}
             className="rounded p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-50"
           >
             <ChevronDown className="h-3.5 w-3.5" />
@@ -140,7 +143,7 @@ export function SessionLogTab() {
           <button
             onClick={handleClear}
             disabled={loading}
-            title="清空日志"
+            title={copy('清空日志', 'Clear log')}
             className="rounded p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -176,8 +179,8 @@ export function SessionLogTab() {
         {events.length === 0 && !loading ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
             <ScrollText className="h-7 w-7 text-muted-foreground/40" />
-            <p className="font-medium">暂无事件</p>
-            <p className="text-[11px]">发条消息开始, 每个 turn 的事件都会被记录</p>
+            <p className="font-medium">{copy('暂无事件', 'No events yet')}</p>
+            <p className="text-[11px]">{copy('发条消息开始，每个 turn 的事件都会被记录', 'Send a message to record events for each turn')}</p>
           </div>
         ) : (
           <div className="py-2">

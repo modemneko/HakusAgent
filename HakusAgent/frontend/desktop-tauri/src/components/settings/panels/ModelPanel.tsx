@@ -37,6 +37,7 @@ import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { ProviderLogo } from '@/components/ui/provider-logo'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 import type {
   ProviderInfo, ProviderMeta, ProviderModel, ProviderKeyEntry,
   ConnectionTestResult,
@@ -68,14 +69,32 @@ const DEFAULT_BASE_URL_HINTS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
 }
 
-function providerRouteHint(provider: ProviderInfo): string {
+function providerRouteHint(provider: ProviderInfo, locale: 'zh-CN' | 'en-US'): string {
   const protocol = provider.wire === 'anthropic' ? 'Anthropic Messages' : 'OpenAI Chat Completions'
-  const auth = provider.auth_mode === 'oauth' ? 'OAuth' : provider.auth_mode === 'none' ? '无需密钥' : 'API Key'
+  const auth = provider.auth_mode === 'oauth' ? 'OAuth' : provider.auth_mode === 'none'
+    ? (locale === 'zh-CN' ? '无需密钥' : 'No key required')
+    : 'API Key'
   return `${protocol} · ${auth}`
+}
+
+function providerGroupLabel(group: string, locale: 'zh-CN' | 'en-US'): string {
+  if (locale === 'zh-CN') return group
+  const labels: Record<string, string> = {
+    '国内服务': 'China services',
+    '国际服务': 'International services',
+    '聚合 / 中转': 'Aggregators / gateways',
+    '本地 / 自托管': 'Local / self-hosted',
+    '自定义模型商': 'Custom providers',
+    '自定义': 'Custom',
+    '其他': 'Other',
+  }
+  return labels[group] || group
 }
 
 export function ModelPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const providers = useSettingsStore((s) => s.providers)
   const providersLoading = useSettingsStore((s) => s.providersLoading)
   const providersError = useSettingsStore((s) => s.providersError)
@@ -257,10 +276,10 @@ export function ModelPanel() {
       body.enabled = selected.enabled !== false
       body.wire = apiFormat
       await apiClient.updateProvider(body as any)
-      toast.success(`${selected.display_name} 配置已保存`)
+      toast.success(copy(`${selected.display_name} 配置已保存`, `${selected.display_name} configuration saved`))
       await loadProviders()
     } catch (e: any) {
-      toast.error(`保存失败：${e?.message || e}`)
+      toast.error(copy(`保存失败：${e?.message || e}`, `Save failed: ${e?.message || e}`))
     } finally {
       setSaving(false)
     }
@@ -270,16 +289,16 @@ export function ModelPanel() {
     if (!selected) return
     const model = modelName.trim() || providerModels[0]
     if (!model) {
-      toast.error('请先添加或选择一个模型')
+      toast.error(copy('请先添加或选择一个模型', 'Add or select a model first'))
       return
     }
     setSaving(true)
     try {
       await apiClient.setDefaultModel(selected.id, model)
-      toast.success(`已切换当前模型为 ${selected.display_name} / ${model}`)
+      toast.success(copy(`已切换当前模型为 ${selected.display_name} / ${model}`, `Current model changed to ${selected.display_name} / ${model}`))
       await loadProviders()
     } catch (e: any) {
-      toast.error(`切换失败：${e?.message || e}`)
+      toast.error(copy(`切换失败：${e?.message || e}`, `Could not switch model: ${e?.message || e}`))
     } finally {
       setSaving(false)
     }
@@ -303,11 +322,11 @@ export function ModelPanel() {
     } catch (e: any) {
       setTestResult({
         ok: false,
-        message: `测试失败: ${e?.message || e}`,
+        message: copy(`测试失败: ${e?.message || e}`, `Test failed: ${e?.message || e}`),
         detail: undefined,
         latency_ms: null,
       })
-      toast.error(`测试失败：${e?.message || e}`)
+      toast.error(copy(`测试失败：${e?.message || e}`, `Test failed: ${e?.message || e}`))
     } finally {
       setTesting(false)
     }
@@ -328,12 +347,12 @@ export function ModelPanel() {
         setFetchedModels(r.models)
         toast.success(r.message)
       } else if (!r.ok) {
-        toast.error(r.message || '获取模型列表失败')
+        toast.error(r.message || copy('获取模型列表失败', 'Could not fetch models'))
       } else {
-        toast.info('该 provider 未返回任何模型')
+        toast.info(copy('该 provider 未返回任何模型', 'This provider returned no models'))
       }
     } catch (e: any) {
-      toast.error(`获取失败：${e?.message || e}`)
+      toast.error(copy(`获取失败：${e?.message || e}`, `Fetch failed: ${e?.message || e}`))
     } finally {
       setFetchingModels(false)
     }
@@ -343,7 +362,7 @@ export function ModelPanel() {
     setModelName(m.id)
     setProviderModels((current) => current.some((item) => item.toLowerCase() === m.id.toLowerCase()) ? current : [...current, m.id])
     setModelDialogOpen(false)
-    toast.info(`已选择模型: ${m.id} (记得点保存)`)
+    toast.info(copy(`已选择模型: ${m.id} (记得点保存)`, `Selected model: ${m.id} (remember to save)`))
   }
 
   // === 多 Key 管理 ===
@@ -355,7 +374,7 @@ export function ModelPanel() {
       const ks = await apiClient.listProviderKeys(selected.id)
       setKeyList(ks)
     } catch (e: any) {
-      toast.error(`加载 Key 列表失败：${e?.message || e}`)
+      toast.error(copy(`加载 Key 列表失败：${e?.message || e}`, `Could not load key list: ${e?.message || e}`))
     } finally {
       setKeysLoading(false)
     }
@@ -368,9 +387,9 @@ export function ModelPanel() {
       setKeyList((ks) => [...ks, entry])
       setNewKey('')
       setNewKeyLabel('')
-      toast.success('已添加 Key')
+      toast.success(copy('已添加 Key', 'Key added'))
     } catch (e: any) {
-      toast.error(`添加失败：${e?.message || e}`)
+      toast.error(copy(`添加失败：${e?.message || e}`, `Could not add: ${e?.message || e}`))
     }
   }
 
@@ -379,9 +398,9 @@ export function ModelPanel() {
     try {
       await apiClient.deleteProviderKey(selected.id, keyId)
       setKeyList((ks) => ks.filter((k) => k.id !== keyId))
-      toast.success('已删除 Key')
+      toast.success(copy('已删除 Key', 'Key deleted'))
     } catch (e: any) {
-      toast.error(`删除失败：${e?.message || e}`)
+      toast.error(copy(`删除失败：${e?.message || e}`, `Could not delete: ${e?.message || e}`))
     }
   }
 
@@ -394,7 +413,7 @@ export function ModelPanel() {
       const entries = Object.entries(h).map(([k, v]) => ({ k, v }))
       setHeaderEntries(entries.length > 0 ? entries : [{ k: '', v: '' }])
     } catch (e: any) {
-      toast.error(`加载 Header 失败：${e?.message || e}`)
+      toast.error(copy(`加载 Header 失败：${e?.message || e}`, `Could not load headers: ${e?.message || e}`))
       setHeaderEntries([{ k: '', v: '' }])
     }
   }
@@ -407,10 +426,10 @@ export function ModelPanel() {
     }
     try {
       await apiClient.setProviderHeaders(selected.id, obj)
-      toast.success(`已保存 ${Object.keys(obj).length} 个自定义 Header`)
+      toast.success(copy(`已保存 ${Object.keys(obj).length} 个自定义 Header`, `Saved ${Object.keys(obj).length} custom headers`))
       setHeadersDialogOpen(false)
     } catch (e: any) {
-      toast.error(`保存失败：${e?.message || e}`)
+      toast.error(copy(`保存失败：${e?.message || e}`, `Save failed: ${e?.message || e}`))
     }
   }
 
@@ -418,7 +437,7 @@ export function ModelPanel() {
     const id = customForm.id.trim()
     const baseUrlValue = customForm.base_url.trim()
     if (!id || !baseUrlValue) {
-      toast.error('请填写模型商 ID 和 Base URL')
+      toast.error(copy('请填写模型商 ID 和 Base URL', 'Enter a provider ID and Base URL'))
       return
     }
     setCustomSaving(true)
@@ -430,17 +449,17 @@ export function ModelPanel() {
         model: customForm.model.trim() || undefined,
         api_key: customForm.api_key.trim() || undefined,
         api_key_env: customForm.api_key_env.trim() || undefined,
-        group: customForm.group.trim() || '自定义模型商',
+        group: customForm.group.trim() || copy('自定义模型商', 'Custom providers'),
         models: customForm.model.trim() ? [customForm.model.trim()] : [],
         enabled: true,
       })
       await loadProviders()
       setSelectedId(id)
       setCustomDialogOpen(false)
-      setCustomForm({ id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: '自定义模型商' })
-      toast.success('自定义模型商已添加')
+      setCustomForm({ id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: copy('自定义模型商', 'Custom providers') })
+      toast.success(copy('自定义模型商已添加', 'Custom provider added'))
     } catch (error: any) {
-      toast.error(`添加失败：${error?.message || error}`)
+      toast.error(copy(`添加失败：${error?.message || error}`, `Could not add: ${error?.message || error}`))
     } finally {
       setCustomSaving(false)
     }
@@ -448,15 +467,15 @@ export function ModelPanel() {
 
   const handleDeleteCustomProvider = async () => {
     if (!selected?.is_custom) return
-    if (!window.confirm(`确定删除「${selected.display_name}」吗？此操作会移除本地配置。`)) return
+    if (!window.confirm(copy(`确定删除「${selected.display_name}」吗？此操作会移除本地配置。`, `Delete ${selected.display_name}? This removes its local configuration.`))) return
     setSaving(true)
     try {
       await apiClient.deleteCustomProvider(selected.id)
       await loadProviders()
       setSelectedId('')
-      toast.success('自定义模型商已删除')
+      toast.success(copy('自定义模型商已删除', 'Custom provider deleted'))
     } catch (error: any) {
-      toast.error(`删除失败：${error?.message || error}`)
+      toast.error(copy(`删除失败：${error?.message || error}`, `Could not delete: ${error?.message || error}`))
     } finally {
       setSaving(false)
     }
@@ -478,9 +497,9 @@ export function ModelPanel() {
         wire: target.id === selected?.id ? apiFormat : target.wire,
       })
       await loadProviders()
-      toast.success(enabled ? `${target.display_name} 已启用` : `${target.display_name} 已停用`)
+      toast.success(enabled ? copy(`${target.display_name} 已启用`, `${target.display_name} enabled`) : copy(`${target.display_name} 已停用`, `${target.display_name} disabled`))
     } catch (error: any) {
-      toast.error(`更新失败：${error?.message || error}`)
+      toast.error(copy(`更新失败：${error?.message || error}`, `Update failed: ${error?.message || error}`))
     } finally {
       setSaving(false)
     }
@@ -506,10 +525,10 @@ export function ModelPanel() {
       <div className="space-y-3 py-12">
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          加载 provider 列表...
+          {copy('加载 provider 列表...', 'Loading providers...')}
         </div>
         <div className="text-center text-[11px] text-muted-foreground">
-          如果超过 10s 未响应，将自动显示错误信息
+          {copy('如果超过 10s 未响应，将自动显示错误信息', 'An error will appear automatically if this takes longer than 10 seconds')}
         </div>
       </div>
     )
@@ -528,15 +547,14 @@ export function ModelPanel() {
     return (
       <div className="space-y-3 py-6">
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
-          <div className="mb-1 font-medium">加载 Provider 列表失败</div>
+          <div className="mb-1 font-medium">{copy('加载 Provider 列表失败', 'Could not load providers')}</div>
           <div className="break-all text-[12px] text-red-500/80">{providersError.message}</div>
           <div className="mt-2 text-[11px] text-muted-foreground">
-            请确认 Rust Runtime 已启动且 /v1/providers 可访问。
-            可尝试「高级 → 重启 Backend」或在「连接」页检查服务地址。
+            {copy('请确认 Rust Runtime 已启动且 /v1/providers 可访问。可尝试「高级 → 重启 Backend」或在「连接」页检查服务地址。', 'Make sure the Rust Runtime is running and /v1/providers is reachable. Try Advanced > Restart backend or check the server address under Connection.')}
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => loadProviders()}>
-          重试
+          {copy('重试', 'Retry')}
         </Button>
       </div>
     )
@@ -548,8 +566,8 @@ export function ModelPanel() {
       <div className="model-provider-sidebar space-y-1.5">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-xs font-medium text-foreground">模型服务商</div>
-            <div className="text-[10px] text-muted-foreground">选择一个接入渠道配置模型</div>
+            <div className="text-xs font-medium text-foreground">{copy('模型服务商', 'Model providers')}</div>
+            <div className="text-[10px] text-muted-foreground">{copy('选择一个接入渠道配置模型', 'Choose a route to configure its models')}</div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Badge variant="secondary" className="text-[10px]">{providers.length}</Badge>
@@ -561,8 +579,8 @@ export function ModelPanel() {
                 void loadProviders().then(() => setLastProviderRefresh(new Date()))
               }}
               disabled={providersLoading}
-              title="刷新模型服务商列表"
-              aria-label="刷新模型服务商列表"
+              title={copy('刷新模型服务商列表', 'Refresh provider list')}
+              aria-label={copy('刷新模型服务商列表', 'Refresh provider list')}
             >
               <RefreshCw className={cn('h-3.5 w-3.5', providersLoading && 'animate-spin')} />
             </Button>
@@ -571,9 +589,9 @@ export function ModelPanel() {
               size="sm"
               className="h-7 px-2 text-[11px]"
               onClick={() => setCustomDialogOpen(true)}
-              title="添加自定义模型商"
+              title={copy('添加自定义模型商', 'Add custom provider')}
             >
-              <Plus className="mr-1 h-3.5 w-3.5" /> 添加
+              <Plus className="mr-1 h-3.5 w-3.5" /> {copy('添加', 'Add')}
             </Button>
           </div>
         </div>
@@ -583,7 +601,7 @@ export function ModelPanel() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索 provider..."
+            placeholder={copy('搜索 provider...', 'Search providers...')}
             className="h-8 pl-8 text-xs"
           />
         </div>
@@ -591,7 +609,7 @@ export function ModelPanel() {
           {groupedProviders.map(({ group, items }) => (
             <div key={group}>
               <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-                {group}
+                {providerGroupLabel(group, locale)}
               </div>
               <div className="space-y-1">
                 {items.map((p) => {
@@ -611,16 +629,16 @@ export function ModelPanel() {
                         type="button"
                         ref={(node) => { providerRowRefs.current[p.id] = node }}
                         onClick={() => setSelectedId(p.id)}
-                        title={`${p.display_name} · ${providerRouteHint(p)}`}
+                        title={`${p.display_name} · ${providerRouteHint(p, locale)}`}
                         className="flex min-w-0 flex-1 items-center gap-2.5 text-left outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
                         aria-current={active ? 'true' : undefined}
                       >
                         <ProviderLogo providerId={p.id} size={18} className="shrink-0" />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[13px] font-medium leading-tight" title={p.display_name}>{p.display_name}</span>
-                          <span className="block truncate text-[10px] text-muted-foreground">{p.model_name || '未配置模型'}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">{p.model_name || copy('未配置模型', 'No model configured')}</span>
                         </span>
-                        {p.is_default && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" aria-label="当前使用" />}
+                        {p.is_default && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" aria-label={copy('当前使用', 'In use')} />}
                       </button>
                       <Switch
                         checked={enabled}
@@ -628,7 +646,7 @@ export function ModelPanel() {
                         onCheckedChange={(value) => {
                           void handleToggleProvider(value, p)
                         }}
-                        aria-label={`${p.display_name}${enabled ? '已启用' : '已停用'}`}
+                        aria-label={`${p.display_name} ${enabled ? copy('已启用', 'enabled') : copy('已停用', 'disabled')}`}
                         className="h-4 w-7 [&>span]:h-3 [&>span]:w-3 data-[state=checked]:[&>span]:translate-x-3"
                       />
                     </div>
@@ -639,7 +657,7 @@ export function ModelPanel() {
           ))}
           {groupedProviders.length === 0 && (
             <div className="py-8 text-center text-xs text-muted-foreground">
-              没有匹配的 provider
+              {copy('没有匹配的 provider', 'No matching providers')}
             </div>
           )}
         </div>
@@ -655,18 +673,18 @@ export function ModelPanel() {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">{selected.display_name}</span>
-                    {selected.is_default && <span className="text-[10px] text-muted-foreground">当前使用</span>}
+                    {selected.is_default && <span className="text-[10px] text-muted-foreground">{copy('当前使用', 'In use')}</span>}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">{providerRouteHint(selected)} · ID: {selected.id}</div>
+                  <div className="text-[11px] text-muted-foreground">{providerRouteHint(selected, locale)} · ID: {selected.id}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {selected.is_custom && (
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={handleDeleteCustomProvider} disabled={saving} title="删除自定义模型商" aria-label="删除自定义模型商">
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={handleDeleteCustomProvider} disabled={saving} title={copy('删除自定义模型商', 'Delete custom provider')} aria-label={copy('删除自定义模型商', 'Delete custom provider')}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={handleUseModel} disabled={saving || selected.enabled === false}>使用此模型</Button>
+                <Button variant="outline" size="sm" onClick={handleUseModel} disabled={saving || selected.enabled === false}>{copy('使用此模型', 'Use this model')}</Button>
               </div>
             </div>
 
@@ -681,9 +699,9 @@ export function ModelPanel() {
                 disabled={testing}
               >
                 {testing ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> 测试中...</>
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> {copy('测试中...', 'Testing...')}</>
                 ) : (
-                  <><Activity className="mr-1.5 h-3.5 w-3.5" /> 测试连接</>
+                  <><Activity className="mr-1.5 h-3.5 w-3.5" /> {copy('测试连接', 'Test connection')}</>
                 )}
               </Button>
               <Button
@@ -693,19 +711,19 @@ export function ModelPanel() {
                 disabled={fetchingModels}
               >
                 {fetchingModels ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> 获取中...</>
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> {copy('获取中...', 'Fetching...')}</>
                 ) : (
-                  <><ListPlus className="mr-1.5 h-3.5 w-3.5" /> 获取模型列表</>
+                  <><ListPlus className="mr-1.5 h-3.5 w-3.5" /> {copy('获取模型列表', 'Fetch models')}</>
                 )}
               </Button>
               {!apiClient.usesEmbeddedRuntime && selected.supports_multi_key !== false && selected.id !== 'ollama' && (
                 <Button variant="outline" size="sm" onClick={handleOpenKeys}>
-                  <KeyRound className="mr-1.5 h-3.5 w-3.5" /> 多 Key 管理
+                  <KeyRound className="mr-1.5 h-3.5 w-3.5" /> {copy('多 Key 管理', 'Manage keys')}
                 </Button>
               )}
               {selected.has_url && (
                 <Button variant="outline" size="sm" onClick={handleOpenHeaders}>
-                  <Settings2 className="mr-1.5 h-3.5 w-3.5" /> 自定义 Header
+                  <Settings2 className="mr-1.5 h-3.5 w-3.5" /> {copy('自定义 Header', 'Custom headers')}
                 </Button>
               )}
             </div>
@@ -741,8 +759,8 @@ export function ModelPanel() {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <Label>模型列表</Label>
-                  <p className="text-[11px] text-muted-foreground">一个模型商可以保存多个模型，当前模型用于新对话。</p>
+                  <Label>{copy('模型列表', 'Models')}</Label>
+                  <p className="text-[11px] text-muted-foreground">{copy('一个模型商可以保存多个模型，当前模型用于新对话。', 'Save multiple models per provider; the current model is used for new chats.')}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                   <Switch
@@ -755,21 +773,21 @@ export function ModelPanel() {
               </div>
               <div className="space-y-1.5">
                 {providerModels.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">尚未添加模型</div>
+                  <div className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">{copy('尚未添加模型', 'No models added yet')}</div>
                 ) : providerModels.map((model) => {
                   const current = modelName === model
                   return (
                     <div key={model} className={cn('flex items-center gap-2 rounded-lg px-3 py-2', current ? 'bg-foreground/[0.055] ring-1 ring-foreground/10' : 'bg-muted/20')}>
                       <button type="button" onClick={() => setModelName(model)} className="min-w-0 flex-1 truncate text-left font-mono text-xs" title={model}>{model}</button>
-                      {current && <span className="text-[10px] text-muted-foreground">当前</span>}
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveModel(model)} title="移除模型" aria-label={`移除模型 ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      {current && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   )
                 })}
               </div>
               <div className="flex gap-2">
-                <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddModel() } }} placeholder={DEFAULT_MODEL_HINTS[selected.id] || '输入模型 ID'} className="font-mono text-xs" />
-                <Button type="button" variant="outline" size="sm" onClick={handleAddModel} disabled={!newModel.trim()}><Plus className="mr-1 h-3.5 w-3.5" />添加</Button>
+                <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddModel() } }} placeholder={DEFAULT_MODEL_HINTS[selected.id] || copy('输入模型 ID', 'Enter model ID')} className="font-mono text-xs" />
+                <Button type="button" variant="outline" size="sm" onClick={handleAddModel} disabled={!newModel.trim()}><Plus className="mr-1 h-3.5 w-3.5" />{copy('添加', 'Add')}</Button>
               </div>
             </div>
 
@@ -783,13 +801,13 @@ export function ModelPanel() {
                   placeholder={DEFAULT_BASE_URL_HINTS[selected.id] || 'https://api.example.com/v1'}
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  留空使用默认地址。Ollama 用户通常填 <code className="font-mono">http://localhost:11434/v1</code>
+                  {copy('留空使用默认地址。Ollama 用户通常填', 'Leave blank to use the default. Ollama users often use')} <code className="font-mono">http://localhost:11434/v1</code>
                 </p>
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="api-format">API 格式</Label>
+              <Label htmlFor="api-format">{copy('API 格式', 'API format')}</Label>
               <select
                 id="api-format"
                 value={apiFormat}
@@ -799,7 +817,7 @@ export function ModelPanel() {
                 <option value="openai">OpenAI Chat Completions</option>
                 <option value="anthropic">Anthropic Messages</option>
               </select>
-              <p className="text-[11px] text-muted-foreground">按当前模型商支持的接口选择，保存后立即应用。</p>
+              <p className="text-[11px] text-muted-foreground">{copy('按当前模型商支持的接口选择，保存后立即应用。', 'Choose the interface supported by this provider; changes apply after saving.')}</p>
             </div>
 
             {selected.id !== 'ollama' && (
@@ -813,8 +831,8 @@ export function ModelPanel() {
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder={
                       selected.has_api_key
-                        ? `已配置 (${selected.masked_api_key})，留空不变`
-                        : 'sk-... 留空使用环境变量'
+                        ? copy(`已配置 (${selected.masked_api_key})，留空不变`, `Configured (${selected.masked_api_key}); leave blank to keep it`)
+                        : copy('sk-... 留空使用环境变量', 'sk-... leave blank to use an environment variable')
                     }
                     className="pr-10 font-mono"
                   />
@@ -822,19 +840,19 @@ export function ModelPanel() {
                     type="button"
                     onClick={() => setShowKey((v) => !v)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                    aria-label={showKey ? copy('隐藏 API Key', 'Hide API key') : copy('显示 API Key', 'Show API key')}
                   >
                     {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   </button>
                 </div>
                 {selected.has_api_key && (
                   <p className="text-[11px] text-emerald-500">
-                    当前已配置 Key（{selected.masked_api_key}）。输入新值将覆盖，留空则不变。
+                    {copy('当前已配置 Key', 'Configured key')} ({selected.masked_api_key}). {copy('输入新值将覆盖，留空则不变。', 'Enter a new value to replace it, or leave blank to keep it.')}
                   </p>
                 )}
                 {!selected.has_api_key && selected.masked_api_key === '<未设置环境变量>' && (
                   <p className="text-[11px] text-amber-500">
-                    配置文件中存在 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{'${VAR}'}</code> 占位符但对应环境变量未设置。请在系统环境变量中设置该变量，或在下方直接输入 API Key。
+                    {copy('配置文件中存在', 'The config contains')} <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{'${VAR}'}</code> {copy('占位符但对应环境变量未设置。请在系统环境变量中设置该变量，或在下方直接输入 API Key。', 'but its environment variable is missing. Set it in the system environment or enter an API key below.')}
                   </p>
                 )}
               </div>
@@ -844,16 +862,16 @@ export function ModelPanel() {
               <Button onClick={handleSave} disabled={saving}>
                 {saving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 保存中...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('保存中...', 'Saving...')}
                   </>
                 ) : (
                   <>
-                    <Check className="mr-2 h-4 w-4" /> 保存配置
+                    <Check className="mr-2 h-4 w-4" /> {copy('保存配置', 'Save configuration')}
                   </>
                 )}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => loadProviders()} disabled={saving}>刷新列表</Button>
-              {lastProviderRefresh && <span className="text-[10px] text-muted-foreground">已更新 {lastProviderRefresh.toLocaleTimeString()}</span>}
+              <Button variant="ghost" size="sm" onClick={() => loadProviders()} disabled={saving}>{copy('刷新列表', 'Refresh')}</Button>
+              {lastProviderRefresh && <span className="text-[10px] text-muted-foreground">{copy('已更新', 'Updated')} {lastProviderRefresh.toLocaleTimeString()}</span>}
             </div>
 
           </>
@@ -864,25 +882,25 @@ export function ModelPanel() {
       <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>添加自定义模型商</DialogTitle>
-            <DialogDescription>适用于兼容 OpenAI Chat Completions 的第三方服务或内网网关。配置会写入 Rust Runtime 的用户配置。</DialogDescription>
+            <DialogTitle>{copy('添加自定义模型商', 'Add custom provider')}</DialogTitle>
+            <DialogDescription>{copy('适用于兼容 OpenAI Chat Completions 的第三方服务或内网网关。配置会写入 Rust Runtime 的用户配置。', 'For OpenAI Chat Completions-compatible services or private gateways. The configuration is saved to the Rust Runtime user config.')}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>唯一 ID</Label><Input value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} placeholder="例如 acme-ai" /></div>
-              <div className="space-y-1.5"><Label>显示名称</Label><Input value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} placeholder="例如 Acme AI" /></div>
+              <div className="space-y-1.5"><Label>{copy('唯一 ID', 'Unique ID')}</Label><Input value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} placeholder="e.g. acme-ai" /></div>
+              <div className="space-y-1.5"><Label>{copy('显示名称', 'Display name')}</Label><Input value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} placeholder="e.g. Acme AI" /></div>
             </div>
             <div className="space-y-1.5"><Label>Base URL</Label><Input value={customForm.base_url} onChange={(e) => setCustomForm((v) => ({ ...v, base_url: e.target.value }))} placeholder="https://api.example.com/v1" /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>初始模型（可选）</Label><Input value={customForm.model} onChange={(e) => setCustomForm((v) => ({ ...v, model: e.target.value }))} placeholder="例如 acme-chat" /></div>
-              <div className="space-y-1.5"><Label>分组</Label><Input value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} placeholder="自定义模型商" /></div>
+              <div className="space-y-1.5"><Label>{copy('初始模型（可选）', 'Initial model (optional)')}</Label><Input value={customForm.model} onChange={(e) => setCustomForm((v) => ({ ...v, model: e.target.value }))} placeholder="e.g. acme-chat" /></div>
+              <div className="space-y-1.5"><Label>{copy('分组', 'Group')}</Label><Input value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} placeholder={copy('自定义模型商', 'Custom providers')} /></div>
             </div>
-            <div className="space-y-1.5"><Label>API Key（可选）</Label><Input type="password" value={customForm.api_key} onChange={(e) => setCustomForm((v) => ({ ...v, api_key: e.target.value }))} placeholder="直接保存到系统凭据存储" /></div>
-            <div className="space-y-1.5"><Label>环境变量名（可选）</Label><Input value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))} placeholder="例如 ACME_API_KEY" /></div>
+            <div className="space-y-1.5"><Label>{copy('API Key（可选）', 'API key (optional)')}</Label><Input type="password" value={customForm.api_key} onChange={(e) => setCustomForm((v) => ({ ...v, api_key: e.target.value }))} placeholder={copy('直接保存到系统凭据存储', 'Saved directly to secure system storage')} /></div>
+            <div className="space-y-1.5"><Label>{copy('环境变量名（可选）', 'Environment variable (optional)')}</Label><Input value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))} placeholder="e.g. ACME_API_KEY" /></div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setCustomDialogOpen(false)}>取消</Button>
-            <Button onClick={handleCreateCustomProvider} disabled={customSaving}>{customSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}添加模型商</Button>
+            <Button variant="ghost" onClick={() => setCustomDialogOpen(false)}>{copy('取消', 'Cancel')}</Button>
+            <Button onClick={handleCreateCustomProvider} disabled={customSaving}>{customSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}{copy('添加模型商', 'Add provider')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -891,16 +909,16 @@ export function ModelPanel() {
       <Dialog open={modelDialogOpen} onOpenChange={setModelDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{selected?.display_name} 可用模型列表</DialogTitle>
+            <DialogTitle>{selected?.display_name} {copy('可用模型列表', 'Available models')}</DialogTitle>
             <DialogDescription>
-              点击模型名可填入 Model Name 字段（仍需点保存才生效）
+              {copy('点击模型名可填入 Model Name 字段（仍需点保存才生效）', 'Click a model to fill the Model Name field. Save to apply the change.')}
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto">
             {fetchingModels ? (
               <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                正在从 {selected?.display_name} 拉取模型列表...
+                {copy(`正在从 ${selected?.display_name} 拉取模型列表...`, `Fetching models from ${selected?.display_name}...`)}
               </div>
             ) : fetchedModels.length > 0 ? (
               <div className="space-y-1">
@@ -924,7 +942,7 @@ export function ModelPanel() {
               </div>
             ) : (
               <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-                未获取到任何模型
+                {copy('未获取到任何模型', 'No models returned')}
               </div>
             )}
           </div>
@@ -935,12 +953,12 @@ export function ModelPanel() {
       <Dialog open={keysDialogOpen} onOpenChange={setKeysDialogOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>{selected?.display_name} 多 Key 管理</DialogTitle>
+            <DialogTitle>{selected?.display_name} {copy('多 Key 管理', 'Manage API keys')}</DialogTitle>
             <DialogDescription>
-              一个 provider 可配多个 Key。主 Key 在下方编辑表单中维护，这里管理额外 Key。
+              {copy('一个 provider 可配多个 Key。主 Key 在下方编辑表单中维护，这里管理额外 Key。', 'A provider can have multiple keys. Maintain the primary key in the form and manage additional keys here.')}
               <br />
               <span className="text-[11px] text-muted-foreground/70">
-                注意：当前 agent runtime 仍只用主 Key，多 Key 轮换将在 Phase 2 接入。
+                {copy('注意：当前 agent runtime 仍只用主 Key，多 Key 轮换将在 Phase 2 接入。', 'Note: the agent runtime currently uses only the primary key. Key rotation will be added later.')}
               </span>
             </DialogDescription>
           </DialogHeader>
@@ -949,11 +967,11 @@ export function ModelPanel() {
             <div className="space-y-1.5">
               {keysLoading ? (
                 <div className="flex h-16 items-center justify-center text-xs text-muted-foreground">
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> 加载中...
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> {copy('加载中...', 'Loading...')}
                 </div>
               ) : keyList.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                  暂无 API Key
+                  {copy('暂无 API Key', 'No API keys yet')}
                 </div>
               ) : (
                 keyList.map((k) => (
@@ -966,11 +984,11 @@ export function ModelPanel() {
                         <span className="font-mono text-[12px]">{k.masked_key}</span>
                         {k.is_primary && (
                           <Badge variant="outline" className="border-primary/40 text-[9px] text-primary">
-                            主 Key
+                            {copy('主 Key', 'Primary key')}
                           </Badge>
                         )}
                         {!k.enabled && (
-                          <Badge variant="secondary" className="text-[9px]">已禁用</Badge>
+                          <Badge variant="secondary" className="text-[9px]">{copy('已禁用', 'Disabled')}</Badge>
                         )}
                       </div>
                       {k.label && (
@@ -994,7 +1012,7 @@ export function ModelPanel() {
             {/* 添加新 Key */}
             <Separator />
             <div className="space-y-2">
-              <Label className="text-xs">添加新 Key</Label>
+              <Label className="text-xs">{copy('添加新 Key', 'Add another key')}</Label>
               <Input
                 value={newKey}
                 onChange={(e) => setNewKey(e.target.value)}
@@ -1004,7 +1022,7 @@ export function ModelPanel() {
               <Input
                 value={newKeyLabel}
                 onChange={(e) => setNewKeyLabel(e.target.value)}
-                placeholder="标签 (可选, 例如: 主号 / 备用)"
+                placeholder={copy('标签 (可选, 例如: 主号 / 备用)', 'Label (optional, e.g. primary / backup)')}
                 className="text-xs"
               />
               <Button
@@ -1013,7 +1031,7 @@ export function ModelPanel() {
                 disabled={!newKey.trim()}
                 className="w-full"
               >
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> 添加
+                <Plus className="mr-1.5 h-3.5 w-3.5" /> {copy('添加', 'Add')}
               </Button>
             </div>
           </div>
@@ -1024,9 +1042,9 @@ export function ModelPanel() {
       <Dialog open={headersDialogOpen} onOpenChange={setHeadersDialogOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>{selected?.display_name} 自定义 HTTP Headers</DialogTitle>
+          <DialogTitle>{selected?.display_name} {copy('自定义 HTTP Headers', 'Custom HTTP headers')}</DialogTitle>
             <DialogDescription>
-              兼容第三方中转 (DMXAPI / OpenRouter / AiHubMix 等)。留空保存会清除所有 Header。
+              {copy('兼容第三方中转 (DMXAPI / OpenRouter / AiHubMix 等)。留空保存会清除所有 Header。', 'For third-party gateways such as DMXAPI, OpenRouter, or AiHubMix. Saving empty values clears all headers.')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -1039,7 +1057,7 @@ export function ModelPanel() {
                     next[i] = { ...next[i], k: e.target.value }
                     setHeaderEntries(next)
                   }}
-                  placeholder="Header 名 (如 X-API-Source)"
+                  placeholder={copy('Header 名 (如 X-API-Source)', 'Header name (e.g. X-API-Source)')}
                   className="flex-1 font-mono text-xs"
                 />
                 <Input
@@ -1049,7 +1067,7 @@ export function ModelPanel() {
                     next[i] = { ...next[i], v: e.target.value }
                     setHeaderEntries(next)
                   }}
-                  placeholder="Header 值"
+                  placeholder={copy('Header 值', 'Header value')}
                   className="flex-1 font-mono text-xs"
                 />
                 <Button
@@ -1068,12 +1086,12 @@ export function ModelPanel() {
               onClick={() => setHeaderEntries([...headerEntries, { k: '', v: '' }])}
               className="w-full"
             >
-              <Plus className="mr-1.5 h-3.5 w-3.5" /> 添加 Header
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> {copy('添加 Header', 'Add header')}
             </Button>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setHeadersDialogOpen(false)}>取消</Button>
-            <Button onClick={handleSaveHeaders}>保存</Button>
+            <Button variant="ghost" onClick={() => setHeadersDialogOpen(false)}>{copy('取消', 'Cancel')}</Button>
+            <Button onClick={handleSaveHeaders}>{copy('保存', 'Save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

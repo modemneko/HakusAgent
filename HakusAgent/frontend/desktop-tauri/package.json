@@ -10,9 +10,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:win": "tauri build --target nsis",
-    "tauri:build:mac": "tauri build --target dmg",
-    "tauri:build:linux": "tauri build --target appimage"
+    "tauri:build:win": "tauri build --bundles nsis",
+    "tauri:build:mac": "tauri build --bundles dmg",
+    "tauri:build:linux": "tauri build --bundles appimage"
   },
   "dependencies": {
     "@lobehub/icons": "^5.16.0",

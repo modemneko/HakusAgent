@@ -21,6 +21,7 @@ import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { useProjectsStore } from '@/store/projects'
+import { useI18n } from '@/lib/i18n'
 
 type SkillScope = 'global' | 'project'
 
@@ -32,6 +33,8 @@ function inferredWritable(skill: SkillInfo): boolean {
 
 export function SkillsPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const activeProjectId = useProjectsStore((state) => state.activeProjectId)
   const activeProject = useProjectsStore((state) => state.activeProject)
   const [skills, setSkills] = useState<SkillInfo[]>([])
@@ -58,7 +61,7 @@ export function SkillsPanel() {
       if (error instanceof BackendOutdatedError) {
         setOutdatedError(error)
       } else {
-        toast.error(`加载 Skills 失败：${error instanceof Error ? error.message : String(error)}`)
+        toast.error(copy(`加载 Skills 失败：${error instanceof Error ? error.message : String(error)}`, `Could not load skills: ${error instanceof Error ? error.message : String(error)}`))
       }
     } finally {
       setLoading(false)
@@ -86,17 +89,17 @@ export function SkillsPanel() {
   const handleInstall = async () => {
     const value = source.trim()
     if (!value) {
-      toast.error('请输入 Skill 来源')
+      toast.error(copy('请输入 Skill 来源', 'Enter a Skill source'))
       return
     }
     setInstalling(true)
     try {
       const receipt = await apiClient.installSkill(value, scope, activeProjectId || undefined)
-      toast.success(`已安装 ${receipt.name}`)
+      toast.success(copy(`已安装 ${receipt.name}`, `Installed ${receipt.name}`))
       setSource('')
       await refresh()
     } catch (error) {
-      toast.error(`安装失败：${error instanceof Error ? error.message : String(error)}`)
+      toast.error(copy(`安装失败：${error instanceof Error ? error.message : String(error)}`, `Install failed: ${error instanceof Error ? error.message : String(error)}`))
     } finally {
       setInstalling(false)
     }
@@ -107,10 +110,10 @@ export function SkillsPanel() {
     setSkills((current) => current.map((item) => item.name === skill.name ? { ...item, enabled } : item))
     try {
       await apiClient.setSkillEnabled(skill.name, enabled, activeProjectId || undefined)
-      toast.success(`${skill.name} 已${enabled ? '启用' : '停用'}`)
+      toast.success(copy(`${skill.name} 已${enabled ? '启用' : '停用'}`, `${skill.name} ${enabled ? 'enabled' : 'disabled'}`))
     } catch (error) {
       setSkills((current) => current.map((item) => item.name === skill.name ? { ...item, enabled: !enabled } : item))
-      toast.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+      toast.error(copy(`更新失败：${error instanceof Error ? error.message : String(error)}`, `Update failed: ${error instanceof Error ? error.message : String(error)}`))
     } finally {
       setBusyName(null)
     }
@@ -121,11 +124,11 @@ export function SkillsPanel() {
     try {
       const requestedScope = skill.scope === 'global' || skill.scope === 'project' ? skill.scope : undefined
       await apiClient.removeSkill(skill.name, requestedScope, activeProjectId || undefined)
-      toast.success(`已删除 ${skill.name}`)
+      toast.success(copy(`已删除 ${skill.name}`, `Deleted ${skill.name}`))
       setConfirmRemove(null)
       await refresh()
     } catch (error) {
-      toast.error(`删除失败：${error instanceof Error ? error.message : String(error)}`)
+      toast.error(copy(`删除失败：${error instanceof Error ? error.message : String(error)}`, `Delete failed: ${error instanceof Error ? error.message : String(error)}`))
     } finally {
       setBusyName(null)
     }
@@ -134,9 +137,9 @@ export function SkillsPanel() {
   const copyDirectory = async () => {
     try {
       await navigator.clipboard.writeText(directory)
-      toast.success('目录已复制')
+      toast.success(copy('目录已复制', 'Directory copied'))
     } catch {
-      toast.error('复制失败')
+      toast.error(copy('复制失败', 'Copy failed'))
     }
   }
 
@@ -154,12 +157,12 @@ export function SkillsPanel() {
         <div>
           <h3 className="text-sm font-semibold">Skills</h3>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            {skills.length} 个已安装，{enabledCount} 个已启用
+            {copy(`${skills.length} 个已安装，${enabledCount} 个已启用`, `${skills.length} installed, ${enabledCount} enabled`)}
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
-          刷新
+          {copy('刷新', 'Refresh')}
         </Button>
       </div>
 
@@ -167,8 +170,8 @@ export function SkillsPanel() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-medium">安装来源</span>
-          <div className="inline-flex rounded-lg bg-muted p-0.5" aria-label="安装范围">
+          <span className="text-xs font-medium">{copy('安装来源', 'Install source')}</span>
+          <div className="inline-flex rounded-lg bg-muted p-0.5" aria-label={copy('安装范围', 'Install scope')}>
             <button
               type="button"
               onClick={() => setScope('global')}
@@ -177,19 +180,19 @@ export function SkillsPanel() {
                 scope === 'global' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground',
               )}
             >
-              全局
+              {copy('全局', 'Global')}
             </button>
             <button
               type="button"
               onClick={() => setScope('project')}
               disabled={!activeProjectId}
-              title={activeProjectId ? activeProject?.name : '请先选择项目'}
+              title={activeProjectId ? activeProject?.name : copy('请先选择项目', 'Select a project first')}
               className={cn(
                 'rounded-md px-2.5 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                 scope === 'project' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground',
               )}
             >
-              当前项目
+              {copy('当前项目', 'Current project')}
             </button>
           </div>
         </div>
@@ -203,18 +206,18 @@ export function SkillsPanel() {
                 void handleInstall()
               }
             }}
-            placeholder="github:owner/repository 或本地目录"
+            placeholder={copy('github:owner/repository 或本地目录', 'github:owner/repository or local directory')}
             disabled={installing}
             className="min-w-0 flex-1"
           />
           <Button onClick={() => void handleInstall()} disabled={installing || !source.trim()} className="gap-1.5">
             {installing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-            安装
+            {copy('安装', 'Install')}
           </Button>
         </div>
         <div className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>第三方 Skill 可能包含脚本。安装前请检查来源和内容。</span>
+          <span>{copy('第三方 Skill 可能包含脚本。安装前请检查来源和内容。', 'Third-party Skills may contain scripts. Review the source before installing.')}</span>
         </div>
       </div>
 
@@ -225,14 +228,14 @@ export function SkillsPanel() {
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索 Skills"
+          placeholder={copy('搜索 Skills', 'Search Skills')}
           className="pl-8"
         />
       </div>
 
       {warnings.length > 0 && (
         <div className="rounded-md bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          {warnings[0]}{warnings.length > 1 ? `，另有 ${warnings.length - 1} 条扫描警告` : ''}
+          {warnings[0]}{warnings.length > 1 ? copy(`，另有 ${warnings.length - 1} 条扫描警告`, `; ${warnings.length - 1} more scan warning${warnings.length === 2 ? '' : 's'}`) : ''}
         </div>
       )}
 
@@ -244,7 +247,7 @@ export function SkillsPanel() {
         {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center py-10 text-center text-muted-foreground">
             <Sparkles className="mb-2 h-6 w-6 opacity-60" />
-            <p className="text-xs">{skills.length === 0 ? '尚未安装 Skill' : '没有匹配结果'}</p>
+            <p className="text-xs">{skills.length === 0 ? copy('尚未安装 Skill', 'No Skills installed') : copy('没有匹配结果', 'No matches')}</p>
           </div>
         )}
 
@@ -259,7 +262,7 @@ export function SkillsPanel() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-sm font-medium">{skill.name}</span>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">
-                      {skill.scope === 'project' ? '项目' : skill.scope === 'global' ? '全局' : skill.source}
+                      {skill.scope === 'project' ? copy('项目', 'Project') : skill.scope === 'global' ? copy('全局', 'Global') : skill.source}
                     </span>
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -273,7 +276,7 @@ export function SkillsPanel() {
                       variant="ghost"
                       className="h-8 w-8 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => setConfirmRemove(skill.name)}
-                      title={`删除 ${skill.name}`}
+                      title={copy(`删除 ${skill.name}`, `Delete ${skill.name}`)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -282,20 +285,20 @@ export function SkillsPanel() {
                     checked={skill.enabled}
                     onCheckedChange={(enabled) => void handleToggle(skill, enabled)}
                     disabled={busyName === skill.name}
-                    aria-label={`${skill.enabled ? '停用' : '启用'} ${skill.name}`}
+                    aria-label={copy(`${skill.enabled ? '停用' : '启用'} ${skill.name}`, `${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`)}
                   />
                 </div>
               </div>
 
               {confirming && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2 text-[11px] text-destructive">
-                  <span className="min-w-0 flex-1">删除 {skill.name} 及其目录？</span>
+                  <span className="min-w-0 flex-1">{copy(`删除 ${skill.name} 及其目录？`, `Delete ${skill.name} and its directory?`)}</span>
                   <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={() => setConfirmRemove(null)}>
-                    <X className="h-3 w-3" />取消
+                    <X className="h-3 w-3" />{copy('取消', 'Cancel')}
                   </Button>
                   <Button variant="destructive" size="sm" className="h-7 gap-1 px-2" onClick={() => void handleRemove(skill)}>
                     {busyName === skill.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                    删除
+                    {copy('删除', 'Delete')}
                   </Button>
                 </div>
               )}
@@ -309,7 +312,7 @@ export function SkillsPanel() {
           type="button"
           onClick={() => void copyDirectory()}
           className="flex max-w-full items-center gap-1.5 text-left text-[10px] text-muted-foreground hover:text-foreground"
-          title="复制全局 Skills 目录"
+          title={copy('复制全局 Skills 目录', 'Copy global Skills directory')}
         >
           <Copy className="h-3 w-3 shrink-0" />
           <span className="truncate font-mono">{directory}</span>

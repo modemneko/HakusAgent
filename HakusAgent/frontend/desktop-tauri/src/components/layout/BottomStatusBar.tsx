@@ -3,6 +3,7 @@ import { useAppStore, type AgentMode } from '@/store/app'
 import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
 import { getAgentModeMeta } from '@/lib/agentModes'
+import { useI18n } from '@/lib/i18n'
 
 const AGENT_MODE_ICONS: Record<AgentMode, typeof Zap> = {
   swift: Briefcase,
@@ -11,6 +12,8 @@ const AGENT_MODE_ICONS: Record<AgentMode, typeof Zap> = {
 }
 
 export function BottomStatusBar() {
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const agentMode = useAppStore((s) => s.agentMode)
   const totalInput = useAppStore((s) => s.totalInputTokens)
   const totalOutput = useAppStore((s) => s.totalOutputTokens)
@@ -34,14 +37,14 @@ export function BottomStatusBar() {
         {isStreaming && (
           <span className="inline-flex items-center gap-1 text-amber-500">
             <Circle className="h-1.5 w-1.5 animate-pulse-dot fill-current" />
-            <span>生成中</span>
+            <span>{copy('生成中', 'Generating')}</span>
           </span>
         )}
       </div>
 
       <div className="app-region-no-drag flex items-center gap-4">
         {(totalInput > 0 || totalOutput > 0) && (
-          <span className="inline-flex items-center gap-1" title="输入 / 输出 token">
+          <span className="inline-flex items-center gap-1" title={copy('输入 / 输出 token', 'Input / output tokens')}>
             <Cpu className="h-3 w-3 text-muted-foreground/70" />
             <span className="tabular-nums">
               {fmt(totalInput)} / {fmt(totalOutput)}

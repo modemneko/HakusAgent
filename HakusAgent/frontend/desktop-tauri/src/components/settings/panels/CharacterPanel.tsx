@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/toast'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import type { CharacterInfo } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 interface FormState {
   name: string
@@ -35,6 +36,8 @@ const EMPTY: FormState = {
 
 export function CharacterPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY)
@@ -59,7 +62,7 @@ export function CharacterPanel() {
     } catch (e: any) {
       console.error('[CharacterPanel] getCharacter failed:', e)
       if (e instanceof BackendOutdatedError) setOutdatedError(e)
-      else toast.error(`加载角色信息失败：${e?.message || e}`)
+      else toast.error(copy(`加载角色信息失败：${e?.message || e}`, `Could not load character: ${e?.message || e}`))
     } finally {
       setLoading(false)
     }
@@ -78,7 +81,7 @@ export function CharacterPanel() {
           if (!cancelled) {
             console.error('[CharacterPanel] getCharacter timed out after 12s')
             setLoading(false)
-            toast.error('加载角色信息超时（10s），请检查 backend 是否正常')
+            toast.error(copy('加载角色信息超时（10s），请检查 backend 是否正常', 'Loading the character timed out (10s). Check that the backend is running.'))
           }
         }, 12000)
         const ch: CharacterInfo = await fetchPromise
@@ -102,7 +105,7 @@ export function CharacterPanel() {
         if (e instanceof BackendOutdatedError) {
           setOutdatedError(e)
         } else {
-          toast.error(`加载角色信息失败：${e?.message || e}`)
+          toast.error(copy(`加载角色信息失败：${e?.message || e}`, `Could not load character: ${e?.message || e}`))
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -135,14 +138,14 @@ export function CharacterPanel() {
       if (form.system_prompt !== original.system_prompt) body.system_prompt = form.system_prompt
 
       if (Object.keys(body).length === 0) {
-        toast.info('没有改动需要保存')
+        toast.info(copy('没有改动需要保存', 'There are no changes to save'))
         return
       }
       await apiClient.updateCharacter(body)
-      toast.success('角色信息已保存')
+      toast.success(copy('角色信息已保存', 'Character saved'))
       setOriginal({ ...form })
     } catch (e: any) {
-      toast.error(`保存失败：${e?.message || e}`)
+      toast.error(copy(`保存失败：${e?.message || e}`, `Save failed: ${e?.message || e}`))
     } finally {
       setSaving(false)
     }
@@ -168,10 +171,10 @@ export function CharacterPanel() {
       <div className="space-y-3 py-12">
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          加载角色信息...
+          {copy('加载角色信息...', 'Loading character...')}
         </div>
         <div className="text-center text-[11px] text-muted-foreground">
-          如果超过 10s 未响应，将自动显示错误信息
+          {copy('如果超过 10s 未响应，将自动显示错误信息', 'An error will appear automatically if this takes longer than 10 seconds')}
         </div>
       </div>
     )
@@ -184,7 +187,7 @@ export function CharacterPanel() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="char-name">名字</Label>
+          <Label htmlFor="char-name">{copy('名字', 'Name')}</Label>
           <Input
             id="char-name"
             value={form.name}
@@ -193,60 +196,60 @@ export function CharacterPanel() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="char-nickname">昵称</Label>
+          <Label htmlFor="char-nickname">{copy('昵称', 'Nickname')}</Label>
           <Input
             id="char-nickname"
             value={form.nickname}
             onChange={(e) => setForm({ ...form, nickname: e.target.value })}
-            placeholder="小哈"
+            placeholder={copy('小哈', 'Hakus')}
           />
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="char-personality">性格 (Personality)</Label>
+        <Label htmlFor="char-personality">{copy('性格', 'Personality')}</Label>
         <Textarea
           id="char-personality"
           value={form.personality}
           onChange={(e) => setForm({ ...form, personality: e.target.value })}
           rows={3}
-          placeholder="温柔、理性、偶尔腹黑..."
+          placeholder={copy('温柔、理性、偶尔腹黑...', 'Warm, rational, occasionally mischievous...')}
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="char-scenario">场景 (Scenario)</Label>
+        <Label htmlFor="char-scenario">{copy('场景', 'Scenario')}</Label>
         <Textarea
           id="char-scenario"
           value={form.scenario}
           onChange={(e) => setForm({ ...form, scenario: e.target.value })}
           rows={3}
-          placeholder="用户的技术搭档，主要协助编程与系统设计..."
+          placeholder={copy('用户的技术搭档，主要协助编程与系统设计...', 'A technical partner who helps with programming and system design...')}
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="char-first-msg">开场白 (First Message)</Label>
+        <Label htmlFor="char-first-msg">{copy('开场白', 'First message')}</Label>
         <Textarea
           id="char-first-msg"
           value={form.first_message}
           onChange={(e) => setForm({ ...form, first_message: e.target.value })}
           rows={3}
-          placeholder="你好，我是 HakusAI，有什么可以帮你的吗？"
+          placeholder={copy('你好，我是 HakusAI，有什么可以帮你的吗？', "Hi, I'm HakusAI. What can I help you with?")}
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="char-sysprompt">系统提示词 (System Prompt) — 可选</Label>
+        <Label htmlFor="char-sysprompt">{copy('系统提示词', 'System prompt')} — {copy('可选', 'optional')}</Label>
         <Textarea
           id="char-sysprompt"
           value={form.system_prompt}
           onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
           rows={3}
-          placeholder="留空则由服务端默认生成"
+          placeholder={copy('留空则由服务端默认生成', 'Leave blank to use the server default')}
         />
         <p className="text-[11px] text-muted-foreground">
-          覆盖服务端默认的 system prompt，留空表示不修改。
+          {copy('覆盖服务端默认的 system prompt，留空表示不修改。', 'Overrides the server default system prompt. Leave blank to keep it unchanged.')}
         </p>
       </div>
 
@@ -254,18 +257,18 @@ export function CharacterPanel() {
         <Button onClick={handleSave} disabled={saving || !dirty}>
           {saving ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 保存中...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('保存中...', 'Saving...')}
             </>
           ) : (
             <>
-              <Save className="mr-2 h-4 w-4" /> 保存
+              <Save className="mr-2 h-4 w-4" /> {copy('保存', 'Save')}
             </>
           )}
         </Button>
         <Button variant="ghost" size="sm" onClick={handleReset} disabled={saving || !dirty}>
-          <RotateCcw className="mr-2 h-3.5 w-3.5" /> 撤销改动
+          <RotateCcw className="mr-2 h-3.5 w-3.5" /> {copy('撤销改动', 'Discard changes')}
         </Button>
-        {dirty && <span className="text-[11px] text-amber-500">有未保存改动</span>}
+        {dirty && <span className="text-[11px] text-amber-500">{copy('有未保存改动', 'Unsaved changes')}</span>}
       </div>
     </div>
   )

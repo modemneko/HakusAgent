@@ -103,7 +103,7 @@ fn kill_backend(app: &tauri::AppHandle) {
 /// "显示/隐藏窗口" context menu item. If the window is visible, hide it;
 /// if hidden, show + focus it.
 #[cfg(not(target_os = "android"))]
-fn toggle_main_window(app: &tauri::AppHandle) {
+pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
@@ -197,6 +197,7 @@ pub fn run() {
                 if let Err(e) = setup_tray(app.handle()) {
                     eprintln!("[setup] Tray setup failed: {e}");
                 }
+                shortcut_cmds::register_saved_shortcut(app.handle());
 
                 Ok(())
             })

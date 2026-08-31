@@ -20,6 +20,7 @@ import { useAppStore } from '@/store/app'
 import type { AgentMode } from '@/api/types'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 
 interface TopBarProps {
   onToggleSidebar: () => void
@@ -37,6 +38,7 @@ const MODE_SEGMENTS: { id: AgentMode; label: string; icon: typeof Briefcase }[] 
 type WindowAction = 'minimize' | 'toggleMaximize' | 'close'
 
 function WindowButtons() {
+  const { t } = useI18n()
   const invokedAtRef = useRef(0)
 
   const invoke = (action: WindowAction, event?: MouseEvent<HTMLButtonElement> | PointerEvent<HTMLButtonElement>) => {
@@ -71,13 +73,13 @@ function WindowButtons() {
             }}
             onPointerUp={(event) => invoke('minimize', event)}
             onClick={(event) => invoke('minimize', event)}
-            aria-label="最小化窗口"
-            title="最小化窗口"
+            aria-label={t('minimize')}
+            title={t('minimize')}
           >
             <Minus className="h-4 w-4" strokeWidth={2.5} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>最小化</TooltipContent>
+        <TooltipContent>{t('minimize')}</TooltipContent>
       </Tooltip>
 
       <Tooltip>
@@ -94,13 +96,13 @@ function WindowButtons() {
             }}
             onPointerUp={(event) => invoke('toggleMaximize', event)}
             onClick={(event) => invoke('toggleMaximize', event)}
-            aria-label="最大化或还原窗口"
-            title="最大化或还原窗口"
+            aria-label={t('maximize')}
+            title={t('maximize')}
           >
             <Square className="h-3.5 w-3.5" strokeWidth={2.2} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>最大化 / 还原</TooltipContent>
+        <TooltipContent>{t('maximize')}</TooltipContent>
       </Tooltip>
 
       <Tooltip>
@@ -117,13 +119,13 @@ function WindowButtons() {
             }}
             onPointerUp={(event) => invoke('close', event)}
             onClick={(event) => invoke('close', event)}
-            aria-label="关闭窗口"
-            title="关闭窗口"
+            aria-label={t('close')}
+            title={t('close')}
           >
             <X className="h-3.5 w-3.5" strokeWidth={2.4} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>关闭</TooltipContent>
+        <TooltipContent>{t('close')}</TooltipContent>
       </Tooltip>
     </div>
   )
@@ -132,6 +134,7 @@ function WindowButtons() {
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
 export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: TopBarProps) {
+  const { t } = useI18n()
   const activeId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const clearMessages = useSessionStore((s) => s.clearMessages)
@@ -147,7 +150,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
     ? `${currentProvider.display_name || currentProvider.id} · ${currentProvider.model_name || ''}`
     : model
       ? `${model.provider} · ${model.model_name}`
-      : '等待模型信息'
+      : t('awaitingModel')
   const agentMode = useAppStore((s) => s.agentMode)
   const setAgentMode = useAppStore((s) => s.setAgentMode)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
@@ -171,13 +174,13 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               variant="ghost"
               className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onToggleSidebar}
-              title="切换侧栏"
-              aria-label="切换侧栏"
+              title={t('toggleSidebar')}
+              aria-label={t('toggleSidebar')}
             >
               <PanelLeft className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>切换侧栏</TooltipContent>
+          <TooltipContent>{t('toggleSidebar')}</TooltipContent>
         </Tooltip>
 
         <div className="segment topbar-mode-segment">
@@ -190,14 +193,14 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
                   <button
                     className={cn('segment-btn', active && 'segment-btn-active')}
                     onClick={() => setAgentMode(mode.id)}
-                    aria-label={`${mode.label} 模式`}
-                    title={`${mode.label} 模式`}
+                    aria-label={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
+                    title={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
                   >
                     <Icon className="h-3 w-3" />
-                    <span className="hidden md:inline">{mode.label}</span>
+                    <span className="hidden md:inline">{mode.id === 'swift' ? t('workMode') : t('codeMode')}</span>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>{mode.label} 模式</TooltipContent>
+                <TooltipContent>{mode.id === 'swift' ? t('workMode') : t('codeMode')}</TooltipContent>
               </Tooltip>
             )
           })}
@@ -227,13 +230,13 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
                 rightPanelOpen && 'bg-accent/60 text-foreground',
               )}
               onClick={onToggleRightPanel}
-              title="审阅 / 终端面板"
-              aria-label="审阅 / 终端面板"
+              title={t('reviewPanel')}
+              aria-label={t('reviewPanel')}
             >
               <PanelRight className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>审阅 / 终端面板</TooltipContent>
+          <TooltipContent>{t('reviewPanel')}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -243,13 +246,13 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
               variant="ghost"
               className="topbar-icon-button topbar-settings-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={onOpenSettings}
-              title="设置"
-              aria-label="设置"
+              title={t('settings')}
+              aria-label={t('settings')}
             >
               <Settings className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>设置</TooltipContent>
+          <TooltipContent>{t('settings')}</TooltipContent>
         </Tooltip>
 
         {activeId && (
@@ -260,17 +263,17 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
                 variant="ghost"
               className="topbar-icon-button topbar-clear-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               onClick={() => {
-                  if (confirm('清空当前会话的所有消息？')) {
+                if (confirm(t('clearChat') + '?')) {
                     clearMessages(activeId)
                   }
                 }}
-                title="清空对话"
-                aria-label="清空对话"
+                title={t('clearChat')}
+                aria-label={t('clearChat')}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>清空对话</TooltipContent>
+            <TooltipContent>{t('clearChat')}</TooltipContent>
           </Tooltip>
         )}
 

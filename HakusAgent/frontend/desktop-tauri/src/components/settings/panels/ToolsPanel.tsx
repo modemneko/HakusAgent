@@ -14,6 +14,7 @@ import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { cn } from '@/lib/utils'
 import type { ToolInfo, PermissionMode, RuntimeConfigSnapshot } from '@/api/types'
+import { useI18n } from '@/lib/i18n'
 
 const PERMISSION_META: Record<
   PermissionMode,
@@ -39,8 +40,16 @@ const PERMISSION_META: Record<
   },
 }
 
+const EN_PERMISSION_META: Record<PermissionMode, { title: string; desc: string }> = {
+  auto: { title: 'Run automatically', desc: 'Run every tool call without asking. Fastest, but highest risk.' },
+  ask: { title: 'Ask for confirmation', desc: 'Ask before risky tools; run safe tools directly. Recommended.' },
+  bypass: { title: 'Skip permissions', desc: 'Skip all permission checks, including shell and browser. Use only in trusted environments.' },
+}
+
 export function ToolsPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const usesEmbeddedRuntime = apiClient.usesEmbeddedRuntime
   const [loading, setLoading] = useState(true)
   const [tools, setTools] = useState<ToolInfo[]>([])
@@ -70,7 +79,7 @@ export function ToolsPanel() {
       if (e instanceof BackendOutdatedError) {
         setOutdatedError(e)
       } else {
-        toast.error(`加载工具列表失败：${e?.message || e}`)
+        toast.error(copy(`加载工具列表失败：${e?.message || e}`, `Could not load tools: ${e?.message || e}`))
       }
     } finally {
       setLoading(false)
@@ -87,11 +96,11 @@ export function ToolsPanel() {
     setTools((prev) => prev.map((t) => (t.id === tool.id ? { ...t, enabled: next } : t)))
     try {
       await apiClient.toggleTool(tool.id, next)
-      toast.success(`${tool.name} 已${next ? '启用' : '禁用'}`)
+      toast.success(`${tool.name} ${next ? copy('已启用', 'enabled') : copy('已禁用', 'disabled')}`)
     } catch (e: any) {
       // rollback
       setTools((prev) => prev.map((t) => (t.id === tool.id ? { ...t, enabled: !next } : t)))
-      toast.error(`切换失败：${e?.message || e}`)
+      toast.error(copy(`切换失败：${e?.message || e}`, `Update failed: ${e?.message || e}`))
     } finally {
       setTogglingId(null)
     }
@@ -104,10 +113,10 @@ export function ToolsPanel() {
     setPermission(mode)
     try {
       await apiClient.setPermission(mode)
-      toast.success(`权限模式已切换为「${PERMISSION_META[mode].title}」`)
+      toast.success(copy(`权限模式已切换为「${PERMISSION_META[mode].title}」`, `Permission mode changed to “${EN_PERMISSION_META[mode].title}”`))
     } catch (e: any) {
       setPermission(prev)
-      toast.error(`切换失败：${e?.message || e}`)
+      toast.error(copy(`切换失败：${e?.message || e}`, `Update failed: ${e?.message || e}`))
     } finally {
       setSettingPerm(false)
     }
@@ -120,10 +129,10 @@ export function ToolsPanel() {
     setUpdatingSetting(key)
     try {
       await apiClient.setRuntimeConfig(key, value)
-      toast.success(key === 'allow_shell' ? (value ? '命令执行已允许' : '命令执行已关闭') : '工具设置已更新')
+      toast.success(key === 'allow_shell' ? (value ? copy('命令执行已允许', 'Command execution allowed') : copy('命令执行已关闭', 'Command execution disabled')) : copy('工具设置已更新', 'Tool settings updated'))
     } catch (e: any) {
       setRuntimeConfig((current) => current ? { ...current, [key]: previous } : current)
-      toast.error(`设置更新失败：${e?.message || e}`)
+      toast.error(copy(`设置更新失败：${e?.message || e}`, `Could not update setting: ${e?.message || e}`))
     } finally {
       setUpdatingSetting(null)
     }
@@ -141,36 +150,36 @@ export function ToolsPanel() {
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          刷新
+          {copy('刷新', 'Refresh')}
         </Button>
       </div>
 
       {/* 工具列表 */}
       <div className="space-y-2">
-        <Label>工具列表</Label>
+        <Label>{copy('工具列表', 'Tools')}</Label>
         {usesEmbeddedRuntime ? (
           <div className="space-y-3">
             <p className="text-[11px] text-muted-foreground">
-              工具会按当前会话、工作模式和 MCP 服务动态提供。下面的选项控制本机执行权限。
+              {copy('工具会按当前会话、工作模式和 MCP 服务动态提供。下面的选项控制本机执行权限。', 'Tools are provided dynamically by the session, work mode, and MCP services. The options below control local execution permissions.')}
             </p>
             {runtimeConfig ? (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium">允许执行命令</div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">关闭后，AI 仍可阅读文件和使用安全工具，但不能运行 shell 命令。</p>
+                    <div className="text-sm font-medium">{copy('允许执行命令', 'Allow command execution')}</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{copy('关闭后，AI 仍可阅读文件和使用安全工具，但不能运行 shell 命令。', 'When off, the AI can still read files and use safe tools but cannot run shell commands.')}</p>
                   </div>
                   <Switch
                     checked={runtimeConfig.allow_shell}
                     onCheckedChange={(value) => void handleRuntimeSetting('allow_shell', value)}
                     disabled={updatingSetting === 'allow_shell'}
-                    aria-label="允许执行命令"
+                    aria-label={copy('允许执行命令', 'Allow command execution')}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium">严格工具模式</div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">只提供当前会话明确允许的工具，适合受控工作区。</p>
+                    <div className="text-sm font-medium">{copy('严格工具模式', 'Strict tool mode')}</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{copy('只提供当前会话明确允许的工具，适合受控工作区。', 'Expose only tools explicitly allowed for this session, useful for controlled workspaces.')}</p>
                   </div>
                   <Switch
                     checked={runtimeConfig.strict_tool_mode}
@@ -181,33 +190,33 @@ export function ToolsPanel() {
                 </div>
                 <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
                   <span className="min-w-0">
-                    <span className="block text-sm font-medium">文件访问范围</span>
-                    <span className="mt-0.5 block text-[11px] text-muted-foreground">限制写入与命令工具可触及的位置。</span>
+                  <span className="block text-sm font-medium">{copy('文件访问范围', 'File access scope')}</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{copy('限制写入与命令工具可触及的位置。', 'Limits where write and command tools can operate.')}</span>
                   </span>
                   <select
                     value={runtimeConfig.sandbox_mode}
                     onChange={(event) => void handleRuntimeSetting('sandbox_mode', event.target.value)}
                     disabled={updatingSetting === 'sandbox_mode'}
                     className="h-8 min-w-[132px] rounded-lg border border-border/70 bg-background px-2 text-xs outline-none"
-                    aria-label="文件访问范围"
+                    aria-label={copy('文件访问范围', 'File access scope')}
                   >
-                    <option value="read-only">只读</option>
-                    <option value="workspace-write">仅工作区</option>
-                    <option value="danger-full-access">全部文件</option>
-                    <option value="opensandbox">外部沙箱</option>
+                    <option value="read-only">{copy('只读', 'Read only')}</option>
+                    <option value="workspace-write">{copy('仅工作区', 'Workspace only')}</option>
+                    <option value="danger-full-access">{copy('全部文件', 'All files')}</option>
+                    <option value="opensandbox">{copy('外部沙箱', 'External sandbox')}</option>
                   </select>
                 </label>
               </div>
             ) : (
               <div className="flex items-center py-6 text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中...
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('加载中...', 'Loading...')}
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground">MCP 工具请在“MCP 服务器”中管理，模型只会看到当前已连接的工具。</p>
+            <p className="text-[11px] text-muted-foreground">{copy('MCP 工具请在“MCP 服务器”中管理，模型只会看到当前已连接的工具。', 'Manage MCP tools under MCP servers; the model only sees tools that are currently connected.')}</p>
           </div>
         ) : loading ? (
           <div className="flex items-center py-6 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中...
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('加载中...', 'Loading...')}
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -225,7 +234,7 @@ export function ToolsPanel() {
                         className="border-amber-500/50 bg-amber-500/10 px-1.5 py-0 text-[9px] text-amber-500"
                       >
                         <AlertTriangle className="mr-0.5 h-2.5 w-2.5" />
-                        危险
+                        {copy('危险', 'Risky')}
                       </Badge>
                     )}
                     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -249,15 +258,16 @@ export function ToolsPanel() {
 
       {/* 权限模式 */}
       <div className="space-y-2">
-        <Label>权限模式</Label>
+        <Label>{copy('权限模式', 'Permission mode')}</Label>
         <p className="text-[11px] text-muted-foreground">
-          决定 AI 调用工具时是否需要用户确认。修改后立即生效。
+          {copy('决定 AI 调用工具时是否需要用户确认。修改后立即生效。', 'Controls whether the AI needs confirmation before using tools. Changes apply immediately.')}
         </p>
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
           {(Object.keys(PERMISSION_META) as PermissionMode[])
             .filter((m) => availableModes.includes(m))
             .map((m) => {
               const meta = PERMISSION_META[m]
+              const localizedMeta = locale === 'zh-CN' ? meta : { ...meta, ...EN_PERMISSION_META[m] }
               const Icon = meta.icon
               const active = permission === m
               return (
@@ -278,8 +288,8 @@ export function ToolsPanel() {
                       <div className="h-2 w-2 rounded-full bg-current" />
                     )}
                   </div>
-                  <div className="text-sm font-semibold">{meta.title}</div>
-                  <p className="text-[11px] opacity-80">{meta.desc}</p>
+                  <div className="text-sm font-semibold">{localizedMeta.title}</div>
+                  <p className="text-[11px] opacity-80">{localizedMeta.desc}</p>
                   <code className="mt-1 font-mono text-[10px] opacity-60">{m}</code>
                 </button>
               )
@@ -289,7 +299,7 @@ export function ToolsPanel() {
           <div className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-500">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              Bypass 模式将跳过所有权限检查，AI 可自由执行 shell 命令、文件写入与浏览器操作。仅在受信沙箱环境中使用。
+              {copy('Bypass 模式将跳过所有权限检查，AI 可自由执行 shell 命令、文件写入与浏览器操作。仅在受信沙箱环境中使用。', 'Bypass skips every permission check, allowing shell commands, file writes, and browser actions. Use only in a trusted sandbox.')}
             </span>
           </div>
         )}

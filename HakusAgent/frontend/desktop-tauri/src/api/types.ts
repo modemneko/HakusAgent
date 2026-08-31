@@ -957,6 +957,10 @@ export interface ConnectionSettings {
 export interface AppSettings {
   connection: ConnectionSettings
   theme: 'light' | 'dark' | 'system'
+  /** UI language preference. `system` resolves from the host/WebView locale. */
+  language: 'system' | 'zh-CN' | 'en-US'
+  /** True after the first-run setup has been dismissed or completed. */
+  onboardingCompleted: boolean
   // Default model provider (for display only — actual model is configured server-side)
   defaultSessionName: string
   // Send on Enter, newline on Shift+Enter
@@ -1004,6 +1008,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     timeout: 30000,
   },
   theme: 'dark',
+  language: 'system',
+  onboardingCompleted: false,
   defaultSessionName: 'New Chat',
   sendOnEnter: true,
   showReasoning: true,

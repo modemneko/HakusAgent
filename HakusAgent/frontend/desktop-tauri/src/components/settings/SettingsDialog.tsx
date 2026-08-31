@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { useI18n, type MessageKey } from '@/lib/i18n'
 import { ModelPanel } from './panels/ModelPanel'
 import { CharacterPanel } from './panels/CharacterPanel'
 import { ChatPanel } from './panels/ChatPanel'
@@ -81,27 +82,27 @@ type CategoryId =
 
 interface Category {
   id: CategoryId
-  label: string
-  desc: string
+  labelKey: MessageKey
+  descKey: MessageKey
   icon: typeof Bot
 }
 
 const CATEGORIES: Category[] = [
-  { id: 'model', label: '模型配置', desc: 'AI Provider 与 API Key', icon: Bot },
-  { id: 'character', label: '角色', desc: '人格与开场白', icon: User },
-  { id: 'chat', label: '对话', desc: '发送行为与显示', icon: MessageSquare },
-  { id: 'tts', label: '语音通话与播报', desc: 'Celia 通话、任务播报与提示音', icon: Volume2 },
-  { id: 'memory', label: '记忆', desc: '短期与长期记忆', icon: Brain },
-  { id: 'tools', label: '工具与权限', desc: '工具开关与权限模式', icon: Shield },
-  { id: 'skills', label: 'Skills', desc: '安装、启用与管理任务能力', icon: WandSparkles },
-  { id: 'appearance', label: '外观', desc: '主题与字体', icon: Palette },
-  { id: 'tray', label: '托盘与快捷键', desc: '任务栏图标与全局快捷键', icon: LayoutGrid },
-  { id: 'mcp', label: 'MCP 服务器', desc: '外部 MCP server 接入与工具调用', icon: Plug },
-  { id: 'wechat', label: '微信', desc: 'ClawBot 扫码连接', icon: MessageSquare },
-  { id: 'projects', label: '项目', desc: '文件夹注册表：添加 / 重命名 / 置顶 / 移除', icon: FolderOpen },
-  { id: 'connection', label: '连接', desc: '服务地址与超时', icon: Server },
-  { id: 'advanced', label: '高级', desc: '诊断 / 导入导出 / 重启', icon: SettingsIcon },
-  { id: 'about', label: '关于与更新', desc: '版本信息 + 自动更新', icon: Sparkles },
+  { id: 'model', labelKey: 'modelConfig', descKey: 'modelDesc', icon: Bot },
+  { id: 'character', labelKey: 'character', descKey: 'characterDesc', icon: User },
+  { id: 'chat', labelKey: 'chat', descKey: 'chatDesc', icon: MessageSquare },
+  { id: 'tts', labelKey: 'voice', descKey: 'voiceDesc', icon: Volume2 },
+  { id: 'memory', labelKey: 'memory', descKey: 'memoryDesc', icon: Brain },
+  { id: 'tools', labelKey: 'tools', descKey: 'toolsDesc', icon: Shield },
+  { id: 'skills', labelKey: 'skills', descKey: 'skillsDesc', icon: WandSparkles },
+  { id: 'appearance', labelKey: 'appearance', descKey: 'appearanceDesc', icon: Palette },
+  { id: 'tray', labelKey: 'tray', descKey: 'trayDesc', icon: LayoutGrid },
+  { id: 'mcp', labelKey: 'mcp', descKey: 'mcpDesc', icon: Plug },
+  { id: 'wechat', labelKey: 'wechat', descKey: 'wechatDesc', icon: MessageSquare },
+  { id: 'projects', labelKey: 'projects', descKey: 'projectsDesc', icon: FolderOpen },
+  { id: 'connection', labelKey: 'connection', descKey: 'connectionDesc', icon: Server },
+  { id: 'advanced', labelKey: 'advanced', descKey: 'advancedDesc', icon: SettingsIcon },
+  { id: 'about', labelKey: 'about', descKey: 'aboutDesc', icon: Sparkles },
 ]
 
 interface SettingsDialogProps {
@@ -110,6 +111,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+  const { t } = useI18n()
   const [active, setActive] = useState<CategoryId>('model')
   const activeCat = CATEGORIES.find((c) => c.id === active) || CATEGORIES[0]
   const ActiveIcon = activeCat.icon
@@ -128,31 +130,31 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               type="button"
               className="settings-dialog-back inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
               onClick={() => onOpenChange(false)}
-              aria-label="返回聊天"
-              title="返回聊天"
+              aria-label={t('backToChat')}
+              title={t('backToChat')}
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
             <div className="min-w-0">
-              <DialogTitle className="flex items-center gap-2 text-base">
-                <ActiveIcon className="h-4 w-4 text-primary" />
-                设置 · {activeCat.label}
-              </DialogTitle>
-              <DialogDescription className="text-[12px]">{activeCat.desc}</DialogDescription>
+                <DialogTitle className="flex items-center gap-2 text-base">
+                  <ActiveIcon className="h-4 w-4 text-primary" />
+                {t('settings')} · {t(activeCat.labelKey)}
+                </DialogTitle>
+              <DialogDescription className="text-[12px]">{t(activeCat.descKey)}</DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
         <label className="settings-dialog-mobile-picker">
-          <span>设置分类</span>
+          <span>{t('settingsCategory')}</span>
           <select
             value={active}
             onChange={(event) => setActive(event.target.value as CategoryId)}
-            aria-label="设置分类"
+            aria-label={t('settingsCategory')}
           >
             {CATEGORIES.map((category) => (
               <option key={category.id} value={category.id}>
-                {category.label}
+                {t(category.labelKey)}
               </option>
             ))}
           </select>
@@ -166,7 +168,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           {/* Left: categories */}
           <nav
             className="settings-dialog-nav w-[200px] shrink-0 overflow-y-auto border-r border-border/70 bg-muted/35 p-2"
-            aria-label="设置分类"
+            aria-label={t('settingsCategory')}
           >
             <ul className="space-y-0.5">
               {CATEGORIES.map((c) => {
@@ -190,7 +192,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           isActive ? 'text-primary' : 'text-muted-foreground',
                         )}
                       />
-                      <span className="truncate">{c.label}</span>
+                      <span className="truncate">{t(c.labelKey)}</span>
                     </button>
                   </li>
                 )

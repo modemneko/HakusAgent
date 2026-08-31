@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import { DEFAULT_SETTINGS, type AppSettings, type ProviderInfo } from '@/api/types'
 import { applyTheme } from '@/lib/utils'
 import { apiClient } from '@/api/client'
+import { normalizeLanguage, useLocaleStore, type AppLanguage } from '@/lib/i18n'
 
 interface SettingsStore extends AppSettings {
   loaded: boolean
@@ -34,9 +35,11 @@ interface SettingsStore extends AppSettings {
 
 // Persistence layer
 async function loadSettings(): Promise<Partial<AppSettings>> {
+  const isAndroidRuntime = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
   // Try Electron store first
   if (typeof window !== 'undefined' && (window as any).electron?.store) {
     const all = await (window as any).electron.store.getAll()
+    const hasSavedSettings = !!all && Object.keys(all).length > 0
     return {
       connection: {
         ...DEFAULT_SETTINGS.connection,
@@ -45,6 +48,12 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
         timeout: all?.timeout ?? DEFAULT_SETTINGS.connection.timeout,
       },
       theme: all?.theme || DEFAULT_SETTINGS.theme,
+      // Android follows the device/WebView locale. Desktop persists the
+      // explicit choice made in the first-run flow or Appearance settings.
+      language: isAndroidRuntime ? 'system' : normalizeLanguage(all?.language),
+      // Existing installations already have a configured store. Do not show
+      // first-run UI after upgrading; an empty store remains eligible.
+      onboardingCompleted: all?.onboardingCompleted ?? hasSavedSettings,
       defaultSessionName: all?.defaultSessionName || DEFAULT_SETTINGS.defaultSessionName,
       sendOnEnter: all?.sendOnEnter ?? DEFAULT_SETTINGS.sendOnEnter,
       showReasoning: all?.showReasoning ?? DEFAULT_SETTINGS.showReasoning,
@@ -71,7 +80,7 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       voiceBroadcastChime: all?.voiceBroadcastChime || DEFAULT_SETTINGS.voiceBroadcastChime,
       trayEnabled: all?.trayEnabled ?? DEFAULT_SETTINGS.trayEnabled,
       minimizeToTray: all?.minimizeToTray ?? DEFAULT_SETTINGS.minimizeToTray,
-      toggleShortcut: all?.toggleShortcut || DEFAULT_SETTINGS.toggleShortcut,
+      toggleShortcut: all?.toggleShortcut || all?.shortcutAccelerator || DEFAULT_SETTINGS.toggleShortcut,
     }
   }
   // Browser dev fallback — localStorage
@@ -83,7 +92,11 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       if (parsed?.connection?.serverUrl) {
         parsed.connection.serverUrl = migrateUrl(parsed.connection.serverUrl)
       }
-      return parsed
+      return {
+        ...parsed,
+        language: isAndroidRuntime ? 'system' : normalizeLanguage(parsed?.language),
+        onboardingCompleted: parsed?.onboardingCompleted ?? Object.keys(parsed).length > 0,
+      }
     } catch {
       /* ignore */
     }
@@ -104,6 +117,8 @@ async function saveSettings(settings: AppSettings): Promise<void> {
     await api.set('useWebSocket', settings.connection.useWebSocket)
     await api.set('timeout', settings.connection.timeout)
     await api.set('theme', settings.theme)
+    await api.set('language', settings.language)
+    await api.set('onboardingCompleted', settings.onboardingCompleted)
     await api.set('defaultSessionName', settings.defaultSessionName)
     await api.set('sendOnEnter', settings.sendOnEnter)
     await api.set('showReasoning', settings.showReasoning)
@@ -156,8 +171,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // and light-mode users see white-on-white text in the settings dialog.
       console.error('[settings] loadSettings() failed, falling back to defaults:', e)
     }
-    const merged = { ...DEFAULT_SETTINGS, ...loaded } as AppSettings
+    const isAndroidRuntime = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    const merged = {
+      ...DEFAULT_SETTINGS,
+      ...loaded,
+      ...(isAndroidRuntime ? { language: 'system' as const } : {}),
+    } as AppSettings
     set({ ...merged, loaded: true })
+    useLocaleStore.getState().initialize(merged.language)
     // Always run applyTheme, even on error, so <html> reflects the resolved
     // theme (default 'system' if loading failed) instead of staying stuck on
     // whatever class index.html's inline script set.
@@ -165,10 +186,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   update: async (patch) => {
-    const next = { ...get(), ...patch } as AppSettings
+    const isAndroidRuntime = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    const safePatch = isAndroidRuntime && patch.language
+      ? { ...patch, language: 'system' as const }
+      : patch
+    const next = { ...get(), ...safePatch } as AppSettings
     set(next)
     await saveSettings(next)
-    if (patch.theme) applyTheme(patch.theme)
+    if (safePatch.theme) applyTheme(safePatch.theme)
+    if (safePatch.language) useLocaleStore.getState().setLanguage(safePatch.language as AppLanguage)
   },
 
   setServerUrl: async (url) => {

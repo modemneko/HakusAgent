@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { apiClient } from '@/api/client'
+import { useI18n } from '@/lib/i18n'
 
 type LoginStatus = 'not_configured' | 'disconnected' | 'qrcode' | 'waiting' | 'scanned' | 'expired' | 'connected' | 'checking'
 
@@ -19,6 +20,8 @@ const FAST_POLL_INTERVAL = 3000  // 扫码等待期间 3 秒轮询
 
 export function WeChatPanel() {
   const toast = useToast()
+  const { locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const [status, setStatus] = useState<LoginStatus>('checking')
   const [qrcode, setQrcode] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -40,10 +43,10 @@ export function WeChatPanel() {
       setAccountId(data.account_id ?? null)
       // 状态变化通知
       if (prevStatusRef.current !== 'connected' && newStatus === 'connected') {
-        toast.success('微信已连接')
+        toast.success(copy('微信已连接', 'WeChat connected'))
       }
       if (prevStatusRef.current === 'connected' && newStatus === 'disconnected') {
-        toast.error('微信连接已断开')
+        toast.error(copy('微信连接已断开', 'WeChat disconnected'))
         setQrcode(null)
       }
       prevStatusRef.current = newStatus
@@ -76,7 +79,7 @@ export function WeChatPanel() {
         prevStatusRef.current = 'waiting'
       }
     } catch (e: any) {
-      toast.error(`登录失败：${e?.message || e}`)
+      toast.error(copy(`登录失败：${e?.message || e}`, `Login failed: ${e?.message || e}`))
     } finally {
       setLoading(false)
     }
@@ -90,9 +93,9 @@ export function WeChatPanel() {
       prevStatusRef.current = 'disconnected'
       setQrcode(null)
       setAccountId(null)
-      toast.success('已断开微信连接')
+      toast.success(copy('已断开微信连接', 'WeChat disconnected'))
     } catch (e: any) {
-      toast.error(`断开失败：${e?.message || e}`)
+      toast.error(copy(`断开失败：${e?.message || e}`, `Disconnect failed: ${e?.message || e}`))
     } finally {
       setLoading(false)
     }
@@ -103,24 +106,24 @@ export function WeChatPanel() {
     setSending(true)
     try {
       const res = await apiClient.weChatSend(testUserId, testText)
-      if (res.success) toast.success('消息已发送')
-      else toast.error('发送失败')
+      if (res.success) toast.success(copy('消息已发送', 'Message sent'))
+      else toast.error(copy('发送失败', 'Send failed'))
     } catch (e: any) {
-      toast.error(`发送失败：${e?.message || e}`)
+      toast.error(copy(`发送失败：${e?.message || e}`, `Send failed: ${e?.message || e}`))
     } finally {
       setSending(false)
     }
   }
 
   const statusLabel: Record<LoginStatus, string> = {
-    not_configured: '未配置',
-    disconnected: '未连接',
-    qrcode: '等待扫码',
-    waiting: '等待确认',
-    scanned: '已扫码，等待确认',
-    expired: '二维码已过期',
-    connected: '已连接',
-    checking: '检测中',
+    not_configured: copy('未配置', 'Not configured'),
+    disconnected: copy('未连接', 'Disconnected'),
+    qrcode: copy('等待扫码', 'Waiting for scan'),
+    waiting: copy('等待确认', 'Waiting for confirmation'),
+    scanned: copy('已扫码，等待确认', 'Scanned, waiting for confirmation'),
+    expired: copy('二维码已过期', 'QR code expired'),
+    connected: copy('已连接', 'Connected'),
+    checking: copy('检测中', 'Checking'),
   }
   const statusColor: Record<LoginStatus, string> = {
     not_configured: 'text-muted-foreground',
@@ -153,15 +156,15 @@ export function WeChatPanel() {
           {status !== 'connected' && status !== 'checking' && status !== 'waiting' && status !== 'scanned' && (
             <Button size="sm" onClick={handleLogin} disabled={loading}>
               {loading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <QrCode className="mr-1 h-3 w-3" />}
-              扫码登录
+              {copy('扫码登录', 'Sign in with QR code')}
             </Button>
           )}
           {status === 'connected' && (
             <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={loading}>
-              <Unplug className="mr-1 h-3 w-3" /> 断开
+              <Unplug className="mr-1 h-3 w-3" /> {copy('断开', 'Disconnect')}
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={refreshStatus} title="刷新微信状态" aria-label="刷新微信状态">
+          <Button size="sm" variant="ghost" onClick={refreshStatus} title={copy('刷新微信状态', 'Refresh WeChat status')} aria-label={copy('刷新微信状态', 'Refresh WeChat status')}>
             <RefreshCw className="h-3 w-3" />
           </Button>
         </div>
@@ -170,13 +173,13 @@ export function WeChatPanel() {
       {/* 二维码 */}
       {qrcode && (
         <div className="flex flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/20 p-6">
-          <p className="text-xs text-muted-foreground">请用微信扫描以下二维码</p>
+          <p className="text-xs text-muted-foreground">{copy('请用微信扫描以下二维码', 'Scan this QR code with WeChat')}</p>
           <img
             src={`data:image/png;base64,${qrcode}`}
-            alt="微信登录二维码"
+            alt={copy('微信登录二维码', 'WeChat sign-in QR code')}
             className="h-48 w-48 rounded-lg border border-border/40"
           />
-          <p className="text-[10px] text-muted-foreground">扫码后自动连接，无需其他操作</p>
+          <p className="text-[10px] text-muted-foreground">{copy('扫码后自动连接，无需其他操作', 'It will connect automatically after scanning')}</p>
         </div>
       )}
 
@@ -184,9 +187,9 @@ export function WeChatPanel() {
 
       {/* 配置 */}
       <div className="space-y-3">
-        <div className="text-xs font-medium text-muted-foreground">配置</div>
+        <div className="text-xs font-medium text-muted-foreground">{copy('配置', 'Configuration')}</div>
         <div className="flex items-center justify-between">
-          <Label className="text-xs">启用自动回复</Label>
+          <Label className="text-xs">{copy('启用自动回复', 'Enable auto-replies')}</Label>
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </div>
       </div>
@@ -196,23 +199,23 @@ export function WeChatPanel() {
       {/* 手动发送测试 */}
       {status === 'connected' && (
         <div className="space-y-3">
-          <div className="text-xs font-medium text-muted-foreground">手动发送（测试）</div>
+          <div className="text-xs font-medium text-muted-foreground">{copy('手动发送（测试）', 'Send a test message')}</div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             <Input
-              placeholder="用户 ID (user_id)"
+              placeholder={copy('用户 ID (user_id)', 'User ID (user_id)')}
               value={testUserId}
               onChange={(e) => setTestUserId(e.target.value)}
               className="text-xs"
             />
             <div className="flex gap-2">
               <Input
-                placeholder="消息内容"
+                placeholder={copy('消息内容', 'Message')}
                 value={testText}
                 onChange={(e) => setTestText(e.target.value)}
                 className="text-xs"
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
-              <Button size="sm" onClick={handleSend} disabled={sending || !testUserId || !testText} title="发送测试消息" aria-label="发送测试消息">
+              <Button size="sm" onClick={handleSend} disabled={sending || !testUserId || !testText} title={copy('发送测试消息', 'Send test message')} aria-label={copy('发送测试消息', 'Send test message')}>
                 {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
               </Button>
             </div>

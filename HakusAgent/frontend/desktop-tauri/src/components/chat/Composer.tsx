@@ -69,6 +69,7 @@ import { useSettingsStore } from '@/store/settings'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
 import { getOverlayContainer } from '@/components/ui/portal'
+import { useI18n } from '@/lib/i18n'
 
 interface Attachment {
   id: string
@@ -336,6 +337,30 @@ export function Composer({
   onGoalAction,
 }: ComposerProps) {
   const toast = useToast()
+  const { t, locale } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
+  const permissionLabel = (mode: PermissionMode) => mode === 'auto'
+    ? copy('自动', 'Auto')
+    : mode === 'ask'
+      ? copy('询问', 'Ask')
+      : copy('跳过', 'Bypass')
+  const reasoningLabel = (effort: string) => effort === 'auto'
+    ? copy('自动', 'Auto')
+    : getReasoningEffortMeta(effort).label
+  const reasoningDescription = (effort: string) => {
+    const meta = getReasoningEffortMeta(effort)
+    if (locale === 'zh-CN') return meta.description
+    const descriptions: Record<string, string> = {
+      auto: 'Use the model and provider default strategy',
+      off: 'Disable reasoning when supported by the model',
+      low: 'Provider-native low effort',
+      medium: 'Provider-native medium effort',
+      high: 'Provider-native high effort',
+      xhigh: 'Provider-native xhigh effort',
+      max: 'Provider-native maximum effort',
+    }
+    return descriptions[effort] || `Provider-native ${effort} effort`
+  }
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
@@ -438,24 +463,23 @@ export function Composer({
   const activeReasoningEffort = activeReasoningOptions.includes(storedReasoningEffort)
     ? storedReasoningEffort
     : 'auto'
-  const activeReasoningMeta = getReasoningEffortMeta(activeReasoningEffort)
   const goalStatusLabel = goal?.status === 'active'
-    ? '进行中'
+    ? copy('进行中', 'Active')
     : goal?.status === 'paused'
-      ? '已暂停'
+      ? copy('已暂停', 'Paused')
       : goal?.status === 'blocked'
-        ? '需处理'
+        ? copy('需处理', 'Needs attention')
         : goal?.status === 'usage_limited' || goal?.status === 'budget_limited'
-          ? '需处理'
+          ? copy('需处理', 'Needs attention')
         : goal?.status === 'complete'
-          ? '已完成'
+          ? copy('已完成', 'Complete')
           : ''
   const goalHasControls = !!goal && goal.status !== 'complete'
   const goalButtonLabel = goalHasControls
-    ? `长程 · ${goalStatusLabel}`
+    ? `${copy('长程', 'Long-run')} · ${goalStatusLabel}`
     : goal?.status === 'complete'
-      ? '长程 · 已完成'
-      : '长程任务'
+      ? `${copy('长程', 'Long-run')} · ${copy('已完成', 'Complete')}`
+      : copy('长程任务', 'Long-running task')
   const currentProviderLabel = currentProvider
     ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
     : defaultModel || "No model"
@@ -934,7 +958,7 @@ export function Composer({
     setPermissionLoading(true)
     try {
       await apiClient.setPermission(mode)
-      toast.success(`Permission switched to ${PERMISSION_META[mode].label}`)
+      toast.success(`${copy('权限已切换为', 'Permission switched to')} ${permissionLabel(mode)}`)
     } catch (e: any) {
       setPermission(prev)
       toast.error(`Permission switch failed: ${e?.message || e}`)
@@ -975,24 +999,24 @@ export function Composer({
       className="composer-mention-menu absolute bottom-full left-2 z-50 mb-2 max-h-72 overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg"
     >
       <div className="hakus-mobile-menu-header composer-mention-header">
-        <span>@ 上下文与 Skills</span>
+        <span>{copy('@ 上下文与 Skills', '@ Context & skills')}</span>
         <button
           type="button"
           className="hakus-mobile-menu-close"
           onClick={() => setMentionOpen(false)}
-          aria-label="关闭上下文选择"
+          aria-label={copy('关闭上下文选择', 'Close context picker')}
         >
-          <span>关闭</span>
+          <span>{copy('关闭', 'Close')}</span>
           <X className="h-4 w-4" />
         </button>
       </div>
       <div className="composer-mention-body">
         <div className="composer-mention-desktop-heading">
-          <span>@ 上下文与 Skills</span>
+          <span>{copy('@ 上下文与 Skills', '@ Context & skills')}</span>
           {mentionLoading && <Loader2 className="h-3 w-3 animate-spin" />}
         </div>
         {filteredMentionItems.length === 0 ? (
-          <div className="px-2 py-2 text-xs text-muted-foreground">没有匹配的上下文</div>
+          <div className="px-2 py-2 text-xs text-muted-foreground">{copy('没有匹配的上下文', 'No matching context')}</div>
         ) : (
           filteredMentionItems.map((item, index) => {
             const Icon = item.icon
@@ -1219,12 +1243,12 @@ export function Composer({
                     className="h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={disabled}
-                    title="添加文件"
+                    title={copy('添加文件', 'Add file')}
                   >
                     <Paperclip className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>添加文件</TooltipContent>
+                <TooltipContent>{copy('添加文件', 'Add file')}</TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -1235,12 +1259,12 @@ export function Composer({
                     className={cn('h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8', mentionOpen && 'bg-accent text-foreground')}
                     onClick={triggerMention}
                     disabled={disabled}
-                    title="@ 上下文"
+                    title={copy('@ 上下文', '@ Context')}
                   >
                     <AtSign className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>@ 上下文</TooltipContent>
+                <TooltipContent>{copy('@ 上下文', '@ Context')}</TooltipContent>
               </Tooltip>
 
               {/* Mobile work settings use a bottom sheet. Radix submenus open
@@ -1262,8 +1286,8 @@ export function Composer({
                     variant="ghost"
                     className="h-11 w-11 rounded-xl text-muted-foreground md:hidden"
                     disabled={disabled || isStreaming}
-                    title="更多选项"
-                    aria-label="更多选项"
+                    title={copy('更多选项', 'More options')}
+                    aria-label={copy('更多选项', 'More options')}
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </Button>
@@ -1281,16 +1305,16 @@ export function Composer({
                             setMobileSettingsSection('root')
                           }
                         }}
-                        aria-label="返回工作设置"
+                        aria-label={copy('返回工作设置', 'Back to work settings')}
                       >
                         <ArrowLeft className="h-4 w-4" />
                       </button>
                     )}
                     <DialogTitle>
-                      {mobileSettingsSection === 'root' ? '工作设置' : MOBILE_SETTINGS_LABELS[mobileSettingsSection]}
+                      {mobileSettingsSection === 'root' ? copy('工作设置', 'Work settings') : copy(MOBILE_SETTINGS_LABELS[mobileSettingsSection], ({ project: 'Project', model: 'Model', reasoning: 'Reasoning', permission: 'Permissions' } as Record<string, string>)[mobileSettingsSection])}
                     </DialogTitle>
                     <DialogDescription>
-                      {mobileSettingsSection === 'root' ? '随时调整本次对话的工作上下文' : '选择后返回工作设置'}
+                      {mobileSettingsSection === 'root' ? copy('随时调整本次对话的工作上下文', 'Adjust this conversation\'s work context') : copy('选择后返回工作设置', 'Choose an option, then return to work settings')}
                     </DialogDescription>
                   </DialogHeader>
 
@@ -1299,12 +1323,12 @@ export function Composer({
                       <div className="mobile-settings-list">
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('project')}>
                           <FolderOpen className="mobile-settings-row-icon text-primary" />
-                          <span className="mobile-settings-row-copy"><strong>项目</strong><small>{activeProject?.name || '当前目录'}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{t('projects')}</strong><small>{activeProject?.name || t('currentDirectory')}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => { setMobileSettingsSection('model'); setMobileModelProviderId(null) }}>
                           <Bot className="mobile-settings-row-icon text-primary" />
-                          <span className="mobile-settings-row-copy"><strong>模型</strong><small>{currentProviderLabel}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('模型', 'Model')}</strong><small>{currentProviderLabel}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button
@@ -1319,17 +1343,17 @@ export function Composer({
                           }}
                         >
                           <LoaderCircle className={cn('mobile-settings-row-icon', goalHasControls || longRunningArmed ? 'text-primary' : 'text-muted-foreground')} />
-                          <span className="mobile-settings-row-copy"><strong>长程任务</strong><small>{goalHasControls ? goalStatusLabel : longRunningArmed ? '发送一句话开始' : goal?.status === 'complete' ? '已完成，可重新启用' : '点击后发送一句话开始'}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('长程任务', 'Long-running task')}</strong><small>{goalHasControls ? goalStatusLabel : longRunningArmed ? copy('发送一句话开始', 'Send one message to start') : goal?.status === 'complete' ? copy('已完成，可重新启用', 'Complete, ready to re-enable') : copy('点击后发送一句话开始', 'Click, then send one message to start')}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('reasoning')}>
                           <Brain className="mobile-settings-row-icon text-primary" />
-                          <span className="mobile-settings-row-copy"><strong>思考强度</strong><small>{activeReasoningMeta.label}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('思考强度', 'Reasoning')}</strong><small>{reasoningLabel(activeReasoningEffort)}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('permission')}>
                           <ActivePermissionIcon className={cn('mobile-settings-row-icon', activePermissionMeta.tone)} />
-                          <span className="mobile-settings-row-copy"><strong>权限</strong><small>{activePermissionMeta.label}</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('权限', 'Permissions')}</strong><small>{permissionLabel(permission)}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                       </div>
@@ -1355,14 +1379,14 @@ export function Composer({
                         ))}
                         <button type="button" className="mobile-settings-row" disabled={creatingProject} onClick={() => { setMobileSettingsOpen(false); void handleCreateProject() }}>
                           {creatingProject ? <Loader2 className="mobile-settings-row-icon animate-spin text-primary" /> : <FolderPlus className="mobile-settings-row-icon text-primary" />}
-                          <span className="mobile-settings-row-copy"><strong>新建项目</strong><small>选择一个文件夹作为工作区</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('新建项目', 'New project')}</strong><small>{copy('选择一个文件夹作为工作区', 'Choose a folder as the workspace')}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" disabled={projectLocked || !activeProjectId} onClick={() => { setActiveProject(null); setMobileSettingsOpen(false) }}>
                           <X className="mobile-settings-row-icon text-muted-foreground" />
-                          <span className="mobile-settings-row-copy"><strong>不在项目中工作</strong><small>使用当前应用目录</small></span>
+                          <span className="mobile-settings-row-copy"><strong>{copy('不在项目中工作', 'No project')}</strong><small>{copy('使用当前应用目录', 'Use the current app directory')}</small></span>
                         </button>
-                        {projectLocked && <p className="mobile-settings-note">当前会话已经开始，项目已锁定。请新建会话后切换工作区。</p>}
+                        {projectLocked && <p className="mobile-settings-note">{copy('当前会话已经开始，项目已锁定。请新建会话后切换工作区。', 'This conversation has started and its project is locked. Start a new conversation to switch workspaces.')}</p>}
                       </div>
                     )}
 
@@ -1381,17 +1405,17 @@ export function Composer({
                             }}
                           >
                             <ProviderLogo providerId={provider.id} size={20} />
-                            <span className="mobile-settings-row-copy"><strong>{provider.display_name}</strong><small>{provider.model_name || '未配置模型'}</small></span>
+                            <span className="mobile-settings-row-copy"><strong>{provider.display_name}</strong><small>{provider.model_name || copy('未配置模型', 'No model configured')}</small></span>
                             {provider.is_default ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                           </button>
                         )) : (
                           <>
                             <div className="mobile-settings-row mobile-settings-row-static">
                               <ProviderLogo providerId={mobileModelProvider.id} size={20} />
-                              <span className="mobile-settings-row-copy"><strong>{mobileModelProvider.display_name}</strong><small>选择一个模型</small></span>
+                              <span className="mobile-settings-row-copy"><strong>{mobileModelProvider.display_name}</strong><small>{copy('选择一个模型', 'Choose a model')}</small></span>
                             </div>
                             {modelsLoading && !mobileModelOptions ? (
-                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">加载模型...</div>
+                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">{copy('加载模型...', 'Loading models...')}</div>
                             ) : mobileModelOptions && mobileModelOptions.length > 0 ? (
                               mobileModelOptions.map((item) => (
                                 <button
@@ -1412,7 +1436,7 @@ export function Composer({
                                 </button>
                               ))
                             ) : (
-                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">该 Provider 没有可用模型</div>
+                              <div className="px-3 py-4 text-center text-xs text-muted-foreground">{copy('该 Provider 没有可用模型', 'This provider has no available models')}</div>
                             )}
                           </>
                         )}
@@ -1424,7 +1448,7 @@ export function Composer({
                         {activeReasoningOptions.map((effort) => (
                           <button type="button" key={effort} className="mobile-settings-row" onClick={() => { setReasoningEffort(agentMode, effort); setMobileSettingsOpen(false) }}>
                             <Brain className="mobile-settings-row-icon text-muted-foreground" />
-                            <span className="mobile-settings-row-copy"><strong>{getReasoningEffortMeta(effort).label}</strong><small>{getReasoningEffortMeta(effort).description}</small></span>
+                            <span className="mobile-settings-row-copy"><strong>{reasoningLabel(effort)}</strong><small>{reasoningDescription(effort)}</small></span>
                             {activeReasoningEffort === effort ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                           </button>
                         ))}
@@ -1439,7 +1463,7 @@ export function Composer({
                           return (
                             <button type="button" key={mode} className="mobile-settings-row" disabled={permissionLoading} onClick={() => { setMobileSettingsOpen(false); void handlePermissionSwitch(mode) }}>
                               <Icon className={cn('mobile-settings-row-icon', meta.tone)} />
-                              <span className="mobile-settings-row-copy"><strong>{meta.label}</strong><small>{meta.hint}</small></span>
+                            <span className="mobile-settings-row-copy"><strong>{permissionLabel(mode)}</strong><small>{locale === 'zh-CN' ? meta.hint : (mode === 'auto' ? 'Run safe tools directly' : mode === 'ask' ? 'Confirm before risky actions' : 'Skip permission checks')}</small></span>
                               {permission === mode ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                             </button>
                           )
@@ -1450,7 +1474,7 @@ export function Composer({
                 </DialogContent>
               </Dialog>
 
-              <div className="composer-edge-controls" aria-label="当前工作上下文">
+              <div className="composer-edge-controls" aria-label={copy('当前工作上下文', 'Current work context')}>
               <Dialog open={goalDialogOpen && goalHasControls} onOpenChange={setGoalDialogOpen}>
                 <button
                   type="button"
@@ -1461,7 +1485,7 @@ export function Composer({
                     (goalHasControls || longRunningArmed) && 'border-primary/20 bg-primary/[0.06]',
                     isStreaming && !goal && 'cursor-not-allowed opacity-60',
                   )}
-                  title={goalHasControls ? '长程任务管理' : '点击启用长程模式，发送一句话开始'}
+                    title={goalHasControls ? copy('长程任务管理', 'Manage long-running task') : copy('点击启用长程模式，发送一句话开始', 'Enable long-running mode, then send one message to start')}
                   onClick={() => {
                     if (goalHasControls) setGoalDialogOpen(true)
                     else onToggleLongRunning?.()
@@ -1472,7 +1496,7 @@ export function Composer({
                 </button>
                 <DialogContent className="w-[min(440px,calc(100vw-32px))]">
                   <DialogHeader>
-                    <DialogTitle>长程任务</DialogTitle>
+                    <DialogTitle>{copy('长程任务', 'Long-running task')}</DialogTitle>
                     <DialogDescription>{goal?.objective}</DialogDescription>
                   </DialogHeader>
                   {goal && (
@@ -1505,14 +1529,14 @@ export function Composer({
                       'composer-edge-trigger composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
-                    title={activeProject ? activeProject.path : '不在项目中工作'}
+                    title={activeProject ? activeProject.path : copy('不在项目中工作', 'No project')}
                   >
                     <FolderOpen className={cn('h-3.5 w-3.5 shrink-0', activeProject ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="truncate">{activeProject ? activeProject.name : '不在项目中工作'}</span>
+                    <span className="truncate">{activeProject ? activeProject.name : copy('不在项目中工作', 'No project')}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" mobileTitle="选择项目" className="w-[300px] p-1.5">
+                <DropdownMenuContent align="start" side="top" mobileTitle={copy('选择项目', 'Choose project')} className="w-[300px] p-1.5">
                   {/* Search box */}
                   <div className="mb-1 flex items-center gap-1.5 rounded-lg bg-foreground/[0.04] px-2 py-1.5">
                     <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1520,7 +1544,7 @@ export function Composer({
                       type="text"
                       value={projectSearch}
                       onChange={(e) => setProjectSearch(e.target.value)}
-                      placeholder="搜索项目..."
+                      placeholder={copy('搜索项目...', 'Search projects...')}
                       className="project-picker-search w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
                     />
                   </div>
@@ -1528,7 +1552,7 @@ export function Composer({
                   <div className="max-h-[260px] overflow-y-auto">
                     {projects.length === 0 && (
                       <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-                        暂无项目，点击下方「新建项目」
+                        {copy('暂无项目，点击下方「新建项目」', 'No projects yet. Create one below.')}
                       </div>
                     )}
                     {projects
@@ -1556,7 +1580,7 @@ export function Composer({
                             onClick={() => {
                               if (isConfirming) return
                               if (projectLocked) {
-                                toast.info('当前会话已有对话，无法切换项目。请新建会话后再切换。')
+                                toast.info(copy('当前会话已有对话，无法切换项目。请新建会话后再切换。', 'This conversation already has messages. Start a new one before switching projects.'))
                                 return
                               }
                               setActiveProject(p.id)
@@ -1592,10 +1616,10 @@ export function Composer({
                                   setConfirmDeleteId(null)
                                   toast.success(`已移除项目：${p.name}`)
                                 }}
-                                title="再次点击以确认删除"
+                                title={copy('再次点击以确认删除', 'Click again to confirm deletion')}
                                 className="absolute right-1.5 inline-flex h-6 items-center rounded-md bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/20"
                               >
-                                删除?
+                                {copy('删除?', 'Delete?')}
                               </button>
                             ) : (
                               <button
@@ -1611,7 +1635,7 @@ export function Composer({
                                     setConfirmDeleteId((cur) => (cur === p.id ? null : cur))
                                   }, 3000)
                                 }}
-                                title="移除项目（不会删除文件夹）"
+                                title={copy('移除项目（不会删除文件夹）', 'Remove project (folder stays on disk)')}
                                 className={cn(
                                   'absolute right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive',
                                   // Always show on hover; only show on active
@@ -1645,14 +1669,14 @@ export function Composer({
                     ) : (
                       <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
                     )}
-                    <span className="text-sm font-medium">新建项目</span>
+                    <span className="text-sm font-medium">{copy('新建项目', 'New project')}</span>
                   </DropdownMenuItem>
                   {/* Not working in a project — clears the active project.
                       Locked when the session already has messages. */}
                   <DropdownMenuItem
                     onClick={() => {
                       if (projectLocked) {
-                        toast.info('当前会话已有对话，无法切换项目。请新建会话后再切换。')
+                        toast.info(copy('当前会话已有对话，无法切换项目。请新建会话后再切换。', 'This conversation already has messages. Start a new one before switching projects.'))
                         return
                       }
                       setActiveProject(null)
@@ -1661,7 +1685,7 @@ export function Composer({
                     className="gap-2 py-2"
                   >
                     <X className={cn('h-4 w-4 shrink-0', !activeProjectId ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="flex-1 text-sm">不在项目中工作</span>
+                    <span className="flex-1 text-sm">{copy('不在项目中工作', 'No project')}</span>
                     {!activeProjectId && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -1676,7 +1700,7 @@ export function Composer({
                       'composer-edge-trigger composer-model-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
                     )}
-                    title="Choose model"
+                    title={copy('选择模型', 'Choose model')}
                   >
                     {providersLoading || switchingProvider ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
@@ -1687,7 +1711,7 @@ export function Composer({
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" mobileTitle="选择模型" className="w-[280px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle={copy('选择模型', 'Choose model')} className="w-[280px]">
                   {enabledProviders.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
@@ -1718,7 +1742,7 @@ export function Composer({
                           <div className="min-w-0 flex-1">
                             <div className="line-clamp-2 break-words text-sm leading-tight" title={provider.display_name}>{provider.display_name}</div>
                             <div className="truncate text-[10px] text-muted-foreground">
-                              {provider.model_name || '未设置模型'}
+                              {provider.model_name || copy('未设置模型', 'No model set')}
                             </div>
                           </div>
                           {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
@@ -1736,7 +1760,7 @@ export function Composer({
                             {modelsLoading && !models ? (
                               <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
                                 <Loader2 className="h-3 w-3 animate-spin" />
-                                加载模型…
+                                {copy('加载模型…', 'Loading models…')}
                               </div>
                             ) : models && models.length > 0 ? (
                               models.map((m) => {
@@ -1760,7 +1784,7 @@ export function Composer({
                               })
                             ) : (
                               <div className="px-2 py-2 text-xs text-muted-foreground">
-                                该 provider 无可用模型
+                                {copy('该 provider 无可用模型', 'This provider has no available models')}
                               </div>
                             )}
                           </div>
@@ -1786,14 +1810,14 @@ export function Composer({
                       'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
-                    title="思考强度"
+                    title={copy('思考强度', 'Reasoning')}
                   >
                     <Brain className="h-3.5 w-3.5 text-primary" />
-                    <span>{activeReasoningMeta.label}</span>
+                    <span>{reasoningLabel(activeReasoningEffort)}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" mobileTitle="思考强度" className="w-[180px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle={copy('思考强度', 'Reasoning')} className="w-[180px]">
                   {activeReasoningOptions.map((effort) => {
                     const isSelected = activeReasoningEffort === effort
                     const meta = getReasoningEffortMeta(effort)
@@ -1804,7 +1828,7 @@ export function Composer({
                         className="items-center gap-2 py-1.5"
                       >
                         <Brain className={cn('h-3 w-3 shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
-                        <span className="flex-1 text-xs font-medium">{meta.label}</span>
+                        <span className="flex-1 text-xs font-medium">{reasoningLabel(effort)}</span>
                         {isSelected && <Check className="h-3 w-3 text-primary" />}
                       </DropdownMenuItem>
                     )
@@ -1828,11 +1852,11 @@ export function Composer({
                     ) : (
                       <ActivePermissionIcon className={cn('h-3.5 w-3.5', activePermissionMeta.tone)} />
                     )}
-                    <span>{activePermissionMeta.label}</span>
+                    <span>{permissionLabel(permission)}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="top" mobileTitle="权限模式" className="w-[200px]">
+                <DropdownMenuContent align="start" side="top" mobileTitle={copy('权限模式', 'Permission mode')} className="w-[200px]">
                   {availablePermissions.map((mode) => {
                     const meta = PERMISSION_META[mode]
                     const Icon = meta.icon
@@ -1844,7 +1868,7 @@ export function Composer({
                         className="gap-2 py-2"
                       >
                         <Icon className={cn('h-4 w-4', meta.tone)} />
-                        <span className="flex-1 text-sm font-medium">{meta.label}</span>
+                        <span className="flex-1 text-sm font-medium">{permissionLabel(mode)}</span>
                         {active && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
                       </DropdownMenuItem>
                     )
@@ -1855,12 +1879,12 @@ export function Composer({
 
             <div className="composer-actions flex items-center gap-2">
               <span className="hidden text-[10px] text-muted-foreground/70 sm:inline">
-                {sendOnEnter ? "Enter 发送 · Shift+Enter 换行" : "Ctrl/Cmd+Enter 发送"}
+                {sendOnEnter ? copy('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line') : copy('Ctrl/Cmd+Enter 发送', 'Ctrl/Cmd+Enter to send')}
               </span>
               {attachments.some((att) => att.kind === 'image') && (
                 <span className="hidden items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground md:inline-flex">
                   <ImageIcon className="h-3 w-3" />
-                  图片附件
+                  {copy('图片附件', 'Image attached')}
                 </span>
               )}
               {onToggleVoiceCall && (
@@ -1882,14 +1906,14 @@ export function Composer({
                       disabled={voiceCallLoading}
                       title={
                         conversationState === 'listening'
-                          ? '聆听中…点击结束'
+                          ? copy('聆听中…点击结束', 'Listening… click to stop')
                           : conversationState === 'transcribing'
-                            ? '语音识别中…'
+                            ? copy('语音识别中…', 'Transcribing…')
                             : conversationState === 'thinking'
-                              ? 'AI 思考中…'
+                              ? copy('AI 思考中…', 'AI is thinking…')
                               : conversationState === 'speaking'
-                                ? 'AI 播报中…点击打断'
-                                : '开始语音对话'
+                                ? copy('AI 播报中…点击打断', 'Speaking… click to interrupt')
+                                : copy('开始语音对话', 'Start voice chat')
                       }
                     >
                       {conversationState === 'connecting' ? (
@@ -1909,16 +1933,16 @@ export function Composer({
                   </TooltipTrigger>
                   <TooltipContent>
                     {conversationState === 'connecting'
-                      ? '连接语音服务中…'
+                      ? copy('连接语音服务中…', 'Connecting to voice service…')
                       : conversationState === 'listening'
-                      ? '聆听中…点击结束'
+                      ? copy('聆听中…点击结束', 'Listening… click to stop')
                       : conversationState === 'transcribing'
-                        ? '语音识别中…'
+                        ? copy('语音识别中…', 'Transcribing…')
                         : conversationState === 'thinking'
-                          ? 'AI 思考中…'
+                          ? copy('AI 思考中…', 'AI is thinking…')
                           : conversationState === 'speaking'
-                            ? 'AI 播报中…说话可打断'
-                            : '开始语音对话'}
+                            ? copy('AI 播报中…说话可打断', 'Speaking… talk to interrupt')
+                            : copy('开始语音对话', 'Start voice chat')}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -1927,7 +1951,7 @@ export function Composer({
                 className="h-8 w-8 rounded-xl"
                 onClick={() => void submit()}
                 disabled={(!value.trim() && attachments.length === 0) || disabled || uploading}
-                title={isStreaming ? "加入发送队列" : "发送"}
+                title={isStreaming ? copy('加入发送队列', 'Add to send queue') : copy('发送', 'Send')}
               >
                 {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </Button>
@@ -1937,7 +1961,7 @@ export function Composer({
                   variant="destructive"
                   className="h-8 w-8 rounded-xl"
                   onClick={onStop}
-                  title="停止"
+                  title={copy('停止', 'Stop')}
                 >
                   <Square className="h-3.5 w-3.5" fill="currentColor" />
                 </Button>
@@ -1949,7 +1973,7 @@ export function Composer({
         <div className="composer-tip mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground/65">
           <span className="flex items-center gap-1.5">
             <Sparkles className="h-3 w-3" />
-            {canUseImages ? "可粘贴图片" : "当前模型仅文本"}
+            {canUseImages ? copy('可粘贴图片', 'Images can be pasted') : copy('当前模型仅文本', 'Current model accepts text only')}
           </span>
           <span>{value.length} chars</span>
         </div>
