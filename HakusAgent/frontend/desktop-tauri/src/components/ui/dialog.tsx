@@ -29,17 +29,43 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { fullscreen?: boolean }
+>(({ className, children, fullscreen = false, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
+        fullscreen
+          ? // Fullscreen surface (settings). No centering utilities at all —
+            // Radix's left-1/2/top-1/2/-translate-* combo is exactly what
+            // drifted to the top-left corner on some WebView builds.
+            'fixed z-50 flex flex-col overflow-hidden bg-background'
+          : 'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
         className,
       )}
       {...props}
+      // Inline styles win over every stylesheet/Tailwind layer, so the
+      // fullscreen geometry is guaranteed on desktop WebView2 AND Android
+      // WebView regardless of viewport quirks (100dvh, zoom, media queries).
+      style={
+        fullscreen
+          ? {
+              position: 'fixed',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              maxWidth: '100%',
+              maxHeight: '100%',
+              transform: 'none',
+              translate: 'none',
+              borderRadius: 0,
+              padding: 0,
+              paddingTop: 'env(safe-area-inset-top)',
+              ...style,
+            }
+          : style
+      }
       data-hakus-overlay="dialog-content"
     >
       {children}

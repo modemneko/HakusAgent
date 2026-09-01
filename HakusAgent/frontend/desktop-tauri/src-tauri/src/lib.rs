@@ -12,10 +12,12 @@ mod tray_cmds;
 mod window_cmds;
 
 #[cfg(not(target_os = "android"))]
+use std::time::{Duration, Instant};
+#[cfg(not(target_os = "android"))]
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
-    Manager, RunEvent, WindowEvent,
+    Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_store::StoreExt;
@@ -114,8 +116,112 @@ pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Build (or reconfigure) the system tray icon with a context menu and
-/// click handler. Idempotent — safe to call multiple times.
+/// Opt the main window into Windows 11 rounded corners.
+///
+/// With `decorations: false` the DWM draws square corners by default; the
+/// explicit `DWMWCP_ROUND` preference restores the native rounded frame
+/// (plus the system drop shadow enabled in tauri.conf.json).
+#[cfg(target_os = "windows")]
+fn apply_rounded_corners(app: &tauri::AppHandle) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    };
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let preference = DWMWCP_ROUND;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            HWND(hwnd.0),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &preference as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&preference) as u32,
+        )
+    };
+    if let Err(error) = result {
+        eprintln!("[setup] Failed to set rounded corners: {error}");
+    }
+}
+
+/// Timestamp recorded when the splash window is created so `finish_splash`
+/// can enforce the full design timeline even when the UI boots faster.
+#[cfg(not(target_os = "android"))]
+pub static SPLASH_CREATED_AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Create and show the native splash window.
+///
+/// The splash is a static HTML page (public/splash.html) so it renders
+/// instantly — long before the React webview has booted — replicating the
+/// Electron-era splash behaviour. The main window stays hidden until the
+/// frontend invokes `finish_splash`, which fades the splash out and reveals
+/// the UI. A safety timer below guarantees the main window always becomes
+/// visible even if the frontend never gets to signal readiness.
+#[cfg(not(target_os = "android"))]
+fn show_native_splash(app: &tauri::AppHandle) {
+    const SPLASH_FAILSAFE_MS: u64 = 90_000; // force-show the UI after 90s
+
+    let _ = SPLASH_CREATED_AT.set(Instant::now());
+
+    let build = WebviewWindowBuilder::new(
+        app,
+        "splash",
+        WebviewUrl::App("splash.html".into()),
+    )
+    .title("HakusAI")
+    .inner_size(560.0, 360.0)
+    .center()
+    .decorations(false)
+    .shadow(false)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .skip_taskbar(true)
+    .always_on_top(true)
+    .focused(true)
+    .visible(true);
+
+    if let Err(error) = build.build() {
+        eprintln!("[setup] Splash window failed to open: {error}");
+        // Never leave the main window hidden when there is no splash.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+        }
+        return;
+    }
+
+    let failsafe_app = app.clone();
+    std::thread::spawn(move || {
+        // If the frontend never calls finish_splash (crashed webview,
+        // blocked runtime, …) fade the splash and reveal the main window.
+        std::thread::sleep(Duration::from_millis(SPLASH_FAILSAFE_MS));
+        let main_gone = failsafe_app.get_webview_window("main").is_none();
+        if let Some(splash) = failsafe_app.get_webview_window("splash") {
+            let _ = splash.eval("document.documentElement.classList.add('is-fading');");
+            std::thread::sleep(Duration::from_millis(600));
+            if let Some(splash) = failsafe_app.get_webview_window("splash") {
+                let _ = splash.close();
+            }
+        }
+        if main_gone {
+            // The user closed the app while the splash was up — don't keep
+            // the process alive with zero windows.
+            failsafe_app.exit(0);
+            return;
+        }
+        if let Some(window) = failsafe_app.get_webview_window("main") {
+            if !window.is_visible().unwrap_or(true) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    });
+}
+
 #[cfg(not(target_os = "android"))]
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Retrieve the tray icon auto-created from tauri.conf.json's `trayIcon`
@@ -166,14 +272,24 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
-        // The store is also used by Android for the server URL and UI
-        // preferences. Desktop-only plugins are attached below.
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build());
 
     #[cfg(not(target_os = "android"))]
     {
         builder = builder
+            // Single-instance: registering before any window-creating setup so
+            // a second launch (e.g. double-clicking the exe while HakusAI
+            // lives in the tray) exits immediately after focusing the
+            // existing window — without this, two processes each own a tray
+            // icon.
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }))
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_global_shortcut::Builder::new().build())
             .plugin(tauri_plugin_process::init())
@@ -193,6 +309,15 @@ pub fn run() {
                     Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
                 }
 
+                // Native splash: visible immediately, hides the boot gap
+                // while the main webview loads in the background.
+                show_native_splash(app.handle());
+
+                // Windows 11: restore rounded corners on the undecorated
+                // window (they default to square without OS decorations).
+                #[cfg(target_os = "windows")]
+                apply_rounded_corners(app.handle());
+
                 // Build the system tray icon + menu.
                 if let Err(e) = setup_tray(app.handle()) {
                     eprintln!("[setup] Tray setup failed: {e}");
@@ -208,6 +333,13 @@ pub fn run() {
             // not outlive the UI.
             .on_window_event(|window, event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
+                    // Only the MAIN window goes through the minimize-to-tray
+                    // interceptor. The splash window must always be allowed
+                    // to close, otherwise it would hide and linger forever
+                    // when the user has tray mode enabled.
+                    if window.label() != "main" {
+                        return;
+                    }
                     let app = window.app_handle();
                     let (tray_enabled, minimize_to_tray) = read_tray_settings(app);
                     if tray_enabled && minimize_to_tray {
@@ -281,6 +413,7 @@ pub fn run() {
         window_cmds::window_toggle_maximize,
         window_cmds::window_close,
         window_cmds::window_is_maximized,
+        window_cmds::finish_splash,
         // Tray
         tray_cmds::tray_get_config,
         tray_cmds::tray_set_enabled,

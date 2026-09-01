@@ -165,7 +165,10 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   }, [connState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <header className="titlebar flex min-w-0 overflow-hidden">
+    <header
+      className="titlebar flex min-w-0 overflow-hidden"
+      data-tauri-drag-region
+    >
       <div className={cn('topbar-leading app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -207,11 +210,14 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
         </div>
       </div>
 
-      <div className="topbar-session app-region-drag relative z-0 flex min-w-0 flex-1 flex-col items-center justify-center px-2">
-        <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight">
+      <div
+        className="topbar-session app-region-drag relative z-0 flex min-w-0 flex-1 flex-col items-center justify-center px-2"
+        data-tauri-drag-region
+      >
+        <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight" data-tauri-drag-region>
           {activeSession?.title || characterName}
         </span>
-        <span className="flex max-w-full items-center gap-1 truncate text-[10px] text-muted-foreground/80">
+        <span className="flex max-w-full items-center gap-1 truncate text-[10px] text-muted-foreground/80" data-tauri-drag-region>
           {currentProvider && (
             <ProviderLogo providerId={currentProvider.id} size={11} />
           )}

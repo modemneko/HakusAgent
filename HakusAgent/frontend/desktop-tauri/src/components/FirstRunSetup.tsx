@@ -10,6 +10,13 @@ import { LANGUAGE_OPTIONS, languageOptionLabel, localeForRuntime, resolveLocale,
 
 type SetupStep = 'language' | 'workspace' | 'ready'
 
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
+// Android skips the desktop workspace-folder step (workspace access there is
+// granted per-project through the SAF picker), so first run is a two-step
+// welcome instead of three.
+const SETUP_STEPS: SetupStep[] = IS_ANDROID ? ['language', 'ready'] : ['language', 'workspace', 'ready']
+
 interface FirstRunSetupProps {
   onComplete: () => void
 }
@@ -67,14 +74,18 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
     }
   }
 
-  const next = () => setStep(step === 'language' ? 'workspace' : 'ready')
+  const next = () => {
+    const index = SETUP_STEPS.indexOf(step)
+    const nextStep = SETUP_STEPS[Math.min(index + 1, SETUP_STEPS.length - 1)]
+    setStep(nextStep)
+  }
 
   return (
     <div className="first-run-overlay" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
       <div className="first-run-surface">
         <div className="first-run-mark" aria-hidden="true"><Sparkles className="h-5 w-5" /></div>
-        <div className="first-run-progress" aria-label={t('stepOf').replace('{step}', String(step === 'language' ? 1 : step === 'workspace' ? 2 : 3)).replace('{total}', '3')}>
-          {(['language', 'workspace', 'ready'] as SetupStep[]).map((item) => (
+        <div className="first-run-progress" aria-label={t('stepOf').replace('{step}', String(SETUP_STEPS.indexOf(step) + 1)).replace('{total}', String(SETUP_STEPS.length))}>
+          {SETUP_STEPS.map((item) => (
             <span key={item} className={cn('first-run-progress-dot', (item === step || (step === 'ready' && item !== 'ready')) && 'is-active')} />
           ))}
         </div>

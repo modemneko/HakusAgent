@@ -78,6 +78,11 @@
 
     /* Layout tokens */
     --titlebar-height: 3rem;
+    /* Actual rendered titlebar height incl. safe-area (Windows/insets).
+       Global TopBar + every fixed overlay (side panes on narrow viewports)
+       anchor below THIS value so panels can never cover the window
+       controls. */
+    --titlebar-total: calc(3.25rem + env(safe-area-inset-top));
     --sidebar-width: 16rem;
     --right-panel-width: 26.25rem;
     --statusbar-height: 1.625rem;
@@ -217,7 +222,9 @@
 
   /* Title bar */
   .titlebar {
-    @apply flex h-[var(--titlebar-height)] shrink-0 items-center border-b border-border/60 bg-card/80;
+    @apply flex shrink-0 items-center border-b border-border/60 bg-card/80;
+    height: var(--titlebar-total);
+    min-height: var(--titlebar-total);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
   }
@@ -416,7 +423,7 @@
 
   .right-panel-wrapper {
     position: fixed;
-    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    top: var(--titlebar-total);
     right: 0;
     bottom: 0;
     z-index: 40;
@@ -462,7 +469,7 @@
 
   .sidebar-wrapper {
     position: fixed;
-    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    top: var(--titlebar-total);
     bottom: 0;
     left: 0;
     z-index: 40;
@@ -487,8 +494,8 @@
   }
 
   .titlebar {
-    height: calc(var(--titlebar-height) + env(safe-area-inset-top));
-    min-height: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    height: var(--titlebar-total);
+    min-height: var(--titlebar-total);
     padding-top: env(safe-area-inset-top);
   }
 
@@ -498,7 +505,6 @@
     gap: 0.25rem;
     padding-left: max(0.5rem, env(safe-area-inset-left));
   }
-
   .topbar-session {
     padding-right: 0.25rem;
     padding-left: 0.25rem;
@@ -530,7 +536,7 @@
   }
 
   .right-panel-wrapper {
-    top: calc(var(--titlebar-height) + env(safe-area-inset-top));
+    top: var(--titlebar-total);
     width: min(100vw, 560px) !important;
   }
 
@@ -620,8 +626,8 @@
   .titlebar {
     position: relative;
     z-index: 10;
-    height: calc(3.25rem + env(safe-area-inset-top));
-    min-height: calc(3.25rem + env(safe-area-inset-top));
+    height: var(--titlebar-total);
+    min-height: var(--titlebar-total);
     background: hsl(var(--background) / 0.96);
   }
 
@@ -918,9 +924,13 @@
    This covers phones in landscape as well as split-screen/foldable windows
    without relying on a device model or user-agent. */
 @media (max-height: 500px) and (max-width: 1023px) and (orientation: landscape) {
+  :root {
+    --titlebar-total: calc(3rem + env(safe-area-inset-top));
+  }
+
   .titlebar {
-    height: calc(3rem + env(safe-area-inset-top));
-    min-height: calc(3rem + env(safe-area-inset-top));
+    height: var(--titlebar-total);
+    min-height: var(--titlebar-total);
   }
 
   .topbar-icon-button,
@@ -2002,35 +2012,29 @@
     right: 0.75rem !important;
   }
 
-  /* Settings is a larger bottom sheet; its internal scroll area stays usable. */
+  /* Settings owns the full viewport on phones too. The previous bottom-sheet
+     geometry (92dvh height, rounded top corners) is exactly what made the
+     panel render as a half-drifted corner card on some WebViews — the
+     fullscreen inline styles on the dialog must stay authoritative. */
   .settings-dialog-content {
-    inset: auto 0 0 !important;
+    inset: 0 !important;
+    left: 0 !important;
+    top: 0 !important;
     width: 100vw !important;
-    height: min(92dvh, 48rem) !important;
-    max-height: min(92dvh, 48rem) !important;
-    border: 1px solid hsl(var(--foreground) / 0.14) !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    transform: none !important;
+    translate: none !important;
+    border: 0 !important;
     border-bottom: 0 !important;
-    border-radius: 1.5rem 1.5rem 0 0 !important;
+    border-radius: 0 !important;
     padding: 0 !important;
-    background: hsl(var(--background) / 0.96) !important;
-    -webkit-backdrop-filter: blur(30px) saturate(145%);
-    backdrop-filter: blur(30px) saturate(145%);
-    box-shadow: 0 -18px 50px hsl(240 20% 2% / 0.34) !important;
-  }
-
-  .settings-dialog-content::before {
-    position: absolute;
-    top: 0.35rem;
-    left: 50%;
-    z-index: 3;
-    transform: translateX(-50%);
-    margin: 0;
-  }
-
-  .settings-dialog-content > button[aria-label="Close"] {
-    top: 0.625rem !important;
-    right: 0.75rem !important;
-    z-index: 4;
+    padding-top: env(safe-area-inset-top) !important;
+    background: hsl(var(--background) / 0.98) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none !important;
   }
 
   .settings-dialog-header {
@@ -2234,8 +2238,8 @@ select:focus-visible {
 }
 
 .titlebar {
-  height: calc(var(--titlebar-height) + 0.25rem);
-  min-height: calc(var(--titlebar-height) + 0.25rem);
+  height: var(--titlebar-total);
+  min-height: var(--titlebar-total);
   box-shadow: 0 1px 0 hsl(var(--foreground) / 0.04);
 }
 
@@ -2588,8 +2592,8 @@ select:focus {
   }
 
   .titlebar {
-    height: var(--mac-toolbar-height) !important;
-    min-height: var(--mac-toolbar-height) !important;
+    height: var(--titlebar-total) !important;
+    min-height: var(--titlebar-total) !important;
     border-radius: 0;
     background: var(--ios-material) !important;
   }
@@ -3036,57 +3040,6 @@ select:focus-visible {
   .settings-dialog-panel > div {
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
-}
-
-.hakus-splash {
-  background: #0a0a0f;
-  color: #f8f8fb;
-}
-
-.hakus-splash-mark {
-  display: flex;
-  width: 5rem;
-  height: 5rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid hsl(var(--primary) / 0.52);
-  border-radius: 1.375rem;
-  background: hsl(var(--primary) / 0.08);
-  color: hsl(var(--primary));
-  font-size: 1.875rem;
-  font-weight: 600;
-  letter-spacing: 0.2em;
-  box-shadow: 0 12px 32px hsl(var(--primary) / 0.18);
-  animation: splash-mark-in 520ms ease-out both;
-}
-
-.hakus-splash-wordmark {
-  color: #f4f2ff;
-  font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: 0.25em;
-  text-transform: uppercase;
-  animation: splash-text-in 520ms ease-out 120ms both;
-}
-
-.hakus-splash-subtitle {
-  margin-top: 0.5rem;
-  color: hsl(var(--muted-foreground) / 0.9);
-  font-size: 0.625rem;
-  font-weight: 400;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  animation: splash-text-in 520ms ease-out 240ms both;
-}
-
-@keyframes splash-text-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes splash-mark-in {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: scale(1); }
 }
 
 .topbar-review-button[class*="bg-accent/60"] {

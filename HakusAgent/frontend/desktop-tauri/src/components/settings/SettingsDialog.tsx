@@ -119,10 +119,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        // Override default `grid` with `flex flex-col` — grid doesn't
-        // honor min-h-0 on children, so flex is required for the middle
-        // row to shrink and let ScrollArea work (Issue 4 fix).
-        className="settings-dialog-content flex h-full max-w-none flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 shadow-none"
+        fullscreen
+        // Owns the whole viewport on desktop AND mobile (Electron behaviour):
+        // `fullscreen` applies inline geometry that no stylesheet can shift,
+        // so the panel can never drift to a corner again.
+        className="settings-dialog-content flex flex-col gap-0 overflow-hidden border-border/80 bg-card shadow-none"
       >
         <DialogHeader className="settings-dialog-header shrink-0 border-b border-border/70 bg-card px-6 py-4">
           <div className="flex items-center gap-3">

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HakusAI</title>
+    <!--
+      HakusAI native splash — shown by the desktop shell the instant the
+      process starts, before the React webview has finished booting.
+
+      Timeline (per design spec):
+        0.0s  black window
+        0.3s  aurora blobs breathe in (left side, blur ~110px, low saturation)
+        0.8s  "AWAKENING" rises in the clean center
+        1.2s  "HAKUS" wordmark appears below (soft violet-blue gradient)
+        1.8s  text starts breathing / gradient starts flowing
+        finish Rust closes this window after the frontend calls finish_splash
+              (minimum display enforced Rust-side); fade-out = 480ms
+
+      No JavaScript on purpose — the fade is triggered from Rust via
+      `eval("document.documentElement.classList.add('is-fading')")`.
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body {
+        background: #0a0a0d;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                     "Segoe UI", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* ── Aurora field ───────────────────────────────────────────────
+         Four huge, heavily blurred, deliberately desaturated glow blobs
+         hugging the left half. The right half stays almost untouched so
+         the centered text sits on a quiet surface. */
+      .aurora {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        animation: aurora-in 2.2s ease-out 0.3s forwards;
+      }
+      .blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(110px);
+        will-change: opacity, transform;
+      }
+      .blob-purple {
+        width: 46vmax; height: 46vmax; left: -16vmax; top: -18vmax;
+        background: rgba(118, 94, 240, 0.30);
+        animation: drift-a 9s ease-in-out infinite alternate;
+      }
+      .blob-blue {
+        width: 40vmax; height: 40vmax; left: -12vmax; top: 22vmax;
+        background: rgba(62, 100, 226, 0.25);
+        animation: drift-b 11s ease-in-out infinite alternate;
+      }
+      .blob-cyan {
+        width: 32vmax; height: 32vmax; left: 6vmax; top: 4vmax;
+        background: rgba(58, 168, 188, 0.19);
+        animation: drift-c 13s ease-in-out infinite alternate;
+      }
+      .blob-amber {
+        width: 24vmax; height: 24vmax; left: 0; top: 42vmax;
+        background: rgba(190, 164, 92, 0.15);
+        animation: drift-b 15s ease-in-out infinite alternate-reverse;
+      }
+      @keyframes aurora-in { to { opacity: 1; } }
+      @keyframes drift-a { to { transform: translate3d(4vmax, 3vmax, 0) scale(1.08); } }
+      @keyframes drift-b { to { transform: translate3d(-3vmax, -4vmax, 0) scale(0.94); } }
+      @keyframes drift-c { to { transform: translate3d(3vmax, -3vmax, 0) scale(1.1); } }
+
+      /* Right-side + bottom vignette keeps the center clean and premium. */
+      .vignette {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(120% 130% at 80% 50%, rgba(9, 9, 13, 0.62) 0%, rgba(9, 9, 13, 0) 56%),
+          radial-gradient(150% 110% at 50% 125%, rgba(9, 9, 13, 0.45) 0%, rgba(9, 9, 13, 0) 58%);
+      }
+      /* Frosted-glass film across the whole window — barely visible. */
+      .glass {
+        position: absolute; inset: 0;
+        background: linear-gradient(105deg,
+          rgba(255, 255, 255, 0.034) 0%,
+          rgba(255, 255, 255, 0.012) 42%,
+          rgba(255, 255, 255, 0) 72%);
+      }
+
+      /* ── Center stack ─────────────────────────────────────────────── */
+      .stack {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 18px;
+        text-align: center;
+      }
+      .awakening {
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.42em;
+        text-indent: 0.42em; /* optically re-center the tracked text */
+        text-transform: uppercase;
+        color: rgba(232, 233, 246, 0.62);
+        opacity: 0;
+        animation:
+          rise-in 900ms cubic-bezier(0.22, 0.8, 0.3, 1) 0.8s forwards,
+          breathing 3.4s ease-in-out 1.8s infinite;
+      }
+      .rule {
+        width: 92px; height: 1px;
+        background: linear-gradient(90deg,
+          transparent, rgba(214, 210, 240, 0.30), transparent);
+        opacity: 0;
+        animation: rise-in 800ms ease 1.45s forwards;
+      }
+      .wordmark {
+        font-size: 30px;
+        font-weight: 650;
+        letter-spacing: 0.34em;
+        text-indent: 0.34em;
+        text-transform: uppercase;
+        background: linear-gradient(100deg,
+          #f1f1f7 0%, #cfc8f2 30%, #a7b6f0 55%, #e4e1f4 80%, #f1f1f7 100%);
+        background-size: 220% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        opacity: 0;
+        animation:
+          rise-in 900ms cubic-bezier(0.22, 0.8, 0.3, 1) 1.2s forwards,
+          gradient-flow 7s ease-in-out 1.8s infinite;
+      }
+
+      @keyframes rise-in {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      /* Gentle breathing: opacity only — no glow, no scale jumps. */
+      @keyframes breathing {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.55; }
+      }
+      @keyframes gradient-flow {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+      }
+
+      /* ── Exit transition (triggered by finish_splash) ─────────────── */
+      html.is-fading body {
+        opacity: 0;
+        transition: opacity 480ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      html.is-fading .aurora,
+      html.is-fading .stack {
+        animation-play-state: paused;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .aurora, .awakening, .rule, .wordmark {
+          animation-duration: 0.01s !important;
+          animation-delay: 0s !important;
+          animation-iteration-count: 1 !important;
+        }
+        html.is-fading body { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true">
+      <div class="blob blob-purple"></div>
+      <div class="blob blob-blue"></div>
+      <div class="blob blob-cyan"></div>
+      <div class="blob blob-amber"></div>
+    </div>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="glass" aria-hidden="true"></div>
+    <main class="stack">
+      <div class="awakening">Awakening</div>
+      <div class="rule" aria-hidden="true"></div>
+      <div class="wordmark">Hakus</div>
+    </main>
+  </body>
+</html>

@@ -13,8 +13,13 @@ LangString HAKUS_UNINSTALL_DATA ${LANG_ENGLISH} "Delete all HakusAI user data? T
 
 !macro NSIS_HOOK_PREUNINSTALL
   MessageBox MB_YESNO|MB_ICONQUESTION "$(HAKUS_UNINSTALL_DATA)" IDNO hakus_keep_user_data
-    ; Current Tauri data root.
+    ; Current Tauri data root (tauri-plugin-store settings, runtime data).
     RMDir /r "$APPDATA\com.hakusai.client"
+    ; WebView2 user data (localStorage mirror of the settings store used by
+    ; the theme bootstrap and first-run detection). Leaving this behind was
+    ; the "uninstall residue" that silently marked onboarding as done, so a
+    ; fresh install never showed the initialization wizard.
+    RMDir /r "$LOCALAPPDATA\com.hakusai.client"
     ; Also remove the legacy root used by pre-Tauri builds when present.
     RMDir /r "$PROFILE\.hakus"
   hakus_keep_user_data:

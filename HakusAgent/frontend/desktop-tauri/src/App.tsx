@@ -7,7 +7,6 @@ import { TopBar } from '@/components/layout/TopBar'
 import { ResizeHandle } from '@/components/layout/ResizeHandle'
 import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { AwakenSplash } from '@/components/AwakenSplash'
 import { FirstRunSetup } from '@/components/FirstRunSetup'
 
 import { useSessionStore } from '@/store/session'
@@ -24,12 +23,14 @@ const IS_TAURI = typeof __TAURI_INTERNALS__ !== 'undefined'
 const IS_ANDROID = IS_TAURI && /Android/i.test(navigator.userAgent)
 const IS_RUST_PREVIEW = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('backend')?.toLowerCase() === 'rust'
-const MIN_SPLASH_MS = 1500  // minimum splash display time (animation needs this)
+// Minimum time between the frontend mounting and the native splash being
+// dismissed. The Rust side enforces the full design timeline (~2.4s from
+// process start); this only avoids a flash of the UI for instant boots.
+const MIN_SPLASH_MS = 1500
 
 function App() {
   const mountedAt = useRef(Date.now())
-  const [showSplash, setShowSplash] = useState(IS_TAURI && !IS_ANDROID)
-  const [splashExiting, setSplashExiting] = useState(false)
+  const splashFinishedRef = useRef(false)
   const [appReady, setAppReady] = useState(!IS_TAURI || IS_ANDROID)
   const [showFirstRun, setShowFirstRun] = useState(false)
 
@@ -67,10 +68,11 @@ function App() {
   const loadProjects = useProjectsStore((s) => s.load)
 
   // Desktop first launch gets a short, optional setup after the runtime and
-  // initial shell are ready. Android follows the WebView/system language and
-  // intentionally skips this desktop-oriented flow.
+  // initial shell are ready. Android now runs the same welcome flow, minus
+  // the desktop workspace-folder step, so a fresh install on either platform
+  // always surfaces the initialization wizard.
   useEffect(() => {
-    if (!IS_TAURI || IS_ANDROID || !appReady || !settingsLoaded) return
+    if (!IS_TAURI || !appReady || !settingsLoaded) return
     setShowFirstRun(!onboardingCompleted)
   }, [appReady, onboardingCompleted, settingsLoaded])
 
@@ -97,21 +99,28 @@ function App() {
     void apiClient.setRuntimeConfig('locale', localeForRuntime(locale)).catch(() => undefined)
   }, [connState, locale])
 
-  // ── Dismiss splash: respects MIN_SPLASH_MS so animation plays fully ──
+  // ── Dismiss the NATIVE splash window ─────────────────────────────
+  // Desktop shows a real OS-level splash (public/splash.html in its own
+  // window) created at process start. When the runtime is connected we
+  // reveal the main window and let Rust fade the splash away; it enforces
+  // the full ~2.4s design timeline there.
+  const notifySplashFinish = useCallback(() => {
+    if (!IS_TAURI || IS_ANDROID) return
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('finish_splash').catch(() => undefined))
+      .catch(() => undefined)
+  }, [])
+
   const tryDismissSplash = useCallback(() => {
-    if (splashExiting) return
+    if (splashFinishedRef.current) return
+    splashFinishedRef.current = true
     const elapsed = Date.now() - mountedAt.current
     const remaining = Math.max(0, MIN_SPLASH_MS - elapsed)
-
     setTimeout(() => {
-      setSplashExiting(true)
-      // Wait for exit animation (0.6s in AwakenSplash) + small buffer
-      setTimeout(() => {
-        setShowSplash(false)
-        setAppReady(true)
-      }, 700)
+      setAppReady(true)
+      notifySplashFinish()
     }, remaining)
-  }, [splashExiting])
+  }, [notifySplashFinish])
 
   // ── Backend readiness: aggressive health poll ──────────────────────
   const checkBackend = useCallback(() => {
@@ -177,13 +186,8 @@ function App() {
   // loadSessions() run against a dead backend and silently leave the user
   // with an empty UI (the bug we're fixing).
   //
-  // We also removed the previous 6s fallback that dismissed the splash
-  // unconditionally — that was the ROOT CAUSE of the "first launch shows
-  // no data, refresh fixes it" bug: the 6s timer fired while the backend
-  // was still starting, the splash dismissed, the user saw an empty UI,
-  // and the init effect couldn't run because connState wasn't 'connected'
-  // yet. The slow poll (every 2s, no give-up) will eventually connect,
-  // and THEN the splash dismisses + data loads in the same tick.
+  // The slow poll (every 2s, no give-up) will eventually connect, and THEN
+  // the splash dismisses + data loads in the same tick.
   useEffect(() => {
     if (!IS_TAURI || IS_ANDROID) return
     if (connState === 'connected') {
@@ -199,10 +203,10 @@ function App() {
   useEffect(() => {
     if (!IS_TAURI || IS_ANDROID) return
     const t = setTimeout(() => {
-      if (showSplash) tryDismissSplash()
+      tryDismissSplash()
     }, 60000)
     return () => clearTimeout(t)
-  }, [IS_TAURI, showSplash, tryDismissSplash])
+  }, [IS_TAURI, tryDismissSplash])
 
   // Android/Tauri and the explicit browser preview use the Rust Runtime API.
   // Keep the loopback default pointed at that local service, while still
@@ -306,10 +310,8 @@ function App() {
 
   return (
     <>
-      {/* Splash overlay */}
-      {showSplash && <AwakenSplash exiting={splashExiting} />}
-
-      {/* Main UI — invisible until appReady, then fades in */}
+      {/* Main UI — invisible until appReady, then fades in while the native
+          splash window (public/splash.html) fades out above it. */}
       <TooltipProvider delayDuration={300}>
         <div
           data-testid="app-shell"
@@ -321,6 +323,16 @@ function App() {
             visibility: appReady ? 'visible' : 'hidden',
           }}
         >
+          {/* Global title bar — spans the full window width and always sits
+              ABOVE the side panes, so the window controls (min/max/close),
+              settings and right-panel buttons can never be covered by the
+              right panel. */}
+          <TopBar
+            onToggleSidebar={toggleSidebar}
+            onToggleRightPanel={toggleRightPanel}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+
           <div className="app-main relative flex min-h-0 flex-1">
             {(sidebarOpen || rightPanelOpen) && (
               <button
@@ -361,11 +373,6 @@ function App() {
             )}
 
             <div className="app-content flex min-h-0 min-w-0 flex-1 flex-col">
-              <TopBar
-                onToggleSidebar={toggleSidebar}
-                onToggleRightPanel={toggleRightPanel}
-                onOpenSettings={() => setSettingsOpen(true)}
-              />
               <ChatView />
             </div>
 

@@ -39,7 +39,6 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
   // Try Electron store first
   if (typeof window !== 'undefined' && (window as any).electron?.store) {
     const all = await (window as any).electron.store.getAll()
-    const hasSavedSettings = !!all && Object.keys(all).length > 0
     return {
       connection: {
         ...DEFAULT_SETTINGS.connection,
@@ -51,9 +50,12 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       // Android follows the device/WebView locale. Desktop persists the
       // explicit choice made in the first-run flow or Appearance settings.
       language: isAndroidRuntime ? 'system' : normalizeLanguage(all?.language),
-      // Existing installations already have a configured store. Do not show
-      // first-run UI after upgrading; an empty store remains eligible.
-      onboardingCompleted: all?.onboardingCompleted ?? hasSavedSettings,
+      // Only an EXPLICIT `onboardingCompleted: true` marks onboarding done.
+      // The previous `?? hasSavedSettings` fallback treated ANY leftover key
+      // from an old install (uninstall residue in the store file) as "setup
+      // already done", so freshly installed clients never showed the
+      // initialization wizard.
+      onboardingCompleted: all?.onboardingCompleted === true,
       defaultSessionName: all?.defaultSessionName || DEFAULT_SETTINGS.defaultSessionName,
       sendOnEnter: all?.sendOnEnter ?? DEFAULT_SETTINGS.sendOnEnter,
       showReasoning: all?.showReasoning ?? DEFAULT_SETTINGS.showReasoning,
@@ -95,7 +97,8 @@ async function loadSettings(): Promise<Partial<AppSettings>> {
       return {
         ...parsed,
         language: isAndroidRuntime ? 'system' : normalizeLanguage(parsed?.language),
-        onboardingCompleted: parsed?.onboardingCompleted ?? Object.keys(parsed).length > 0,
+        // Strict flag — residue without an explicit true shows the wizard.
+        onboardingCompleted: parsed?.onboardingCompleted === true,
       }
     } catch {
       /* ignore */
