@@ -2,13 +2,15 @@ import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getOverlayContainer } from './portal'
 
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
-const DialogPortal = ({ container, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Portal>) => (
-  <DialogPrimitive.Portal container={container ?? getOverlayContainer()} {...props} />
-)
+// Portal to document.body (Radix default). Floating UI / Radix position
+// fixed-layer content against the viewport; the stock body portal is the
+// single most battle-tested path across WebView2, macOS and Android WebView.
+// The previous app-owned overlay container plus stylesheet overrides is
+// exactly what let dialogs drift to the top-left on real devices.
+const DialogPortal = DialogPrimitive.Portal
 const DialogClose = DialogPrimitive.Close
 
 const DialogOverlay = React.forwardRef<
@@ -52,14 +54,18 @@ const DialogContent = React.forwardRef<
         fullscreen
           ? {
               position: 'fixed',
-              inset: 0,
+              // Longhand offsets — the `inset` shorthand is unavailable on
+              // older Android WebViews and would drop the geometry entirely.
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
               width: '100%',
               height: '100%',
               maxWidth: '100%',
               maxHeight: '100%',
               transform: 'none',
               translate: 'none',
-              borderRadius: 0,
               padding: 0,
               paddingTop: 'env(safe-area-inset-top)',
               ...style,

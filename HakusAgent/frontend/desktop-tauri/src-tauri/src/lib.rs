@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 #[cfg(not(target_os = "android"))]
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 #[cfg(not(target_os = "android"))]
@@ -177,6 +177,7 @@ fn show_native_splash(app: &tauri::AppHandle) {
     .center()
     .decorations(false)
     .shadow(false)
+    .transparent(true)
     .resizable(false)
     .maximizable(false)
     .minimizable(false)
@@ -224,18 +225,13 @@ fn show_native_splash(app: &tauri::AppHandle) {
 
 #[cfg(not(target_os = "android"))]
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    // Retrieve the tray icon auto-created from tauri.conf.json's `trayIcon`
-    // block (id defaults to "main" when not specified). If it isn't there
-    // (config block removed / auto-creation failed), just bail — we don't
-    // try to build one manually because that would require icon loading
-    // plumbing that's easy to get wrong.
-    let tray = match app.tray_by_id("main") {
-        Some(t) => t,
-        None => {
-            eprintln!("[setup] No tray icon with id 'main' found — skipping tray setup");
-            return Ok(());
-        }
-    };
+    // Build the tray icon EXPLICITLY here instead of relying on the
+    // `trayIcon` config block. Config-created trays have an uncontrolled id
+    // and (worse) are created during app construction in every process —
+    // an explicit tray built in `setup` only ever exists in the single
+    // instance that wins the single-instance mutex, so duplicate tray
+    // icons are structurally impossible. It also guarantees the menu and
+    // visibility handling below are attached to the one real icon.
 
     // Build the right-click context menu. Use a separator between the
     // show/hide action and the quit action so the destructive option is
@@ -244,12 +240,29 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let sep = PredefinedMenuItem::separator(app)?;
     let quit_item = MenuItem::with_id(app, "tray_quit", "退出 HakusAI", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_item, &sep, &quit_item])?;
-    tray.set_menu(Some(menu))?;
-    let _ = tray.set_tooltip(Some("HakusAI"));
+
+    let icon = match app.default_window_icon() {
+        Some(icon) => icon.clone(),
+        None => {
+            eprintln!("[setup] No default window icon available — skipping tray");
+            return Ok(());
+        }
+    };
+
+    let tray = TrayIconBuilder::with_id("main")
+        .icon(icon)
+        // Template rendering only applies on macOS; ignored elsewhere.
+        .icon_as_template(true)
+        .tooltip("HakusAI")
+        .menu(&menu)
+        // Left-click is handled manually below (show/hide toggle); the
+        // context menu opens on right-click only.
+        .show_menu_on_left_click(false)
+        .build(app)?;
 
     // Left-click toggles window visibility (Windows / Linux convention).
     // Right-click is handled automatically by the OS — it shows the menu
-    // set via set_menu() above.
+    // set above.
     tray.on_tray_icon_event(|tray, event| {
         if let TrayIconEvent::Click {
             button: MouseButton::Left,

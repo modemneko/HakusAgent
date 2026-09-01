@@ -808,17 +808,18 @@
   }
 
   .settings-dialog-content {
-    inset: 0;
-    left: 0;
     top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     width: 100vw;
     max-width: none;
+    height: 100vh !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
     transform: none;
     translate: none;
     border: 0;
-    border-radius: 0 !important;
     padding-top: env(safe-area-inset-top);
   }
 
@@ -1253,19 +1254,18 @@
   }
 
   .settings-dialog-content {
-    inset: 0 !important;
-    left: 0 !important;
     top: 0 !important;
     right: 0 !important;
     bottom: 0 !important;
+    left: 0 !important;
     width: 100vw !important;
     max-width: none !important;
+    height: 100vh !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
     transform: none !important;
     translate: none !important;
     border: 0;
-    border-radius: 0 !important;
     padding-top: env(safe-area-inset-top);
   }
 
@@ -1604,132 +1604,14 @@
  * dialog, Popper, and split-panel compositions above this breakpoint.
  * ====================================================================== */
 @media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
-  #hakus-overlay-root {
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  /* Radix Popper creates a transformed wrapper around menu content. Move
-     that wrapper into the same full-screen coordinate space as dialogs. */
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
-    max-width: none !important;
-    max-height: none !important;
-    transform: none !important;
-    pointer-events: auto !important;
-  }
-
-  [data-hakus-overlay="dialog-overlay"] {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
-    transform: none !important;
-  }
-
-  [data-hakus-overlay="dialog-content"] {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
-    max-width: none !important;
-    max-height: none !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    box-sizing: border-box;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    overscroll-behavior: contain;
-    transform: none !important;
-    translate: none !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom)) !important;
-    background: hsl(var(--background) / 0.98);
-  }
-
-  [data-hakus-overlay="dialog-content"] > button[aria-label="Close"] {
-    position: fixed;
-    top: max(0.75rem, env(safe-area-inset-top));
-    right: max(0.75rem, env(safe-area-inset-right));
-    z-index: 2;
-    display: inline-flex;
-    width: 2.75rem;
-    height: 2.75rem;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    background: hsl(var(--foreground) / 0.06);
-    opacity: 1;
-  }
-
-  /* Secondary full-screen dialogs keep their heading below the fixed close
-     affordance, including narrow phones where long provider names wrap. */
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
-    padding-top: max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem)) !important;
-  }
-
-  [data-hakus-overlay="dialog-content"] > button[aria-label="Close"]:active {
-    background: hsl(var(--foreground) / 0.12);
-  }
-
-  .settings-dialog-content,
-  .mobile-settings-sheet {
-    padding: 0 !important;
-    background: hsl(var(--background) / 0.98);
-  }
-
-  .settings-dialog-content > .settings-dialog-header,
-  .mobile-settings-sheet > .mobile-settings-header {
-    padding-top: max(1rem, env(safe-area-inset-top));
-  }
-
-  .mobile-settings-sheet {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 0 !important;
-  }
-
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > * {
-    min-width: 0;
-    flex: 0 0 auto;
-  }
-
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > :last-child {
-    margin-bottom: max(0.5rem, env(safe-area-inset-bottom));
-  }
-
-  /* Menus are full-screen action pages on phones. The header owns the only
-     close affordance, so the user never has to discover an edge gesture. */
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"],
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"] {
-    position: relative !important;
-    inset: auto !important;
-    display: flex !important;
-    width: 100% !important;
-    height: 100% !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
-    max-width: none !important;
-    max-height: none !important;
-    box-sizing: border-box;
-    flex-direction: column;
-    overflow: hidden !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    background: hsl(var(--background) / 0.98);
-    box-shadow: none !important;
-    transform: none !important;
-  }
+  /* ── Overlays v2 (phone) ──────────────────────────────────────────
+     Radix now portals to <body> and Floating UI owns ALL menu geometry.
+     The old popper-wrapper / full-screen takeover overrides lived here;
+     they are what let menus and dialogs drift to the top-left corner on
+     real Android WebViews. Phone rules for overlays now live in the
+     consolidated "Overlays v2" section at the end of this file, keyed on
+     :root.is-phone (set from JS with the same condition the app itself
+     uses, so a legacy 980px viewport can never opt the UI out). */
 
   .hakus-mobile-menu-header,
   .right-panel-mobile-header {
@@ -1973,146 +1855,13 @@
     border-bottom-color: hsl(var(--foreground) / 0.1);
   }
 
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] {
-    z-index: 110 !important;
-  }
-
-  /* Secondary dialogs become a compact, self-contained sheet. */
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
-    inset: auto 0 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    max-height: min(88dvh, 44rem) !important;
-    border: 1px solid hsl(var(--foreground) / 0.14) !important;
-    border-bottom: 0 !important;
-    border-radius: 1.5rem 1.5rem 0 0 !important;
-    padding: 0.5rem 1rem max(1rem, env(safe-area-inset-bottom)) !important;
-    background: hsl(var(--card) / 0.94) !important;
-    -webkit-backdrop-filter: blur(30px) saturate(150%);
-    backdrop-filter: blur(30px) saturate(150%);
-    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
-  }
-
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet)::before,
-  .mobile-settings-sheet::before,
-  .settings-dialog-content::before {
-    content: '';
-    display: block;
-    width: 2.25rem;
-    height: 0.25rem;
-    flex: 0 0 auto;
-    align-self: center;
-    margin: 0.125rem auto 0.625rem;
-    border-radius: 999px;
-    background: hsl(var(--foreground) / 0.2);
-  }
-
-  [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) > button[aria-label="Close"] {
-    top: 0.75rem !important;
-    right: 0.75rem !important;
-  }
-
-  /* Settings owns the full viewport on phones too. The previous bottom-sheet
-     geometry (92dvh height, rounded top corners) is exactly what made the
-     panel render as a half-drifted corner card on some WebViews — the
-     fullscreen inline styles on the dialog must stay authoritative. */
-  .settings-dialog-content {
-    inset: 0 !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100vw !important;
-    max-width: none !important;
-    height: 100dvh !important;
-    max-height: 100dvh !important;
-    transform: none !important;
-    translate: none !important;
-    border: 0 !important;
-    border-bottom: 0 !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    padding-top: env(safe-area-inset-top) !important;
-    background: hsl(var(--background) / 0.98) !important;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    box-shadow: none !important;
-  }
-
-  .settings-dialog-header {
-    padding-top: 1.375rem !important;
-  }
-
-  /* Composer's More menu follows the action-sheet pattern from the reference. */
-  .mobile-settings-sheet {
-    inset: auto 0 0 !important;
-    width: 100vw !important;
-    height: auto !important;
-    max-height: min(82dvh, 42rem) !important;
-    border: 1px solid hsl(var(--foreground) / 0.14) !important;
-    border-bottom: 0 !important;
-    border-radius: 1.5rem 1.5rem 0 0 !important;
-    background: hsl(var(--card) / 0.94) !important;
-    -webkit-backdrop-filter: blur(30px) saturate(150%);
-    backdrop-filter: blur(30px) saturate(150%);
-    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
-  }
-
-  .mobile-settings-header {
-    min-height: 4.75rem;
-    padding-top: 0.625rem;
-  }
-
-  .mobile-settings-body {
-    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
-  }
-
-  .mobile-settings-list {
-    border-color: hsl(var(--foreground) / 0.11);
-    background: hsl(var(--background) / 0.38);
-  }
-
-  .mobile-settings-row {
-    min-height: 4rem;
-  }
-
-  [data-hakus-overlay="menu-content"] {
-    border-color: hsl(var(--foreground) / 0.14) !important;
-    background: hsl(var(--card) / 0.94) !important;
-  }
-
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"],
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"] {
-    position: absolute !important;
-    inset: auto 0 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    max-height: min(74dvh, 38rem) !important;
-    min-height: 0 !important;
-    border: 1px solid hsl(var(--foreground) / 0.14) !important;
-    border-bottom: 0 !important;
-    border-radius: 1.5rem 1.5rem 0 0 !important;
-    padding: 0.5rem 0.75rem max(1rem, env(safe-area-inset-bottom)) !important;
-    background: hsl(var(--card) / 0.94) !important;
-    -webkit-backdrop-filter: blur(30px) saturate(150%);
-    backdrop-filter: blur(30px) saturate(150%);
-    box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
-  }
-
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"]::before,
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-sub-content"]::before {
-    content: '';
-    display: block;
-    width: 2.25rem;
-    height: 0.25rem;
-    flex: 0 0 auto;
-    align-self: center;
-    margin: 0.125rem auto 0.625rem;
-    border-radius: 999px;
-    background: hsl(var(--foreground) / 0.2);
-  }
-
-  #hakus-overlay-root > [data-radix-popper-content-wrapper] > [data-hakus-overlay="menu-content"] > .hakus-mobile-menu-header {
-    min-height: 3.25rem;
-  }
+  /* ── Overlays v2 (phone) ──────────────────────────────────────────
+     Menu popper wrappers are no longer restyled or fullscreen-taken-over:
+     Radix portals to <body> and Floating UI anchors + clamps every menu.
+     The phone variants for dialogs (bottom sheet, fullscreen settings)
+     moved to the consolidated "Overlays v2" section at the end of this
+     file, keyed on :root.is-phone so a legacy wide viewport cannot
+     silently opt a phone out of its overlay geometry. */
 
   .composer-mention-menu {
     inset: auto 0 0 !important;
@@ -2898,19 +2647,22 @@ select:focus-visible {
 /* Full-viewport settings surface.  Tauri has no native window chrome, so a
    constrained dialog leaves a visible dark ring on desktop and clips the
    same content in Android WebView.  Settings owns the whole viewport and
-   returns to chat through its leading navigation control. */
+   returns to chat through its leading navigation control. The corner
+   radius mirrors the transparent window shell (Overlays v2 above) and is
+   dropped while maximized by :root.is-rounded-window.is-maximized. */
 .settings-dialog-content {
-  inset: 0 !important;
-  left: 0 !important;
   top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
   width: 100vw !important;
   max-width: none !important;
+  height: 100vh !important;
   height: 100dvh !important;
   max-height: 100dvh !important;
   transform: none !important;
   translate: none !important;
   border: 0 !important;
-  border-radius: 0 !important;
   box-shadow: none !important;
   padding-top: env(safe-area-inset-top);
 }
@@ -3083,7 +2835,10 @@ select:focus-visible {
  * becomes part of the native splash screen. */
 .first-run-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 200;
   display: flex;
   align-items: center;
@@ -3307,4 +3062,180 @@ select:focus-visible {
 .composer-box:focus-within {
   border-color: hsl(var(--foreground) / 0.16) !important;
   box-shadow: 0 12px 34px hsl(240 20% 3% / 0.16), inset 0 1px 0 hsl(var(--foreground) / 0.07) !important;
+}
+
+/* ========================================================================
+ * Overlays v2 — Radix-native floating layers
+ *
+ * Every Radix overlay (dialog, dropdown menu, tooltip) portals to
+ * <body> and Floating UI owns the geometry. Body-level fixed layers are
+ * anchored to the layout viewport on every platform we ship (WebView2,
+ * macOS WKWebView, Linux WebKitGTK, Android WebView), because no
+ * ancestor of a body child can introduce a transformed containing block.
+ * This replaces the previous app-owned overlay container whose
+ * popper-wrapper overrides were the source of the "everything drifts to
+ * the top-left corner" bug on real devices.
+ * ====================================================================== */
+
+/* ── Global titlebar: the window controls, settings and panel buttons sit
+ * ABOVE every in-page layer (scrim z-20, side panels z-30/40) but below
+ * portals (menus z-120, dialogs z-50+). When a dialog opens, its overlay
+ * legitimately covers the titlebar. ──────────────────────────────────── */
+.titlebar {
+  position: relative;
+  z-index: 45;
+}
+
+/* Menus: lift the popper wrapper above dialogs/toasts. Geometry is left
+ * entirely to Floating UI (anchored to the trigger, clamped with an
+ * 8px collision padding — it cannot drift). */
+body > [data-radix-popper-content-wrapper] {
+  z-index: 120;
+}
+
+/* Dialog overlay: longhand viewport offsets (Tailwind's `inset-0` utility
+ * emits the `inset` shorthand, which older Android WebViews drop) and the
+ * rounded window radius so no square corner paints over a transparent one. */
+[data-hakus-overlay="dialog-overlay"] {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+/* ── Rounded window shell (desktop only; main.tsx adds the class) ──────
+ * The Tauri window is transparent; #root paints the themed surface with
+ * CSS rounded corners, so the frame is round on Windows 10/11, macOS and
+ * Linux alike. Overlays that cover the full window mirror the radius so
+ * no square corner ever paints over the transparent one. */
+:root.is-rounded-window,
+:root.is-rounded-window body {
+  background: transparent;
+}
+:root.is-rounded-window #root {
+  overflow: hidden;
+  border-radius: var(--window-radius, 12px);
+  background: hsl(var(--background));
+}
+:root.is-rounded-window [data-hakus-overlay="dialog-overlay"] {
+  border-radius: var(--window-radius, 12px);
+}
+:root.is-rounded-window .settings-dialog-content {
+  overflow: hidden;
+  border-radius: var(--window-radius, 12px);
+}
+:root.is-rounded-window .first-run-overlay {
+  border-radius: var(--window-radius, 12px);
+}
+/* Maximized (or fullscreen) windows are square by OS convention. */
+:root.is-rounded-window.is-maximized #root,
+:root.is-rounded-window.is-maximized [data-hakus-overlay="dialog-overlay"],
+:root.is-rounded-window.is-maximized .settings-dialog-content,
+:root.is-rounded-window.is-maximized .first-run-overlay {
+  border-radius: 0;
+}
+
+/* ── Phone composition (:root.is-phone — set from JS with the exact same
+ * condition the app uses for its phone layout, so a legacy wide WebView
+ * viewport can never opt a phone out of its overlay geometry) ──────── */
+
+/* Secondary dialogs: deterministic bottom sheet. Longhand offsets only —
+ * `inset` shorthand is dropped by older Android WebViews. */
+:root.is-phone [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet) {
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: min(88vh, 44rem) !important;
+  max-height: min(88dvh, 44rem) !important;
+  border: 1px solid hsl(var(--foreground) / 0.14) !important;
+  border-bottom: 0 !important;
+  border-radius: 1.5rem 1.5rem 0 0 !important;
+  padding: 0.5rem 1rem max(1rem, env(safe-area-inset-bottom)) !important;
+  background: hsl(var(--card) / 0.94) !important;
+  box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+}
+:root.is-phone [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet)::before,
+:root.is-phone .mobile-settings-sheet::before {
+  content: '';
+  display: block;
+  width: 2.25rem;
+  height: 0.25rem;
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0.125rem auto 0.625rem;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.2);
+}
+
+/* Composer's More menu keeps its action-sheet pattern. */
+:root.is-phone .mobile-settings-sheet {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: min(82vh, 42rem) !important;
+  max-height: min(82dvh, 42rem) !important;
+  border: 1px solid hsl(var(--foreground) / 0.14) !important;
+  border-bottom: 0 !important;
+  border-radius: 1.5rem 1.5rem 0 0 !important;
+  background: hsl(var(--card) / 0.94) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  backdrop-filter: blur(30px) saturate(150%);
+  box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+}
+:root.is-phone .mobile-settings-header {
+  min-height: 4.75rem;
+  padding-top: 0.625rem;
+}
+:root.is-phone .mobile-settings-body {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+:root.is-phone .mobile-settings-list {
+  border-color: hsl(var(--foreground) / 0.11);
+  background: hsl(var(--background) / 0.38);
+}
+:root.is-phone .mobile-settings-row {
+  min-height: 4rem;
+}
+
+/* Mention menu on phones: full-screen sheet anchored to the viewport
+ * (it is portaled to <body>; fixed keeps it deterministic even when a
+ * legacy WebView reports a wide layout viewport). */
+:root.is-phone .composer-mention-menu {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  background: hsl(var(--background) / 0.98);
+  box-shadow: none !important;
+  z-index: 120;
 }

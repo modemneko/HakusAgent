@@ -24,12 +24,21 @@
       :root { color-scheme: dark; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; }
+      /* The splash window is TRANSPARENT — the rounded frame is drawn here
+         so the splash matches the rounded main window shape. */
       body {
-        background: #0a0a0d;
+        background: transparent;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
                      "Segoe UI", "Microsoft YaHei", sans-serif;
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
+      }
+      .frame {
+        position: absolute;
+        top: 0; right: 0; bottom: 0; left: 0;
+        overflow: hidden;
+        border-radius: 16px;
+        background: #0a0a0d;
       }
 
       /* ── Aurora field ───────────────────────────────────────────────
@@ -168,18 +177,20 @@
     </style>
   </head>
   <body>
-    <div class="aurora" aria-hidden="true">
-      <div class="blob blob-purple"></div>
-      <div class="blob blob-blue"></div>
-      <div class="blob blob-cyan"></div>
-      <div class="blob blob-amber"></div>
+    <div class="frame">
+      <div class="aurora" aria-hidden="true">
+        <div class="blob blob-purple"></div>
+        <div class="blob blob-blue"></div>
+        <div class="blob blob-cyan"></div>
+        <div class="blob blob-amber"></div>
+      </div>
+      <div class="vignette" aria-hidden="true"></div>
+      <div class="glass" aria-hidden="true"></div>
+      <main class="stack">
+        <div class="awakening">Awakening</div>
+        <div class="rule" aria-hidden="true"></div>
+        <div class="wordmark">Hakus</div>
+      </main>
     </div>
-    <div class="vignette" aria-hidden="true"></div>
-    <div class="glass" aria-hidden="true"></div>
-    <main class="stack">
-      <div class="awakening">Awakening</div>
-      <div class="rule" aria-hidden="true"></div>
-      <div class="wordmark">Hakus</div>
-    </main>
   </body>
 </html>

@@ -3,14 +3,15 @@ import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { X } from 'lucide-react'
-import { getOverlayContainer } from './portal'
 
 const DropdownMenu = DropdownMenuPrimitive.Root
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 const DropdownMenuGroup = DropdownMenuPrimitive.Group
-const DropdownMenuPortal = ({ container, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Portal>) => (
-  <DropdownMenuPrimitive.Portal container={container ?? getOverlayContainer()} {...props} />
-)
+// Radix default body portal — Floating UI anchors the menu to its trigger
+// and clamps it inside the viewport on every platform. Custom containers +
+// stylesheet overrides of the popper wrapper are what pushed menus into the
+// top-left corner on real Android devices.
+const DropdownMenuPortal = DropdownMenuPrimitive.Portal
 const DropdownMenuSub = DropdownMenuPrimitive.Sub
 const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup
 

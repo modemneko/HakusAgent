@@ -19,18 +19,13 @@
         "minWidth": 800,
         "minHeight": 600,
         "decorations": false,
-        "shadow": true,
-        "transparent": false,
-        "visible": false,
-        "backgroundColor": "#0e0e10"
+        "shadow": false,
+        "transparent": true,
+        "visible": false
       }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* https://opencode.ai; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; script-src 'self'"
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
     }
   },
   "bundle": {

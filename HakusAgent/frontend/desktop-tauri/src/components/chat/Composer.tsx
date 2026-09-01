@@ -68,7 +68,6 @@ import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
-import { getOverlayContainer } from '@/components/ui/portal'
 import { useI18n } from '@/lib/i18n'
 
 interface Attachment {
@@ -502,7 +501,6 @@ export function Composer({
   const mobileModelOptions = mobileModelProviderId ? modelsCache[mobileModelProviderId] : undefined
   const activePermissionMeta = PERMISSION_META[permission]
   const ActivePermissionIcon = activePermissionMeta.icon
-  const overlayContainer = getOverlayContainer()
 
   const filteredMentionItems = useMemo(() => {
     if (!mentionQuery) return mentionItems
@@ -1071,8 +1069,11 @@ export function Composer({
             }}
           />
 
-          {mentionOpen && isPhoneViewport && overlayContainer
-            ? createPortal(mentionMenu, overlayContainer)
+          {/* Phone: portal the mention sheet to <body> so its viewport
+              geometry is deterministic (no transformed ancestor can trap
+              it); desktop keeps it inline inside the composer. */}
+          {mentionOpen && isPhoneViewport
+            ? createPortal(mentionMenu, document.body)
             : mentionMenu}
 
           {attachments.length > 0 && (

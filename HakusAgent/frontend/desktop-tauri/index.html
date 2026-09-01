@@ -64,9 +64,11 @@
     </script>
     <style>
       /* Critical CSS: prevent flash before framework loads.
-         Colors here MUST match the resolved theme's --background / --foreground.
-         We use CSS variables + a light fallback so the page paints correctly
-         regardless of whether .dark was applied by the inline script above. */
+         The desktop window is TRANSPARENT (rounded corners are painted by
+         #root with CSS), so html/body stay transparent and only #root
+         carries the themed background. The main window is hidden until the
+         native splash fades, so the transparent webview is never visible
+         mid-boot; Android keeps an opaque native window background. */
       html, body, #root, #hakus-overlay-root {
         margin: 0;
         padding: 0;
@@ -77,19 +79,19 @@
         min-height: 100%;
         overflow: hidden;
       }
+      html, body {
+        background: transparent;
+      }
       #hakus-overlay-root {
         position: absolute;
         inset: 0;
         pointer-events: none;
       }
-      /* Light theme base (matches :root in index.css) */
+      /* Dark theme base text color (background comes from #root) */
       html {
-        background-color: hsl(210 20% 96%);
         color: hsl(220 18% 12%);
       }
-      /* Dark theme override (matches .dark in index.css) */
       html.dark {
-        background-color: hsl(240 5% 10%);
         color: hsl(220 10% 96%);
       }
     </style>

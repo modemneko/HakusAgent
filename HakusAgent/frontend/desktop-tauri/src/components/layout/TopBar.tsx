@@ -158,6 +158,35 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   const activeSession = sessions.find((s) => s.id === activeId)
   const isMac = window.electron?.platform === 'darwin'
 
+  // Mirror the OS maximize state onto <html> as `is-maximized` so the CSS
+  // can drop the rounded window corners while maximized (OS convention)
+  // and restore them on restore. Resize events fire on maximize/restore,
+  // tile snapping and normal window resizing alike.
+  useEffect(() => {
+    if (IS_ANDROID) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const sync = async () => {
+      try {
+        const maxed = await window.electron?.window?.isMaximized?.()
+        if (!cancelled) document.documentElement.classList.toggle('is-maximized', Boolean(maxed))
+      } catch {
+        // Bridge unavailable (browser preview) — nothing to mirror.
+      }
+    }
+    const onResize = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void sync(), 120)
+    }
+    void sync()
+    window.addEventListener('resize', onResize)
+    return () => {
+      cancelled = true
+      window.removeEventListener('resize', onResize)
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
   useEffect(() => {
     if (connState === 'connected') {
       refreshServerInfo()

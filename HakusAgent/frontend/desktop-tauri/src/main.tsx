@@ -13,10 +13,42 @@ import {
   window as tauriWindow,
 } from "@/api/tauriBridge";
 import { detectSystemLocale } from "@/lib/i18n";
+import { PHONE_VIEWPORT_QUERY } from "@/lib/responsive";
 
 const isAndroidRuntime =
   typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 const mobileCopy = (zh: string, en: string) => detectSystemLocale() === "zh-CN" ? zh : en;
+
+// ── Window shell + phone composition classes (before first paint) ────
+// is-rounded-window: the desktop Tauri window is transparent and #root
+// paints CSS rounded corners (Windows 10/11, macOS, Linux). Android keeps
+// an opaque native window, so it never gets the class.
+// is-phone: mirrors the exact condition the app uses for its phone layout
+// (responsive.isPhoneViewport). CSS keys phone overlay geometry on this
+// class instead of media queries alone, because some Android WebViews
+// report a legacy ~980px layout viewport that would silently opt the
+// phone out of media-query-driven rules.
+if (typeof __TAURI_INTERNALS__ !== "undefined" && !isAndroidRuntime) {
+  document.documentElement.classList.add("is-rounded-window");
+}
+const syncPhoneClass = () => {
+  let matches = false;
+  try {
+    matches = typeof window.matchMedia === "function" && window.matchMedia(PHONE_VIEWPORT_QUERY).matches;
+  } catch {
+    matches = false;
+  }
+  document.documentElement.classList.toggle("is-phone", isAndroidRuntime || matches);
+};
+syncPhoneClass();
+try {
+  window
+    .matchMedia(PHONE_VIEWPORT_QUERY)
+    .addEventListener?.("change", syncPhoneClass);
+} catch {
+  // Older WebViews without MediaQueryList.addEventListener — the class
+  // computed at boot stays; orientation changes are rare enough.
+}
 
 // ── Tauri Bridge: wire window.electron to tauriBridge.invoke() ──────
 // In Tauri desktop mode, legacy components reference window.electron.
