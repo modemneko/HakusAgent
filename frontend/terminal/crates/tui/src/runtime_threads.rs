@@ -2438,6 +2438,23 @@ fn resolve_runtime_thread_route_for_identity(
         .map_err(|reason| anyhow!("Failed to resolve runtime thread route: {reason}"))
 }
 
+/// Storage/IO classification for Runtime thread errors. Config/request
+/// problems stay `bad_request` (they ARE user-visible parameter errors);
+/// store, filesystem, and lock failures surface as `internal` so clients do
+/// not mislabel a backend fault as "参数错误".
+pub(crate) fn is_runtime_store_failure(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("os error")
+        || lower.contains("no such file")
+        || lower.contains("permission denied")
+        || lower.contains("failed to read")
+        || lower.contains("failed to write")
+        || lower.contains("failed to parse")
+        || lower.contains("corrupt")
+        || lower.contains("event transaction lock")
+        || lower.contains("runtime store")
+}
+
 fn runtime_compaction_config(
     provider: ApiProvider,
     model: &str,
@@ -4705,7 +4722,22 @@ impl RuntimeThreadManager {
                     .provider
                     .as_deref()
                     .unwrap_or(ApiProvider::Deepseek.as_str());
-                config.resolve_provider_identity(selected)
+                config
+                    .resolve_provider_identity(selected)
+                    .or_else(|reason| {
+                        // GUI new-chat parity: a stale live-config provider
+                        // pointer (e.g. a deleted custom route left behind by
+                        // an interrupted settings edit) must not hard-fail
+                        // every new session. Fall back to the catalog default
+                        // route; the turn path still fails closed when the
+                        // eventual route has no usable credentials.
+                        tracing::warn!(
+                            selected = %selected,
+                            reason = %reason,
+                            "Live config provider pointer is unresolvable; falling back to the default DeepSeek route for the new thread"
+                        );
+                        config.resolve_provider_identity(ApiProvider::Deepseek.as_str())
+                    })
             }
             .map_err(|reason| anyhow!(reason))?;
             let default_model = resolve_runtime_route_for_identity(&config, &identity, None)
@@ -6457,6 +6489,106 @@ impl RuntimeThreadManager {
                 )
             };
         let mode = policy.mode;
+
+        // Zero-turn thread re-point (mobile/desktop GUI parity).
+        //
+        // The GUI auto-creates "New Chat" threads before the user configures
+        // any provider, so those empty threads persist the then-current
+        // default route. When the user configures a different provider in
+        // Settings afterwards, sending the FIRST message of such a thread
+        // would dispatch (or preflight-fail) against the stale pinned route —
+        // surfaced by the GUI as the opaque 400 "请求参数错误" even though the
+        // settings-side configuration is complete. For threads with no turns
+        // yet — i.e. no content whose provider provenance must be preserved —
+        // an explicitly-modelled turn follows the current settings default.
+        // Threads with any turn history keep their pinned route; the user's
+        // original per-thread choice stays authoritative there.
+        let mut repointed_identity: Option<ProviderIdentity> = None;
+        {
+            let cfg_snapshot = self.config.read().clone();
+            let thread_turns_empty = {
+                let _thread_mutation = self.store.thread_mutation.lock();
+                self.store
+                    .list_turns_for_thread(&thread.id)
+                    .map(|turns| turns.is_empty())
+                    .unwrap_or(true)
+            };
+            if thread_turns_empty {
+                match self.provider_identity_for_thread(&cfg_snapshot, &thread) {
+                    Ok(pinned) => {
+                        // The GUI always sends its CURRENT settings model with
+                        // the first message of a fresh chat. That model belongs
+                        // to the settings' default provider route, not to the
+                        // route this empty thread was pinned to at creation
+                        // time — so an auto-created thread would otherwise
+                        // dispatch (or preflight-fail) against the stale
+                        // route. Zero-turn threads carry no content whose
+                        // provider provenance must be preserved: follow the
+                        // current default identity. Threads with any turn
+                        // history keep their pinned route.
+                        let explicit_model_requested = req.model.as_deref().is_some_and(|model| {
+                            !model.trim().is_empty() && !model.trim().eq_ignore_ascii_case("auto")
+                        });
+                        if explicit_model_requested {
+                            match cfg_snapshot
+                                .active_provider_identity(cfg_snapshot.api_provider())
+                            {
+                                Ok(default) if default.key != pinned.key => {
+                                    tracing::info!(
+                                        thread_id = %thread.id,
+                                        pinned = %pinned.key,
+                                        default = %default.key,
+                                        "Zero-turn thread follows the current default provider for its first explicit-model turn"
+                                    );
+                                    repointed_identity = Some(default);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(pinned_error) => {
+                        // Unresolvable pinned identity (e.g. its custom
+                        // provider table was deleted). Empty threads heal to
+                        // the current default; threads with content keep
+                        // failing closed so nothing is silently re-routed.
+                        match cfg_snapshot
+                            .active_provider_identity(cfg_snapshot.api_provider())
+                        {
+                            Ok(default) => {
+                                tracing::warn!(
+                                    thread_id = %thread.id,
+                                    pinned_error = %pinned_error,
+                                    "Zero-turn thread pinned route is unresolvable; re-pointing to the current default provider"
+                                );
+                                repointed_identity = Some(default);
+                            }
+                            Err(default_error) => {
+                                anyhow::bail!(
+                                    "Thread {} pinned provider is unresolvable ({pinned_error}) and the current default provider is also unresolvable ({default_error})",
+                                    thread.id
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(ref identity) = repointed_identity {
+                    thread.model_provider = Some(identity.provider.as_str().to_string());
+                    thread.model_provider_id = identity.exact_id.clone();
+                    // Align the thread's model with the explicitly requested
+                    // one so ensure_engine_loaded (next line) resolves the
+                    // same route the turn will dispatch with.
+                    if let Some(requested) = req
+                        .model
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("auto"))
+                    {
+                        thread.model = requested.to_string();
+                    }
+                }
+            }
+        }
+
         let engine = self.ensure_engine_loaded(&thread).await?;
 
         let client_preflight_required = {
@@ -6478,7 +6610,10 @@ impl RuntimeThreadManager {
         let requested_model = req.model.as_deref().unwrap_or(&thread.model).to_string();
         let auto_model = requested_model.trim().eq_ignore_ascii_case("auto");
         let cfg_snapshot = self.config.read().clone();
-        let identity = self.provider_identity_for_thread(&cfg_snapshot, &thread)?;
+        let identity = match repointed_identity.clone() {
+            Some(identity) => identity,
+            None => self.provider_identity_for_thread(&cfg_snapshot, &thread)?,
+        };
         let mut thread_config = cfg_snapshot.clone();
         thread_config.scope_to_provider_identity(&identity);
         let verbosity = thread_config.verbosity.clone();
@@ -6552,6 +6687,21 @@ impl RuntimeThreadManager {
         let provider = route.identity.provider;
         let provider_identity = route.identity.clone();
         let model = route.model.clone();
+        if repointed_identity.is_some() {
+            // Persist the healed route so the thread record on disk matches
+            // the route this turn (and all future turns) will dispatch with.
+            thread.model_provider = Some(provider.as_str().to_string());
+            thread.model_provider_id = provider_identity.exact_id.clone();
+            thread.model = model.clone();
+            thread.updated_at = Utc::now();
+            if let Err(error) = self.store.save_thread(&thread) {
+                tracing::warn!(
+                    thread_id = %thread.id,
+                    error = %error,
+                    "Failed to persist re-pointed thread route"
+                );
+            }
+        }
         let route_limits = known_route_limits(route.candidate.limits());
         let settings = crate::settings::Settings::load().unwrap_or_default();
         let mut compaction = runtime_compaction_config(

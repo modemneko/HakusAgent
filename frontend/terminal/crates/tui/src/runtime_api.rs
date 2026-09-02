@@ -2305,7 +2305,17 @@ async fn create_thread(
         .runtime_threads
         .create_thread(req)
         .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        .map_err(|e| {
+            let message = e.to_string();
+            if crate::runtime_threads::is_runtime_store_failure(&message) {
+                // Store/filesystem faults are backend failures, not request
+                // errors — reporting them as 400 made the GUI label them
+                // "请求参数错误".
+                ApiError::internal(message)
+            } else {
+                ApiError::bad_request(message)
+            }
+        })?;
     Ok((StatusCode::CREATED, Json(thread)))
 }
 
@@ -9083,6 +9093,10 @@ fn map_thread_err(err: anyhow::Error) -> ApiError {
             status: StatusCode::CONFLICT,
             message,
         }
+    } else if crate::runtime_threads::is_runtime_store_failure(&message) {
+        // Store/filesystem faults are backend failures, not request errors —
+        // reporting them as 400 made the GUI label them "请求参数错误".
+        ApiError::internal(message)
     } else {
         ApiError::bad_request(message)
     }

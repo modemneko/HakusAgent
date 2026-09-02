@@ -163,7 +163,7 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
 }
 
 export function ChatView() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const toast = useToast()
   const sessions = useSessionStore((s) => s.sessions)
   const activeId = useSessionStore((s) => s.activeSessionId)
@@ -825,7 +825,12 @@ export function ChatView() {
           <Button
             type="button"
             className="mt-5 rounded-full px-5"
-            onClick={() => void createSession('New Chat')}
+            onClick={() => {
+              createSession('New Chat').catch((e: unknown) => {
+                const detail = e instanceof Error ? e.message : String(e)
+                toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
+              })
+            }}
           >
             {t('startChat')}
           </Button>

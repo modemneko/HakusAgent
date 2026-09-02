@@ -589,6 +589,31 @@ fn legacy_turn_record_has_no_invented_route_provenance() {
 }
 
 #[tokio::test]
+async fn create_thread_falls_back_to_default_route_when_live_provider_pointer_is_unresolvable() -> Result<()> {
+    // A stale `provider = "deleted-prov"` pointer (e.g. a custom route left
+    // behind by an interrupted settings edit) must not hard-fail every GUI
+    // new-session tap. The manager falls back to the catalog default route;
+    // the turn path still fails closed when credentials are missing.
+    let config = Config {
+        provider: Some("deleted-prov".to_string()),
+        ..Config::default()
+    };
+    let manager = RuntimeThreadManager::open(
+        config,
+        PathBuf::from("."),
+        test_manager_config(test_runtime_dir()),
+    )?;
+
+    let thread = manager
+        .create_thread(CreateThreadRequest::default())
+        .await?;
+    assert_eq!(thread.model_provider.as_deref(), Some("deepseek"));
+    assert_eq!(thread.model_provider_id, None);
+    assert!(!thread.model.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn named_custom_thread_identity_round_trips_and_fails_closed_when_removed() -> Result<()> {
     let mut custom = std::collections::HashMap::new();
     custom.insert(

@@ -138,7 +138,13 @@ export function Sidebar() {
   }, [filtered, locale])
 
   const handleNew = () => {
-    createSession()
+    // Surface backend failures — a silent rollback made "new chat" look
+    // like a dead button whenever POST /v1/threads failed (e.g. a stale
+    // provider pointer). The toast carries the runtime's real error text.
+    createSession().catch((e: unknown) => {
+      const detail = e instanceof Error ? e.message : String(e)
+      toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
+    })
     setSearch('')
     closeAfterMobileAction()
   }

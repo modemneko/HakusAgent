@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { Toaster } from '@/components/ui/toast'
+import { Toaster, toastApi } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/layout/TopBar'
@@ -257,7 +257,14 @@ function App() {
       if (cancelled) return
       const st = useSessionStore.getState()
       if (st.sessions.length === 0) {
-        void st.createSession('New Chat')
+        // Auto-create the first session. If the runtime rejects it (e.g. a
+        // stale provider pointer), keep the error visible instead of leaving
+        // the user in an unexplained empty state.
+        st.createSession('New Chat').catch((e: unknown) => {
+          const detail = e instanceof Error ? e.message : String(e)
+          console.error('[app] auto createSession failed:', detail)
+          toastApi.error(`新建会话失败：${detail}`)
+        })
       } else if (!st.activeSessionId) {
         st.setActiveSession(st.sessions[0].id)
       }
@@ -272,7 +279,11 @@ function App() {
       try {
         const { listen } = await import("@tauri-apps/api/event")
         unlisten = await listen("tray:new-chat", () => {
-          useSessionStore.getState().createSession("New Chat")
+          useSessionStore.getState().createSession("New Chat").catch((e: unknown) => {
+            const detail = e instanceof Error ? e.message : String(e)
+            console.error('[app] tray createSession failed:', detail)
+            toastApi.error(`新建会话失败：${detail}`)
+          })
         })
       } catch { /* ignore */ }
     })()

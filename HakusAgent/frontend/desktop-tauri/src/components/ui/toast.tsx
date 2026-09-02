@@ -53,6 +53,19 @@ export function useToast() {
   )
 }
 
+/**
+ * Imperative toast helpers for non-component callers (App-level effects,
+ * Tauri event listeners, store subscriptions) that cannot use the hook.
+ */
+export const toastApi = {
+  error: (message: string, duration?: number) =>
+    useToastStore.getState().push('error', message, duration ?? 5000),
+  info: (message: string, duration?: number) =>
+    useToastStore.getState().push('info', message, duration),
+  success: (message: string, duration?: number) =>
+    useToastStore.getState().push('success', message, duration),
+}
+
 const ICONS: Record<ToastVariant, typeof CheckCircle2> = {
   success: CheckCircle2,
   error: AlertCircle,
