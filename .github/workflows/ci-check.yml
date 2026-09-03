@@ -40,6 +40,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config
 
+      - name: Plugin version alignment (Rust crate vs NPM pkg)
+        run: |
+          python3 - <<'EOF'
+          import re, json, sys
+
+          lock = open('HakusAgent/frontend/desktop-tauri/src-tauri/Cargo.lock').read()
+          rust = {m.group(1): m.group(2) for m in
+                  re.finditer(r'name = "(tauri-plugin-[^"]+)"\nversion = "([^"]+)"', lock)}
+
+          d = json.load(open('HakusAgent/frontend/desktop-tauri/package-lock.json'))
+          npm = {}
+          prefix = 'node_modules/@tauri-apps/plugin-'
+          for k, v in d['packages'].items():
+              if k.startswith(prefix):
+                  npm['tauri-plugin-' + k[len(prefix):]] = v['version']
+
+          if 'tauri-plugin-updater' not in npm:
+              print('FATAL: npm mapping failed, alignment check is not comparing anything')
+              sys.exit(1)
+
+          bad = []
+          for name, rv in sorted(rust.items()):
+              nv = npm.get(name)
+              if nv and rv.split('.')[:2] != nv.split('.')[:2]:
+                  bad.append(f'{name}: rust crate {rv} vs npm {nv}')
+
+          if bad:
+              print('Tauri plugin version mismatch detected:')
+              for b in bad:
+                  print('  ' + b)
+              print('Fix: bump the NPM package (and package-lock) to the same major.minor as the Rust crate.')
+              sys.exit(1)
+          print('All tauri-plugin Rust crates aligned with NPM packages (major.minor).')
+          EOF
+
       - name: Frontend typecheck + build + tests
         working-directory: HakusAgent/frontend/desktop-tauri
         run: |
