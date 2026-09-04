@@ -3,6 +3,9 @@
 # 背景：8023d38 之后的修复曾因无法本地验证而依赖 build-all 的完整产物构建，
 # 一旦 Rust 或前端编译失败，用户就会拿旧 artifacts 当新版本实机测试。
 # 本工作流只做 cargo check + 前端构建，几分钟内给出结果。
+#
+# 教训：平台门禁 API（如 macOS 的 .transparent() 需要 macos-private-api）
+# 只在 Linux 上 check 是测不到的 — 所以额外跑一个 macOS cargo check job。
 name: ci-check
 
 on:
@@ -15,6 +18,7 @@ on:
     branches:
       - "fix/**"
       - "ci/**"
+      - "master"
 
 permissions:
   contents: read
@@ -86,3 +90,17 @@ jobs:
       - name: Rust check (locked)
         working-directory: HakusAgent/frontend/desktop-tauri/src-tauri
         run: cargo check --locked
+
+  desktop-tauri-check-macos:
+    name: desktop-tauri-check-macos
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust check (locked) — catches macOS-gated API errors
+        working-directory: HakusAgent/frontend/desktop-tauri/src-tauri
+        run: |
+          mkdir -p ../dist
+          cargo check --locked
