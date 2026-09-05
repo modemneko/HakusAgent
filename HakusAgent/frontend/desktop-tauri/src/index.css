@@ -3155,10 +3155,13 @@ body > [data-radix-popper-content-wrapper] {
   max-height: min(88dvh, 44rem) !important;
   border: 1px solid hsl(var(--foreground) / 0.14) !important;
   border-bottom: 0 !important;
-  border-radius: 1.5rem 1.5rem 0 0 !important;
+  border-radius: 1.75rem 1.75rem 0 0 !important;
   padding: 0.5rem 1rem max(1rem, env(safe-area-inset-bottom)) !important;
-  background: hsl(var(--card) / 0.94) !important;
-  box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+  background: hsl(var(--card) / 0.88) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(170%);
+  backdrop-filter: blur(32px) saturate(170%);
+  box-shadow: 0 -18px 50px hsl(240 24% 3% / 0.36) !important;
+  animation: hakus-sheet-up 460ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
 }
 :root.is-phone [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet)::before,
 :root.is-phone .mobile-settings-sheet::before {
@@ -3191,11 +3194,12 @@ body > [data-radix-popper-content-wrapper] {
   max-height: min(82dvh, 42rem) !important;
   border: 1px solid hsl(var(--foreground) / 0.14) !important;
   border-bottom: 0 !important;
-  border-radius: 1.5rem 1.5rem 0 0 !important;
-  background: hsl(var(--card) / 0.94) !important;
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
-  backdrop-filter: blur(30px) saturate(150%);
-  box-shadow: 0 -16px 44px hsl(240 20% 3% / 0.28) !important;
+  border-radius: 1.75rem 1.75rem 0 0 !important;
+  background: hsl(var(--card) / 0.88) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(170%);
+  backdrop-filter: blur(32px) saturate(170%);
+  box-shadow: 0 -18px 50px hsl(240 24% 3% / 0.36) !important;
+  animation: hakus-sheet-up 460ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
 }
 :root.is-phone .mobile-settings-header {
   min-height: 4.75rem;
@@ -3238,4 +3242,152 @@ body > [data-radix-popper-content-wrapper] {
   background: hsl(var(--background) / 0.98);
   box-shadow: none !important;
   z-index: 120;
+}
+
+/* ========================================================================
+ * Overlays v2.1 — dropdown menus become iOS 26 bottom sheets on phones
+ *
+ * The three-dots composer menu, project/model pickers and every other
+ * Radix dropdown used Floating UI anchor math on phones. When a WebView
+ * mis-measures the anchor (legacy viewport, IME resize, scroll races)
+ * the wrapper transform resolves to (0,0) and the menu paints in the
+ * top-left corner. Sheets kill the entire anchor pipeline: the popper
+ * wrapper is pinned to the viewport bottom with longhand offsets and
+ * its Floating UI transform is neutralized, so there is nothing left
+ * to compute — and nothing left to drift.
+ * ====================================================================== */
+
+/* Shared iOS-style sheet entrance (bottom → resting position). Fill mode
+ * is `backwards` so no lingering transform survives after the animation,
+ * keeping the sheet a transform-free containing-block-free box. */
+@keyframes hakus-sheet-up {
+  from {
+    transform: translateY(104%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* 1) Neutralize Floating UI on every body-level popper wrapper. Longhand
+ *    offsets only; `!important` beats Radix's inline geometry. */
+:root.is-phone body > [data-radix-popper-content-wrapper] {
+  position: fixed !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  scale: none !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  z-index: 120;
+}
+
+/* 2) The menu itself: full-width glass sheet, top corners only, header +
+ *    scrollable body. */
+:root.is-phone [data-hakus-overlay="menu-content"],
+:root.is-phone [data-hakus-overlay="menu-sub-content"] {
+  position: static !important;
+  transform: none !important;
+  translate: none !important;
+  scale: none !important;
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  max-height: min(72dvh, 40rem) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid hsl(var(--foreground) / 0.14) !important;
+  border-bottom: 0 !important;
+  border-radius: 1.75rem 1.75rem 0 0 !important;
+  padding: 0 !important;
+  background: hsl(var(--popover) / 0.86) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(170%);
+  backdrop-filter: blur(32px) saturate(170%);
+  box-shadow: 0 -18px 50px hsl(240 24% 3% / 0.36) !important;
+  animation: hakus-sheet-up 460ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+
+/* 3) Sheet chrome: grabber handle, centered title, close pill, scroll body.
+ *    Duplicated from the ≤767px media block but keyed on :root.is-phone so
+ *    legacy wide-viewport WebViews still get the chrome. */
+:root.is-phone .hakus-sheet-grabber {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 0.3125rem;
+  margin: 0.5rem auto 0.125rem;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.22);
+}
+
+:root.is-phone .hakus-mobile-menu-header {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 3rem;
+  border-bottom: 1px solid hsl(var(--foreground) / 0.1);
+  padding: 0.375rem 0.625rem;
+  color: hsl(var(--foreground));
+}
+
+:root.is-phone .hakus-mobile-menu-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+:root.is-phone .hakus-mobile-menu-close {
+  display: inline-flex;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.07);
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+:root.is-phone .hakus-mobile-menu-close:active {
+  background: hsl(var(--foreground) / 0.13);
+}
+
+:root.is-phone .hakus-mobile-menu-body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 0.75rem max(1.25rem, env(safe-area-inset-bottom));
+}
+
+/* 4) Tooltips never make sense on touch; keep them off phones (legacy
+ *    viewport copy of the ≤767px rule). */
+:root.is-phone [data-hakus-overlay="tooltip-content"] {
+  display: none !important;
+}
+
+/* 5) Respect reduced-motion preferences across every sheet surface. */
+@media (prefers-reduced-motion: reduce) {
+  :root.is-phone [data-hakus-overlay="menu-content"],
+  :root.is-phone [data-hakus-overlay="menu-sub-content"],
+  :root.is-phone [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet),
+  :root.is-phone .mobile-settings-sheet {
+    animation: none !important;
+  }
 }

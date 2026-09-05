@@ -43,7 +43,11 @@ const DialogContent = React.forwardRef<
             // Radix's left-1/2/top-1/2/-translate-* combo is exactly what
             // drifted to the top-left corner on some WebView builds.
             'fixed z-50 flex flex-col overflow-hidden bg-background'
-          : 'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
+          : // Transform-free centering: inset-0 + margin auto resolves the
+            // box against the viewport on every WebView, while translate/-
+            // transform centering silently breaks when any ancestor gains
+            // a transform/filter (fixed elements then anchor to that box).
+            'fixed inset-0 z-50 m-auto grid h-fit w-[calc(100%-2rem)] max-w-lg gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
         className,
       )}
       {...props}

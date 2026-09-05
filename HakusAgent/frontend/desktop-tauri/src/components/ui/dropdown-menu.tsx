@@ -26,6 +26,11 @@ const DropdownMenuContent = React.forwardRef<
   <DropdownMenuPortal>
     <DropdownMenuPrimitive.Content
       ref={ref}
+      // Radix v2 dropdown content ALWAYS mounts inside the well-known
+      // [data-radix-popper-content-wrapper] body child. On phones the
+      // "Overlays v2.1" CSS section neutralizes that wrapper's Floating UI
+      // transform and re-anchors it as a deterministic iOS-style bottom
+      // sheet — anchor math can never drift to (0,0) again.
       sideOffset={sideOffset}
       collisionPadding={8}
       className={cn(
@@ -39,8 +44,9 @@ const DropdownMenuContent = React.forwardRef<
       {...props}
       data-hakus-overlay="menu-content"
     >
+      <div aria-hidden className="hakus-sheet-grabber" />
       <div className="hakus-mobile-menu-header">
-        <span>{mobileTitle}</span>
+        <span className="hakus-mobile-menu-title">{mobileTitle}</span>
         <DropdownMenuPrimitive.Item asChild>
           <button type="button" className="hakus-mobile-menu-close" aria-label="关闭">
             <span>关闭</span>
