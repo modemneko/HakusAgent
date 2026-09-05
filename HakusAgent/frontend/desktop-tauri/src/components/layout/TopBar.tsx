@@ -11,7 +11,6 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ProviderLogo } from '@/components/ui/provider-logo'
 import { useSessionStore } from '@/store/session'
 import { useConnectionStore } from '@/store/connection'
@@ -59,74 +58,59 @@ function WindowButtons() {
 
   return (
     <div className="app-region-no-drag flex items-center gap-0.5 pl-1.5">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-            draggable={false}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onPointerUp={(event) => invoke('minimize', event)}
-            onClick={(event) => invoke('minimize', event)}
-            aria-label={t('minimize')}
-            title={t('minimize')}
-          >
-            <Minus className="h-4 w-4" strokeWidth={2.5} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('minimize')}</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        draggable={false}
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onPointerUp={(event) => invoke('minimize', event)}
+        onClick={(event) => invoke('minimize', event)}
+        aria-label={t('minimize')}
+        title={t('minimize')}
+      >
+        <Minus className="h-4 w-4" strokeWidth={2.5} />
+      </Button>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-            draggable={false}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onPointerUp={(event) => invoke('toggleMaximize', event)}
-            onClick={(event) => invoke('toggleMaximize', event)}
-            aria-label={t('maximize')}
-            title={t('maximize')}
-          >
-            <Square className="h-3.5 w-3.5" strokeWidth={2.2} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('maximize')}</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        draggable={false}
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onPointerUp={(event) => invoke('toggleMaximize', event)}
+        onClick={(event) => invoke('toggleMaximize', event)}
+        aria-label={t('maximize')}
+        title={t('maximize')}
+      >
+        <Square className="h-3.5 w-3.5" strokeWidth={2.2} />
+      </Button>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-            draggable={false}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onPointerUp={(event) => invoke('close', event)}
-            onClick={(event) => invoke('close', event)}
-            aria-label={t('close')}
-            title={t('close')}
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2.4} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('close')}</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        draggable={false}
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onPointerUp={(event) => invoke('close', event)}
+        onClick={(event) => invoke('close', event)}
+        aria-label={t('close')}
+        title={t('close')}
+      >
+        <X className="h-3.5 w-3.5" strokeWidth={2.4} />
+      </Button>
     </div>
   )
 }
@@ -199,41 +183,32 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
       data-tauri-drag-region
     >
       <div className={cn('topbar-leading app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              onClick={onToggleSidebar}
-              title={t('toggleSidebar')}
-              aria-label={t('toggleSidebar')}
-            >
-              <PanelLeft className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('toggleSidebar')}</TooltipContent>
-        </Tooltip>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+          onClick={onToggleSidebar}
+          title={t('toggleSidebar')}
+          aria-label={t('toggleSidebar')}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </Button>
 
         <div className="segment topbar-mode-segment">
           {MODE_SEGMENTS.map((mode) => {
             const Icon = mode.icon
             const active = agentMode === mode.id
             return (
-              <Tooltip key={mode.id}>
-                <TooltipTrigger asChild>
-                  <button
-                    className={cn('segment-btn', active && 'segment-btn-active')}
-                    onClick={() => setAgentMode(mode.id)}
-                    aria-label={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
-                    title={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    <span className="hidden md:inline">{mode.id === 'swift' ? t('workMode') : t('codeMode')}</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{mode.id === 'swift' ? t('workMode') : t('codeMode')}</TooltipContent>
-              </Tooltip>
+              <button
+                key={mode.id}
+                className={cn('segment-btn', active && 'segment-btn-active')}
+                onClick={() => setAgentMode(mode.id)}
+                aria-label={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
+                title={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
+              >
+                <Icon className="h-3 w-3" />
+                <span className="hidden md:inline">{mode.id === 'swift' ? t('workMode') : t('codeMode')}</span>
+              </button>
             )
           })}
         </div>
@@ -255,61 +230,46 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
       </div>
 
       <div className="topbar-actions app-region-no-drag relative z-10 flex shrink-0 items-center justify-end gap-1 pr-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className={cn(
-                'topbar-icon-button topbar-review-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                rightPanelOpen && 'bg-accent/60 text-foreground',
-              )}
-              onClick={onToggleRightPanel}
-              title={t('reviewPanel')}
-              aria-label={t('reviewPanel')}
-            >
-              <PanelRight className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('reviewPanel')}</TooltipContent>
-        </Tooltip>
+        <Button
+          size="icon"
+          variant="ghost"
+          className={cn(
+            'topbar-icon-button topbar-review-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+            rightPanelOpen && 'bg-accent/60 text-foreground',
+          )}
+          onClick={onToggleRightPanel}
+          title={t('reviewPanel')}
+          aria-label={t('reviewPanel')}
+        >
+          <PanelRight className="h-4 w-4" />
+        </Button>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="topbar-icon-button topbar-settings-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              onClick={onOpenSettings}
-              title={t('settings')}
-              aria-label={t('settings')}
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('settings')}</TooltipContent>
-        </Tooltip>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="topbar-icon-button topbar-settings-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+          onClick={onOpenSettings}
+          title={t('settings')}
+          aria-label={t('settings')}
+        >
+          <Settings className="h-3.5 w-3.5" />
+        </Button>
 
         {activeId && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-              className="topbar-icon-button topbar-clear-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              onClick={() => {
-                if (confirm(t('clearChat') + '?')) {
-                    clearMessages(activeId)
-                  }
-                }}
-                title={t('clearChat')}
-                aria-label={t('clearChat')}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('clearChat')}</TooltipContent>
-          </Tooltip>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="topbar-icon-button topbar-clear-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+            onClick={() => {
+              if (confirm(t('clearChat') + '?')) {
+                clearMessages(activeId)
+              }
+            }}
+            title={t('clearChat')}
+            aria-label={t('clearChat')}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         )}
 
         {!isMac && !IS_ANDROID && <WindowButtons />}

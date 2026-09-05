@@ -1372,6 +1372,7 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/workspace/status/files", get(workspace::workspace_git_status))
         .route("/v1/workspace/diff", get(workspace::workspace_diff))
         .route("/v1/workspace/stage", post(workspace::stage_path))
+        .route("/v1/workspace/discard", post(workspace::discard_path))
         .route(
             "/v1/projects",
             get(projects::list_projects).post(projects::create_project),

@@ -63,6 +63,11 @@ pub(super) struct GitStageRequest {
     pub(super) unstage: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct GitDiscardRequest {
+    pub(super) path: String,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct WorkspaceGitMetadata {
     pub(super) branch: Option<String>,
@@ -246,6 +251,43 @@ pub(super) fn collect_workspace_git_metadata(workspace: &FsPath) -> WorkspaceGit
         dirty: run_git(workspace, &["status", "--porcelain=v1"])
             .is_some_and(|porcelain| !porcelain.trim().is_empty()),
     }
+}
+
+/// Discard local changes to one path: 'git checkout --' restores tracked
+/// modifications/deletions, 'git clean -f --' removes untracked files. The
+/// clean only runs after checkout so ignored files are never touched.
+pub(super) async fn discard_path(
+    State(state): State<RuntimeApiState>,
+    Json(request): Json<GitDiscardRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !collect_workspace_status(&state.workspace).git_repo {
+        return Err(ApiError::bad_request("Workspace is not a git repository"));
+    }
+    let path = validate_workspace_relative_path(&request.path)?;
+    let checkout = Git::output(&["checkout", "--", path.as_str()], &state.workspace)
+        .map_err(|e| ApiError::internal(format!("Failed to run git checkout: {e}")))?;
+    if !checkout.status.success() {
+        // checkout fails on a path with no tracked changes. That is only OK
+        // when the path is untracked (??) — the clean below then removes it.
+        let status = run_git(&state.workspace, &["status", "--porcelain", "--", path.as_str()])
+            .unwrap_or_default();
+        if !status.lines().any(|line| line.starts_with("??")) {
+            return Err(ApiError::bad_request(
+                String::from_utf8_lossy(&checkout.stderr).trim().to_string(),
+            ));
+        }
+    }
+    let clean = Git::output(&["clean", "-f", "--", path.as_str()], &state.workspace)
+        .map_err(|e| ApiError::internal(format!("Failed to run git clean: {e}")))?;
+    if !clean.status.success() {
+        return Err(ApiError::bad_request(
+            String::from_utf8_lossy(&clean.stderr).trim().to_string(),
+        ));
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "path": path,
+    })))
 }
 
 fn run_git(workspace: &FsPath, args: &[&str]) -> Option<String> {

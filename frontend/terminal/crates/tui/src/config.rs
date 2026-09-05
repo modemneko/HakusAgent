@@ -7587,6 +7587,7 @@ fn root_deepseek_model_is_foreign_to_direct_provider(provider: ApiProvider, mode
             | ApiProvider::Volcengine
             | ApiProvider::Atlascloud
             | ApiProvider::OpencodeGo
+            | ApiProvider::OpencodeZen
             | ApiProvider::WanjieArk
     ) {
         return false;

@@ -5,6 +5,10 @@ import {
   AtSign,
   ArrowLeft,
   Bot,
+  GitCompareArrows,
+  MessageSquarePlus,
+  ScrollText,
+  Settings,
   Brain,
   Check,
   ChevronDown,
@@ -30,6 +34,7 @@ import {
   Sparkles,
   Square,
   Terminal,
+  Trash2,
   Volume2,
   WandSparkles,
   X,
@@ -52,7 +57,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { apiClient } from '@/api/client'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
 import type { AgentMode, PermissionMode, ProviderInfo, ProviderModel, TaskProgressAttachment, ThreadGoal } from '@/api/types'
@@ -231,6 +235,15 @@ const BASE_MENTION_ITEMS: MentionItem[] = [
   { label: 'Terminal', insert: '@terminal', hint: 'Use recent terminal output', icon: Terminal },
 ]
 
+/**
+ * Codex-style slash commands — typed as the very first thing in the input
+ * ("/rev…" filters). Pure UI actions: they never reach the model.
+ */
+function slashQueryFrom(value: string): string | null {
+  const m = value.match(/^\/([a-z0-9-]*)$/i)
+  return m ? m[1].toLowerCase() : null
+}
+
 function formatTime(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60)
   const s = totalSeconds % 60
@@ -369,6 +382,9 @@ export function Composer({
   const [mentionQuery, setMentionQuery] = useState('')
   const [mentionIndex, setMentionIndex] = useState(0)
   const [mentionLoading, setMentionLoading] = useState(false)
+  const [slashOpen, setSlashOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
+  const [slashIndex, setSlashIndex] = useState(0)
   const [isPhoneViewport, setIsPhoneViewport] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -499,7 +515,9 @@ export function Composer({
     ? enabledProviders.find((provider) => provider.id === mobileModelProviderId)
     : undefined
   const mobileModelOptions = mobileModelProviderId ? modelsCache[mobileModelProviderId] : undefined
-  const activePermissionMeta = PERMISSION_META[permission]
+  // Backend data (or a half-working mock) can yield a mode outside the
+  // registry — fall back instead of white-screening the whole composer.
+  const activePermissionMeta = PERMISSION_META[permission] ?? PERMISSION_META.ask
   const ActivePermissionIcon = activePermissionMeta.icon
 
   const filteredMentionItems = useMemo(() => {
@@ -509,6 +527,22 @@ export function Composer({
       return text.includes(mentionQuery)
     })
   }, [mentionItems, mentionQuery])
+
+  const slashCommands = useMemo(() => [
+    { name: 'new', label: copy('新会话', 'New chat'), hint: copy('开始一个新的对话', 'Start a new chat'), icon: MessageSquarePlus, action: 'new' as const },
+    { name: 'clear', label: copy('清空对话', 'Clear chat'), hint: copy('清空当前对话的所有消息', 'Clear all messages in this chat'), icon: Trash2, action: 'clear' as const },
+    { name: 'review', label: copy('审阅', 'Review'), hint: copy('在右侧栏打开 Diff 审阅', 'Open diff review in the side panel'), icon: GitCompareArrows, action: 'review' as const },
+    { name: 'terminal', label: copy('终端', 'Terminal'), hint: copy('在右侧栏打开终端', 'Open the terminal panel'), icon: Terminal, action: 'terminal' as const },
+    { name: 'logs', label: copy('日志', 'Logs'), hint: copy('在右侧栏打开日志', 'Open the log viewer'), icon: ScrollText, action: 'logs' as const },
+    { name: 'settings', label: copy('设置', 'Settings'), hint: copy('打开设置', 'Open settings'), icon: Settings, action: 'settings' as const },
+  ], [locale]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashQuery) return slashCommands
+    return slashCommands.filter((cmd) =>
+      `${cmd.name} ${cmd.label} ${cmd.hint}`.toLowerCase().includes(slashQuery),
+    )
+  }, [slashCommands, slashQuery])
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -535,7 +569,7 @@ export function Composer({
       try {
         const info = await apiClient.getPermission()
         if (cancelled) return
-        setPermission(info.mode)
+        if (info.mode && PERMISSION_META[info.mode as PermissionMode]) setPermission(info.mode)
         const modes = info.available_modes.filter((mode): mode is PermissionMode =>
           mode === 'auto' || mode === 'ask' || mode === 'bypass',
         )
@@ -714,6 +748,16 @@ export function Composer({
     const trimmed = value.trim()
     if ((!trimmed && attachments.length === 0) || disabled || uploading) return
 
+    // A bare "/cmd" is a slash command, not a prompt — run it and return.
+    const bareCommand = slashQueryFrom(trimmed)
+    if (bareCommand !== null) {
+      const cmd = slashCommands.find((c) => c.name === bareCommand)
+      if (cmd) {
+        executeSlash(cmd)
+        return
+      }
+    }
+
     let finalText = trimmed
 
     if (attachments.length > 0) {
@@ -786,6 +830,36 @@ export function Composer({
     })
   }
 
+  const executeSlash = (cmd: (typeof slashCommands)[number]) => {
+    setSlashOpen(false)
+    setValue('')
+    if (sessionId) saveDraft(sessionId, '')
+    const app = useAppStore.getState()
+    const session = useSessionStore.getState()
+    switch (cmd.action) {
+      case 'new':
+        void session.createSession()
+        break
+      case 'clear':
+        if (session.activeSessionId && confirm(copy('清空当前对话的所有消息？', 'Clear all messages in this chat?'))) {
+          session.clearMessages(session.activeSessionId)
+        }
+        break
+      case 'review':
+        app.setRightPanelTab('review')
+        break
+      case 'terminal':
+        app.setRightPanelTab('terminal')
+        break
+      case 'logs':
+        app.setRightPanelTab('logs')
+        break
+      case 'settings':
+        app.setSettingsOpen(true)
+        break
+    }
+  }
+
   const triggerMention = () => {
     const ta = taRef.current
     if (!ta) return
@@ -814,6 +888,15 @@ export function Composer({
     setValue(nextValue)
     saveDraft(sessionId, nextValue)
     updateMentionState(nextValue, cursor)
+    const query = slashQueryFrom(nextValue)
+    if (query !== null) {
+      setMentionOpen(false)
+      setSlashQuery(query)
+      setSlashIndex(0)
+      setSlashOpen(true)
+    } else {
+      setSlashOpen(false)
+    }
   }
 
   const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -833,6 +916,29 @@ export function Composer({
     if (e.nativeEvent.isComposing || composingRef.current) {
       if (e.key === 'Enter' && !e.shiftKey) e.preventDefault()
       return
+    }
+
+    if (slashOpen && filteredSlashCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIndex((i) => (i + 1) % filteredSlashCommands.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIndex((i) => (i - 1 + filteredSlashCommands.length) % filteredSlashCommands.length)
+        return
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault()
+        executeSlash(filteredSlashCommands[slashIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashOpen(false)
+        return
+      }
     }
 
     if (mentionOpen && filteredMentionItems.length > 0) {
@@ -1044,6 +1150,41 @@ export function Composer({
     </div>
   ) : null
 
+  const slashMenu = slashOpen ? (
+    <div className="composer-mention-menu absolute bottom-full left-2 z-50 mb-2 max-h-72 w-72 overflow-auto rounded-2xl border border-border bg-popover p-1.5 shadow-lg">
+      <div className="composer-mention-desktop-heading">
+        <span>{copy('命令', 'Commands')}</span>
+      </div>
+      {filteredSlashCommands.length === 0 ? (
+        <div className="px-2 py-2 text-xs text-muted-foreground">{copy('没有匹配的命令', 'No matching command')}</div>
+      ) : (
+        filteredSlashCommands.map((cmd, index) => {
+          const Icon = cmd.icon
+          return (
+            <button
+              key={cmd.name}
+              onMouseEnter={() => setSlashIndex(index)}
+              onClick={() => executeSlash(cmd)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
+                index === slashIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{cmd.label}</span>
+                <span className="block truncate text-[10px] text-muted-foreground">{cmd.hint}</span>
+              </span>
+              <span className="max-w-[116px] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                /{cmd.name}
+              </span>
+            </button>
+          )
+        })
+      )}
+    </div>
+  ) : null
+
   return (
     <div className="composer-shell bg-transparent px-4 pb-4 pt-2">
       <div className="composer-inner mx-auto max-w-4xl">
@@ -1075,6 +1216,9 @@ export function Composer({
           {mentionOpen && isPhoneViewport
             ? createPortal(mentionMenu, document.body)
             : mentionMenu}
+          {slashOpen && isPhoneViewport
+            ? createPortal(slashMenu, document.body)
+            : slashMenu}
 
           {attachments.length > 0 && (
             <div className="flex gap-2 overflow-x-auto px-0.5 pb-0.5">
@@ -1236,37 +1380,29 @@ export function Composer({
 
           <div className="composer-controls flex flex-wrap items-center justify-between gap-2 px-0.5 pt-1">
             <div className="composer-options flex min-w-0 flex-wrap items-center gap-1.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={disabled}
-                    title={copy('添加文件', 'Add file')}
-                  >
-                    <Paperclip className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{copy('添加文件', 'Add file')}</TooltipContent>
-              </Tooltip>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+                title={copy('添加文件', 'Add file')}
+                aria-label={copy('添加文件', 'Add file')}
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className={cn('h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8', mentionOpen && 'bg-accent text-foreground')}
-                    onClick={triggerMention}
-                    disabled={disabled}
-                    title={copy('@ 上下文', '@ Context')}
-                  >
-                    <AtSign className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{copy('@ 上下文', '@ Context')}</TooltipContent>
-              </Tooltip>
+              <Button
+                size="icon"
+                variant="ghost"
+                className={cn('h-11 w-11 rounded-xl text-muted-foreground md:h-8 md:w-8', mentionOpen && 'bg-accent text-foreground')}
+                onClick={triggerMention}
+                disabled={disabled}
+                title={copy('@ 上下文', '@ Context')}
+                aria-label={copy('@ 上下文', '@ Context')}
+              >
+                <AtSign className="h-4 w-4" />
+              </Button>
 
               {/* Mobile work settings use a bottom sheet. Radix submenus open
                   sideways, which is reliable with a mouse but can be clipped
@@ -1889,63 +2025,46 @@ export function Composer({
                 </span>
               )}
               {onToggleVoiceCall && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="icon"
-                      variant={conversationState !== 'idle' ? 'destructive' : 'outline'}
-                      className={cn(
-                        'h-8 w-8 rounded-xl',
-                        conversationState === 'connecting' && 'bg-primary text-white hover:bg-primary/90',
-                        conversationState === 'listening' && 'bg-emerald-500 text-white hover:bg-emerald-600',
-                        conversationState === 'speaking' && 'bg-blue-500 text-white hover:bg-blue-600',
-                        (conversationState === 'transcribing' || conversationState === 'thinking') &&
-                          'bg-amber-500 text-white hover:bg-amber-600',
-                        (conversationState === 'listening' || conversationState === 'speaking') && 'animate-pulse',
-                      )}
-                      onClick={() => void onToggleVoiceCall()}
-                      disabled={voiceCallLoading}
-                      title={
-                        conversationState === 'listening'
-                          ? copy('聆听中…点击结束', 'Listening… click to stop')
-                          : conversationState === 'transcribing'
-                            ? copy('语音识别中…', 'Transcribing…')
-                            : conversationState === 'thinking'
-                              ? copy('AI 思考中…', 'AI is thinking…')
-                              : conversationState === 'speaking'
-                                ? copy('AI 播报中…点击打断', 'Speaking… click to interrupt')
-                                : copy('开始语音对话', 'Start voice chat')
-                      }
-                    >
-                      {conversationState === 'connecting' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : conversationState === 'listening' ? (
-                        <Mic className="h-3.5 w-3.5" />
-                      ) : conversationState === 'transcribing' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : conversationState === 'thinking' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : conversationState === 'speaking' ? (
-                        <Volume2 className="h-3.5 w-3.5" />
-                      ) : (
-                        <PhoneCall className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {conversationState === 'connecting'
-                      ? copy('连接语音服务中…', 'Connecting to voice service…')
-                      : conversationState === 'listening'
+            <Button
+                  size="icon"
+                  variant={conversationState !== 'idle' ? 'destructive' : 'outline'}
+                  className={cn(
+                    'h-8 w-8 rounded-xl',
+                    conversationState === 'connecting' && 'bg-primary text-white hover:bg-primary/90',
+                    conversationState === 'listening' && 'bg-emerald-500 text-white hover:bg-emerald-600',
+                    conversationState === 'speaking' && 'bg-blue-500 text-white hover:bg-blue-600',
+                    (conversationState === 'transcribing' || conversationState === 'thinking') &&
+                      'bg-amber-500 text-white hover:bg-amber-600',
+                    (conversationState === 'listening' || conversationState === 'speaking') && 'animate-pulse',
+                  )}
+                  onClick={() => void onToggleVoiceCall()}
+                  disabled={voiceCallLoading}
+                  title={
+                    conversationState === 'listening'
                       ? copy('聆听中…点击结束', 'Listening… click to stop')
                       : conversationState === 'transcribing'
                         ? copy('语音识别中…', 'Transcribing…')
                         : conversationState === 'thinking'
                           ? copy('AI 思考中…', 'AI is thinking…')
                           : conversationState === 'speaking'
-                            ? copy('AI 播报中…说话可打断', 'Speaking… talk to interrupt')
-                            : copy('开始语音对话', 'Start voice chat')}
-                  </TooltipContent>
-                </Tooltip>
+                            ? copy('AI 播报中…点击打断', 'Speaking… click to interrupt')
+                            : copy('开始语音对话', 'Start voice chat')
+                  }
+                >
+                  {conversationState === 'connecting' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : conversationState === 'listening' ? (
+                    <Mic className="h-3.5 w-3.5" />
+                  ) : conversationState === 'transcribing' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : conversationState === 'thinking' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : conversationState === 'speaking' ? (
+                    <Volume2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <PhoneCall className="h-3.5 w-3.5" />
+                  )}
+                </Button>
               )}
               <Button
                 size="icon"

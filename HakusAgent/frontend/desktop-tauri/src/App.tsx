@@ -54,6 +54,42 @@ function App() {
     if (next && isPhoneViewport()) setSidebar(false)
   }
 
+  // Codex-style global keyboard shortcuts. Meta on macOS, Ctrl elsewhere.
+  // Esc interrupts the in-flight turn (same key the composer uses to close
+  // its mention menu — that path stopPropagation()s, and Esc here is
+  // ignored while the user is typing in an editable field).
+  useEffect(() => {
+    if (IS_ANDROID) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      const key = e.key.toLowerCase()
+      if (mod && key === 'b') {
+        e.preventDefault()
+        toggleSidebar()
+      } else if (mod && key === 'j') {
+        e.preventDefault()
+        toggleRightPanel()
+      } else if (mod && key === ',') {
+        e.preventDefault()
+        useAppStore.getState().setSettingsOpen(!useAppStore.getState().settingsOpen)
+      } else if (mod && key === 'o') {
+        e.preventDefault()
+        void useSessionStore.getState().createSession()
+      } else if (key === 'escape' && !mod && !e.shiftKey && !e.altKey) {
+        const target = e.target as HTMLElement | null
+        if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+        if (useAppStore.getState().settingsOpen) return
+        const { streamingAbort } = useSessionStore.getState()
+        if (streamingAbort) {
+          e.preventDefault()
+          streamingAbort.abort()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const loadSessions = useSessionStore((s) => s.loadFromServer)
   const migrateSessions = useSessionStore((s) => s.migrateFromLocalStorage)
   const loadSettings = useSettingsStore((s) => s.load)

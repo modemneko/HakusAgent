@@ -79,7 +79,11 @@ const DialogContent = React.forwardRef<
       data-hakus-overlay="dialog-content"
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+      {/* Radix auto-focuses the first focusable element (= this close button)
+          on open, so any always-on focus ring here lights up a box around the
+          X the moment a dialog appears. Keep the button visually quiet on
+          focus; hover is the affordance. */}
+      <DialogPrimitive.Close className="dialog-close absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:opacity-100 disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

@@ -14,7 +14,15 @@ interface ModelInfo {
 }
 
 export type { AgentMode }
-export type RightPanelTab = 'review' | 'terminal' | 'preview' | 'logs' | 'fleet' | 'session_log'
+export type RightPanelTab = 'review' | 'terminal' | 'logs' | 'session_log' | 'artifact'
+
+/** A document/artifact produced in AI output, opened in the right panel. */
+export interface RightPanelArtifact {
+  title: string
+  content: string
+  /** Fence language of the source block ('' for plain text). */
+  language: string
+}
 
 interface AppStore {
   // Sidebar
@@ -22,12 +30,15 @@ interface AppStore {
   toggleSidebar: () => void
   setSidebar: (open: boolean) => void
 
-  // Right panel (Codex-style review/terminal/preview pane)
+  // Right panel (Codex-style review/terminal pane + opened artifacts)
   rightPanelOpen: boolean
   rightPanelTab: RightPanelTab
+  /** Last artifact opened from AI output; shown in the 'artifact' tab. */
+  rightPanelArtifact: RightPanelArtifact | null
   toggleRightPanel: () => void
   setRightPanelOpen: (open: boolean) => void
   setRightPanelTab: (tab: RightPanelTab) => void
+  openRightPanelArtifact: (artifact: RightPanelArtifact) => void
 
   // Agent mode (Work = swift, Code = deep. Fleet retired from UI but
   // type kept for backward compat with old session_log entries.)
@@ -169,6 +180,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   rightPanelOpen: readRightPanelOpen(),
   rightPanelTab: 'review',
+  rightPanelArtifact: null,
   toggleRightPanel: () => {
     const next = !get().rightPanelOpen
     writeRightPanelOpen(next)
@@ -179,6 +191,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ rightPanelOpen: open })
   },
   setRightPanelTab: (tab) => set({ rightPanelTab: tab, rightPanelOpen: true }),
+  openRightPanelArtifact: (artifact) =>
+    set({ rightPanelArtifact: artifact, rightPanelTab: 'artifact', rightPanelOpen: true }),
 
   agentMode: readAgentMode(),
   setAgentMode: (mode) => {

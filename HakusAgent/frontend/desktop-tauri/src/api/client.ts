@@ -474,7 +474,17 @@ export class HakusAIClient {
       }
     }
 
-    const detail = body?.detail || body?.error || body?.message || ''
+    // Rust Runtime returns `{ error: { message, status } }`; the Python
+    // backend returns `{ detail }` (string or FastAPI validation list).
+    // Flatten every shape to a readable string — a bare object here is what
+    // produced "[object Object]" toasts.
+    const rawDetail = body?.detail ?? body?.error ?? body?.message ?? ''
+    const detail =
+      typeof rawDetail === 'string'
+        ? rawDetail
+        : rawDetail && typeof rawDetail === 'object'
+          ? String((rawDetail as { message?: unknown }).message ?? JSON.stringify(rawDetail))
+          : String(rawDetail)
     throw new HakusAIError(`${fallbackMsg}: ${res.status} ${detail}`.trim())
   }
 
@@ -1920,6 +1930,20 @@ export class HakusAIClient {
     const turnId = started?.turn?.id
     if (!turnId) throw new HakusAIError('Runtime did not return a turn id')
 
+    // Aborting the SSE fetch only disconnects the reader — the Runtime keeps
+    // executing the turn server-side. Fire the interrupt endpoint when the
+    // UI aborts (stop button, rewind, voice interruption) so the turn is
+    // actually cancelled. Best-effort: errors are swallowed.
+    const interruptOnAbort = () => {
+      void this.runtimeFetch(
+        `/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/interrupt`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      ).catch((error) => {
+        console.warn('[runtime] turn interrupt failed:', error)
+      })
+    }
+    signal?.addEventListener('abort', interruptOnAbort, { once: true })
+
     const res = await this.runtimeFetch(
       `/threads/${encodeURIComponent(threadId)}/events?since_seq=0`,
       { headers: { Accept: 'text/event-stream' }, signal },
@@ -1978,6 +2002,7 @@ export class HakusAIClient {
         }
       }
     } finally {
+      signal?.removeEventListener('abort', interruptOnAbort)
       reader.releaseLock()
     }
   }
@@ -2758,6 +2783,28 @@ export class HakusAIClient {
     }, 10000)
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/git/stage`, 'Stage path failed')
+    }
+  }
+
+  /** POST /api/git/discard — discard local changes to a path (git checkout -- / git clean -f). */
+  async discardPath(path: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const url = `${this.baseUrl}/v1/workspace/discard`
+      const res = await this.runtimeFetch('/workspace/discard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (!res.ok) await this._throwForResponse(res, url, 'Discard Runtime git path failed')
+      return
+    }
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/git/discard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    }, 10000)
+    if (!res.ok) {
+      await this._throwForResponse(res, `${this.baseUrl}/api/git/discard`, 'Discard path failed')
     }
   }
 

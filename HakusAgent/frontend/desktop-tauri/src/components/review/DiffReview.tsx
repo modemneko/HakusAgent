@@ -11,6 +11,7 @@ import {
   Undo2,
   Loader2,
   FolderGit2,
+  Trash2,
 } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import type { GitStatusResponse, GitDiffResponse, GitFileChange } from '@/api/types'
@@ -157,6 +158,20 @@ export function DiffReview() {
     }
   }
 
+  const handleDiscard = async (path: string) => {
+    if (!confirm(copy('丢弃对 ' + path + ' 的所有未提交更改？此操作不可撤销。', 'Discard all uncommitted changes to ' + path + '? This cannot be undone.'))) return
+    setStaging(path)
+    try {
+      await apiClient.discardPath(path)
+      await refresh()
+      toast.success(copy('已丢弃', 'Discarded') + ' ' + path)
+    } catch (e: any) {
+      toast.error(copy('丢弃失败：', 'Discard failed: ') + (e?.message || e))
+    } finally {
+      setStaging(null)
+    }
+  }
+
   const toggleFile = (path: string) => {
     setExpandedFiles((prev) => {
       const next = new Set(prev)
@@ -266,6 +281,24 @@ export function DiffReview() {
                     >
                       {f.path}
                     </span>
+                    {/* Discard button (unstaged scope only) */}
+                    {scope !== 'staged' && (
+                      <button
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void handleDiscard(f.path)
+                        }}
+                        disabled={staging === f.path}
+                        title={copy('丢弃更改', 'Discard changes')}
+                      >
+                        {staging === f.path ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                      </button>
+                    )}
                     {/* Stage / unstage button */}
                     {f.status !== 'untracked' && (
                       <button

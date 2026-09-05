@@ -1,5 +1,5 @@
-import { memo, useState } from 'react'
-import { Check, Copy, RefreshCw, User, Sparkles, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { memo, useEffect, useRef, useState } from 'react'
+import { Check, Copy, PanelRight, RefreshCw, User, Sparkles, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -10,6 +10,8 @@ import { ReasoningLogItem } from './ReasoningLogItem'
 import { CodeBlock } from './CodeBlock'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/store/settings'
+import { useAppStore } from '@/store/app'
+import { useI18n } from '@/lib/i18n'
 
 interface MessageBubbleProps {
   message: ChatMessage
@@ -44,6 +46,8 @@ export const MessageBubble = memo(function MessageBubble({
   onAnswer,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false)
+  const openArtifact = useAppStore((s) => s.openRightPanelArtifact)
+  const { t } = useI18n()
   const showReasoning = useSettingsStore((s) => s.showReasoning)
   const fontSize = useSettingsStore((s) => s.fontSize)
   const isUser = message.role === 'user'
@@ -137,6 +141,23 @@ export const MessageBubble = memo(function MessageBubble({
             )}
             style={{ fontSize: `${fontSize}px` }}
           >
+            {isAssistant && segmentText.length > 200 && (
+              <button
+                type="button"
+                onClick={() =>
+                  openArtifact({ title: t('artifactTab'), content: segmentText, language: 'markdown' })
+                }
+                className={cn(
+                  'mb-1 ml-auto mr-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground',
+                  'opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover:opacity-100',
+                )}
+                title={t('openInPanel')}
+                aria-label={t('openInPanel')}
+              >
+                <PanelRight className="h-3 w-3" />
+                {t('openInPanel')}
+              </button>
+            )}
             {isAssistant ? (
               <div className="markdown-body">
                 <ReactMarkdown
@@ -300,6 +321,7 @@ interface QuestionCardProps {
 function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
   const [selected, setSelected] = useState<string | null>(question.selected || null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   const handleConfirm = () => {
     if (!selected || isSubmitting) return
@@ -307,11 +329,47 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
     onAnswer?.(messageId, selected)
   }
 
+  // The hint line advertises keyboard selection — make it true: number keys
+  // jump to an option, ArrowUp/Down cycle, Enter confirms, Tab (shift for
+  // reverse) moves the selection like Codex's option cards.
+  const handleCardKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (question.answered || isSubmitting) return
+    const count = question.options.length
+    if (!count) return
+    const current = selected ? question.options.indexOf(selected) : -1
+    if (/^[1-9]$/.test(e.key)) {
+      const idx = Number(e.key) - 1
+      if (idx < count) {
+        e.preventDefault()
+        setSelected(question.options[idx])
+      }
+      return
+    }
+    if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+      e.preventDefault()
+      setSelected(question.options[(current + 1 + count) % count])
+      return
+    }
+    if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+      e.preventDefault()
+      setSelected(question.options[(current - 1 + count) % count])
+      return
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      if (selected) handleConfirm()
+    }
+  }
+
   const handleSkip = () => {
     if (isSubmitting) return
     setIsSubmitting(true)
     onAnswer?.(messageId, '')
   }
+
+  useEffect(() => {
+    if (!question.answered) cardRef.current?.focus()
+  }, [question.answered])
 
   if (question.answered) {
     return (
@@ -332,7 +390,12 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
   }
 
   return (
-    <div className="w-full overflow-hidden rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4">
+    <div
+      ref={cardRef}
+      tabIndex={0}
+      onKeyDown={handleCardKeyDown}
+      className="w-full overflow-hidden rounded-2xl border border-primary/30 bg-primary/10 px-5 py-4 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+    >
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
         <HelpCircle className="h-4 w-4" />
         <span>羽汐想问</span>
@@ -369,7 +432,7 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
       </div>
 
       <div className="mt-3 flex items-center justify-between border-t border-border/30 pt-3">
-        <span className="text-xs text-muted-foreground">使用 Tab / 上下键选择，回车或空格选中</span>
+        <span className="text-xs text-muted-foreground">数字键 / 上下键选择，回车确认，Tab 切换</span>
         <div className="flex items-center gap-2">
           <Button
             size="sm"
