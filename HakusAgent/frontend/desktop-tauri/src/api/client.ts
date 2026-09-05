@@ -87,6 +87,15 @@ export function toRuntimeSkillMentions(message: string): string {
   )
 }
 
+/**
+ * UI agent modes (swift = Work, deep = Code) map onto the Runtime's
+ * plan/act/operate vocabulary. swift -> act, deep -> operate.
+ */
+function runtimeModeFromAgentMode(mode: string): string {
+  if (mode === 'deep') return 'operate'
+  return 'act'
+}
+
 export class HakusAIError extends Error {
   constructor(message: string, public code?: string) {
     super(message)
@@ -1918,7 +1927,9 @@ export class HakusAIClient {
       body: JSON.stringify({
         prompt: runtimePrompt,
         ...(provider ? { model: provider } : {}),
-        ...(runMode ? { mode: runMode } : {}),
+        // The Runtime speaks plan/act/operate — the UI's swift/deep map onto
+        // act (daily work) and operate (full power) respectively.
+        ...(runMode ? { mode: runtimeModeFromAgentMode(runMode) } : {}),
         ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       }),
       signal,

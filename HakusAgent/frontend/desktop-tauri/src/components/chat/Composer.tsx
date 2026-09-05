@@ -498,10 +498,21 @@ export function Composer({
   const currentProviderLabel = currentProvider
     ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
     : defaultModel || "No model"
+  // Only providers the user actually set up (key saved, models chosen, or
+  // currently default) belong in the pickers — the raw vendor catalog with
+  // its dozens of untouched entries is noise.
+  const usableProviders = useMemo(() => {
+    const usable = providers.filter((provider) =>
+      provider.enabled !== false &&
+      (provider.is_default || provider.has_api_key || (provider.configured_models?.length ?? 0) > 0 || provider.is_custom),
+    )
+    return usable.length > 0 ? usable : providers.filter((provider) => provider.enabled !== false)
+  }, [providers])
+
   const orderedProviderGroups = useMemo(() => {
     const preferred = ['国内服务', '国际服务', '聚合 / 中转', '本地 / 自托管', '自定义模型商', '自定义', '其他']
     const grouped = new Map<string, ProviderInfo[]>()
-    providers.filter((provider) => provider.enabled !== false).forEach((provider) => {
+    usableProviders.forEach((provider) => {
       const group = provider.group || '其他'
       if (!grouped.has(group)) grouped.set(group, [])
       grouped.get(group)!.push(provider)
@@ -509,7 +520,7 @@ export function Composer({
     const order = [...preferred, ...Array.from(grouped.keys())]
       .filter((group, index, all) => all.indexOf(group) === index)
     return order.filter((group) => grouped.has(group)).map((group) => ({ group, items: grouped.get(group)! }))
-  }, [providers])
+  }, [usableProviders])
   const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled !== false), [providers])
   const mobileModelProvider = mobileModelProviderId
     ? enabledProviders.find((provider) => provider.id === mobileModelProviderId)
@@ -996,6 +1007,17 @@ export function Composer({
   const ensureProviderModels = async (providerId: string) => {
     if (modelsCache[providerId]) return
     const provider = providers.find((item) => item.id === providerId)
+    // The user's 模型列表 (configured_models) is the source of truth. The
+    // live catalog floods the picker with every model the vendor serves —
+    // only hit the network when the user hasn't configured anything.
+    const configured = (provider?.configured_models || []).filter(Boolean)
+    if (configured.length > 0) {
+      setModelsCache((prev) => ({
+        ...prev,
+        [providerId]: Array.from(new Set(configured)).map((id) => ({ id, name: id, owned_by: null })),
+      }))
+      return
+    }
     setModelsLoading(true)
     try {
       const r = await apiClient.listProviderModels(providerId)
@@ -1529,7 +1551,7 @@ export function Composer({
 
                     {mobileSettingsSection === 'model' && (
                       <div className="mobile-settings-list">
-                        {!mobileModelProvider ? enabledProviders.map((provider) => (
+                        {!mobileModelProvider ? usableProviders.map((provider) => (
                           <button
                             type="button"
                             key={provider.id}
