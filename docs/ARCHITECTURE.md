@@ -33,7 +33,8 @@ Runtime 的 `/v1/*` 协议；仅旧 WebUI/兼容开发模式保留 `/api/*` 适�
 | `hakus/` | Python AgentCore、工具、权限、模型、MCP、记忆、会话与编排 |
 | `src/hakusai_server/` | 旧 Python WebUI 兼容服务，不参与 Tauri 发布包 |
 | `HakusAgent/frontend/desktop-tauri/src/` | React UI、Zustand 状态、API 客户端、设置和聊天界面 |
-| `HakusAgent/frontend/desktop-tauri/src-tauri/` | Tauri 生命周期、窗口、托盘和全平台内嵌 Rust Runtime |
+| `HakusAgent/frontend/desktop-tauri/src-tauri/` | Tauri 生命周期、窗口、托盘、单实例锁和全平台内嵌 Rust Runtime |
+| `HakusAgent/frontend/desktop-tauri/public/` | 原生启动 Splash（`splash.html`）与应用图标 |
 | `frontend/terminal/` | Rust HakusCLI、TUI、Runtime API、工具、Skills 和跨平台构建 |
 | `tests/` | Python 单元与集成测试 |
 | `webui/` | 旧 Vue WebUI，不是主桌面入口 |
@@ -102,3 +103,7 @@ Composer 输入 `@` 时同时加载固定上下文、上传文件和已启用 Sk
    误接这些旧入口。
 3. 浏览器预览可通过 `?backend=rust&backendUrl=http://127.0.0.1:48082` 连接独立 Rust
    Runtime，用于不启动 Tauri 的接口回归。
+4. 所有平台的浮层（Dialog、DropdownMenu、Popover、Tooltip）使用 Radix 原生 portal
+   定位；不要重新引入自定义 overlay 根容器，那曾是设置面板/菜单飘移到左上角的根因。
+5. 透明/圆角窗口在 macOS 依赖 `macos-private-api` feature（`tauri.conf.json` 中
+   `macOSPrivateApi: true`）；托盘图标由显式代码创建并受单实例锁保护，避免重复。

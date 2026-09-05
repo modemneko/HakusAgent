@@ -118,11 +118,38 @@ cargo test -p hakus-tui
 cargo test -p hakus-cli
 ```
 
-## 6. 常见修改入口
+## 6. CI 与发布（build-all）
+
+安装包构建只走 `.github/workflows/build-all.yml`：
+
+- 触发：`workflow_dispatch` 手动触发，或推送 `v*` tag。
+- 产物全部上传为 Actions Artifacts，不自动发 Release：桌面端 Windows
+  NSIS/MSI、macOS DMG（x64/arm64）、Linux deb/AppImage、Android APK
+  （arm64/x86_64），以及四端七 target 的 `hakuscli`。
+- 验证修复是否真的进包，以 build-all 的最新 green run 对应的 commit 为准。
+
+历史教训（重复踩过的坑，写死为纪律）：
+
+1. **Tauri 插件版本必须对齐**。npm 端 `@tauri-apps/plugin-*` 与 Rust 端
+   `tauri-plugin-*` crate 的 minor 版本不一致时，Tauri CLI 会在编译前直接报
+   "version mismatched Tauri packages" 退出（build-all #36 即因此 6 个 job 全灭：
+   updater npm 2.10.1 vs crate 2.11.0）。升级任何一侧时必须同步另一侧，并把
+   `package-lock.json` 与 `Cargo.lock` 的变更一起提交。
+2. **macOS 透明/圆角窗口需要私有 API**。`tauri.conf.json` 开启透明窗口后，
+   `Cargo.toml` 中 tauri 必须带 `macos-private-api` feature，同时
+   `macOSPrivateApi: true`；否则 macOS 构建报 E0599（build-all #37）。
+3. **不要重建旁路检查工作流**。轻量 ci-check 类工作流验证不了真实产物，曾造成
+   "检查通过但安装包不含修复"的误判；该工作流已删除，不要为省时间再引入。
+
+## 7. 常见修改入口
 
 | 需求 | 首选位置 |
 | --- | --- |
 | 桌面设置页 | `desktop-tauri/src/components/settings/` |
+| 首启初始化向导 | `desktop-tauri/src/components/FirstRunSetup.tsx` |
+| 启动 Splash（时间轴/光斑动画） | `desktop-tauri/public/splash.html` + `src-tauri/src/lib.rs` 窗口创建 |
+| 弹窗/浮层（Dialog、Dropdown、Tooltip） | `desktop-tauri/src/components/ui/`（Radix 原生 portal） |
+| 单实例锁与托盘 | `desktop-tauri/src-tauri/src/lib.rs`（`tauri-plugin-single-instance`） |
 | 聊天输入和 `@` 菜单 | `desktop-tauri/src/components/chat/Composer.tsx` |
 | 桌面 API 类型/请求 | `desktop-tauri/src/api/types.ts`、`client.ts` |
 | Rust Runtime API | `frontend/terminal/crates/tui/src/runtime_api.rs` |
@@ -130,7 +157,7 @@ cargo test -p hakus-cli
 | Rust TUI | `frontend/terminal/crates/tui/src/tui/` |
 | Skills 生命周期 | Python `skills.py`；Rust `crates/tui/src/skills/` |
 
-## 7. 变更纪律
+## 8. 变更纪律
 
 - API 增加或响应形状改变时，更新 Rust Runtime API 版本和桌面
   `EXPECTED_BACKEND_API_VERSION_INT`。
@@ -138,3 +165,6 @@ cargo test -p hakus-cli
 - 新功能优先接入 Tauri 主界面，不要默认修改 `webui/` 或 `editor/`。
 - 用户数据写入 `~/.hakus/` 或项目 `.hakus/`，不要写入源码资源目录。
 - 第三方 Skill、模型和大型资产不应作为仓库默认内容提交。
+- 修复直接提交 master，不长期挂 `fix/**` 分支；不另建旁路检查工作流，安装包验证以
+  `build-all` 为准。
+- 不要把一次性调试脚本、AI 会话状态文件（`.task_board.json` 等）提交进仓库。

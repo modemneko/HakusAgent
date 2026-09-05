@@ -67,8 +67,9 @@ HakusAgent 是一个多端 AI Agent 平台，用户可以根据使用场景选�
 | macOS Apple Silicon | DMG、应用程序 |
 | macOS Intel | DMG、应用程序 |
 | Linux | deb、AppImage |
+| Android | APK（arm64 真机 / x86_64 模拟器） |
 
-Linux 的 AppImage 只适用于 HakusAI 桌面端。
+Linux 的 AppImage 只适用于 HakusAI 桌面端。桌面端与 Android 端首次启动都会进入初始化设置向导（选择模型供应商、配置 API Key），配置完成后才能正常对话。
 
 ### 4.2 HakusCLI
 
@@ -121,7 +122,7 @@ HakusCLI 的数据位置遵循以下规则：
 | CLI Skills 和插件 | [SKILLS.md](../frontend/terminal/docs/SKILLS.md)、[PLUGINS.md](../frontend/terminal/docs/PLUGINS.md) |
 | 沙箱和授权 | [SANDBOX.md](../frontend/terminal/docs/SANDBOX.md) |
 
-后续用户专题文档将补齐以下目前缺少统一说明的内容：桌面端安装器和卸载数据清理、桌面端后台服务、微信 ClawBot 配置、跨平台故障排查和数据管理。
+后续用户专题文档将补齐以下目前缺少统一说明的内容：卸载数据清理细节、桌面端后台服务、微信 ClawBot 配置、跨平台故障排查和数据管理。
 
 ## 7. 文档状态
 

@@ -106,3 +106,9 @@ config.yaml
 scripts/test_guardian_llm.py
 scripts/test_p3_evolution.py
 scripts/test_p5_guardian_e2e.py
+
+# AI 会话状态文件，勿提交
+.task_board.json
+.workspace_state.json
+.orchestrator-checkpoint.json
+.long_task_context.json
