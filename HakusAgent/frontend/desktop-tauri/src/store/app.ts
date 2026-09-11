@@ -15,6 +15,19 @@ interface ModelInfo {
 
 export type { AgentMode }
 export type RightPanelTab = 'review' | 'terminal' | 'logs' | 'session_log' | 'artifact'
+export type SettingsCategory =
+  | 'general'
+  | 'character'
+  | 'voice'
+  | 'models'
+  | 'workspace-data'
+  | 'tools'
+  | 'skills'
+  | 'mcp'
+  | 'wechat'
+  | 'appearance'
+  | 'tray'
+  | 'about'
 
 /** A document/artifact produced in AI output, opened in the right panel. */
 export interface RightPanelArtifact {
@@ -29,6 +42,9 @@ interface AppStore {
   sidebarOpen: boolean
   toggleSidebar: () => void
   setSidebar: (open: boolean) => void
+  /** Desktop-only preference for the narrow icon rail. Mobile keeps the full drawer. */
+  sidebarCompact: boolean
+  setSidebarCompact: (compact: boolean) => void
 
   // Right panel (Codex-style review/terminal pane + opened artifacts)
   rightPanelOpen: boolean
@@ -56,7 +72,9 @@ interface AppStore {
 
   // Settings dialog
   settingsOpen: boolean
+  settingsInitialCategory: SettingsCategory
   setSettingsOpen: (open: boolean) => void
+  setSettingsInitialCategory: (category: SettingsCategory) => void
 
   // Server-side info
   model: ModelInfo | null
@@ -71,6 +89,7 @@ interface AppStore {
 }
 
 const SIDEBAR_KEY = 'hakusai:sidebar-open'
+const SIDEBAR_COMPACT_KEY = 'hakusai:sidebar-compact'
 const RIGHT_PANEL_KEY = 'hakusai:right-panel-open'
 const AGENT_MODE_KEY = 'hakusai:agent-mode'
 const REASONING_EFFORTS_KEY = 'hakusai:reasoning-efforts'
@@ -89,6 +108,25 @@ function writeSidebarOpen(open: boolean) {
   if (typeof window === 'undefined') return
   try {
     localStorage.setItem(SIDEBAR_KEY, String(open))
+  } catch {
+    /* ignore */
+  }
+}
+
+function readSidebarCompact(): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    const raw = localStorage.getItem(SIDEBAR_COMPACT_KEY)
+    return raw === null ? true : raw === 'true'
+  } catch {
+    return true
+  }
+}
+
+function writeSidebarCompact(compact: boolean) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(SIDEBAR_COMPACT_KEY, String(compact))
   } catch {
     /* ignore */
   }
@@ -177,6 +215,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     writeSidebarOpen(open)
     set({ sidebarOpen: open })
   },
+  sidebarCompact: readSidebarCompact(),
+  setSidebarCompact: (compact) => {
+    writeSidebarCompact(compact)
+    set({ sidebarCompact: compact })
+  },
 
   rightPanelOpen: readRightPanelOpen(),
   rightPanelTab: 'review',
@@ -212,7 +255,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   settingsOpen: false,
+  settingsInitialCategory: 'models',
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsInitialCategory: (category) => set({ settingsInitialCategory: category }),
 
   model: null,
   characterName: 'HakusAI',

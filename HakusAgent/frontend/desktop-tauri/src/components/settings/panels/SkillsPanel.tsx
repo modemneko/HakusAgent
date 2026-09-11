@@ -16,7 +16,6 @@ import type { SkillInfo } from '@/api/types'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
@@ -144,7 +143,13 @@ export function SkillsPanel() {
   }
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-skills-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>Skills</h2>
+          <p>{copy('安装、启用和管理可复用的技能扩展。', 'Install, enable, and manage reusable skill extensions.')}</p>
+        </div>
+      </div>
       {outdatedError && (
         <BackendOutdatedBanner
           message={outdatedError.message}
@@ -153,7 +158,7 @@ export function SkillsPanel() {
         />
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="settings-actions settings-refresh-actions">
         <div>
           <h3 className="text-sm font-semibold">Skills</h3>
           <p className="mt-1 text-[11px] text-muted-foreground">
@@ -166,9 +171,7 @@ export function SkillsPanel() {
         </Button>
       </div>
 
-      <Separator />
-
-      <div className="space-y-3">
+      <div className="settings-field-group settings-skill-install-group">
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium">{copy('安装来源', 'Install source')}</span>
           <div className="inline-flex rounded-lg bg-muted p-0.5" aria-label={copy('安装范围', 'Install scope')}>
@@ -221,9 +224,7 @@ export function SkillsPanel() {
         </div>
       </div>
 
-      <Separator />
-
-      <div className="relative">
+      <div className="settings-field-group settings-skill-search-group">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={query}
@@ -318,6 +319,6 @@ export function SkillsPanel() {
           <span className="truncate font-mono">{directory}</span>
         </button>
       )}
-    </div>
+    </section>
   )
 }

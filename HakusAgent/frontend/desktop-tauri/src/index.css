@@ -84,6 +84,7 @@
        controls. */
     --titlebar-total: calc(3.25rem + env(safe-area-inset-top));
     --sidebar-width: 16rem;
+    --sidebar-compact-width: 4.25rem;
     --right-panel-width: 26.25rem;
     --statusbar-height: 1.625rem;
 
@@ -1965,6 +1966,16 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.75rem !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='m3.25 5.25 3.75 3.5 3.75-3.5' stroke='%23909098' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.8rem center !important;
+  background-size: 0.875rem 0.875rem !important;
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -2167,6 +2178,55 @@ select:focus {
   box-shadow: 0 12px 34px hsl(240 20% 3% / 0.18), 0 0 0 3px hsl(var(--primary) / 0.13), inset 0 1px 0 hsl(var(--foreground) / 0.08) !important;
 }
 
+/* A tiny CSS-only status signal keeps the live composer responsive. The
+ * exported Remotion composition is intentionally not loaded into the app. */
+.long-running-task-visual {
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 12px;
+  height: 14px;
+  opacity: 0.42;
+}
+
+.long-running-task-visual > span {
+  display: block;
+  width: 2px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--long-run-accent, hsl(var(--primary)));
+  transform-origin: bottom;
+}
+
+.long-running-task-visual.is-active {
+  opacity: 0.9;
+}
+
+.long-running-task-visual.is-active > span {
+  animation: long-running-pulse 1.15s var(--motion-ease-out, cubic-bezier(0.22, 1, 0.36, 1)) infinite alternate;
+}
+
+.long-running-task-visual.is-active > span:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.long-running-task-visual.is-active > span:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+@keyframes long-running-pulse {
+  from { transform: scaleY(0.55); }
+  to { transform: scaleY(1.7); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .long-running-task-visual.is-active > span {
+    animation: none;
+    transform: scaleY(1);
+  }
+}
+
 .composer-options > button,
 .composer-actions > button {
   border-radius: 999px !important;
@@ -2180,7 +2240,7 @@ select:focus {
 
 .composer-options > button:active,
 .composer-actions > button:active {
-  transform: scale(0.94);
+  transform: none !important;
 }
 
 /* Review / terminal surfaces */
@@ -2593,6 +2653,10 @@ select:focus-visible {
     min-height: 0;
   }
 
+  .model-provider-layout {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
   .model-provider-form {
     max-height: 55vh;
     overflow-y: auto;
@@ -2716,6 +2780,12 @@ select:focus-visible {
   min-height: 0;
 }
 
+.settings-group-stack {
+  display: grid;
+  gap: 2.5rem;
+  max-width: 62rem;
+}
+
 .settings-dialog-panel > div {
   min-height: 100%;
   box-sizing: border-box;
@@ -2737,9 +2807,9 @@ select:focus-visible {
 }
 
 .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 {
-  height: 100% !important;
-  min-height: 0 !important;
-  overflow: hidden;
+  height: auto !important;
+  min-height: 100% !important;
+  overflow: visible !important;
 }
 
 .model-provider-layout {
@@ -2764,6 +2834,36 @@ select:focus-visible {
   max-height: none !important;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* This block comes after the shared model-surface sizing rules above on
+   purpose. Without the final min-height reset, the provider catalog's
+   min-content height wins over the Grid row and the form never gets a
+   bounded scrollport (scrollTop stays at zero even when the form is long). */
+@media (min-width: 768px) {
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 {
+    display: block;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 > .settings-page-models {
+    display: block;
+    min-height: auto;
+  }
+
+  .settings-dialog-model-panel .model-provider-layout {
+    height: auto !important;
+    flex: 1 1 auto;
+    min-height: 0 !important;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .settings-dialog-model-panel .model-provider-sidebar,
+  .settings-dialog-model-panel .model-provider-form {
+    min-height: 0 !important;
+  }
 }
 
 @media (min-width: 768px) {
@@ -2799,10 +2899,851 @@ select:focus-visible {
   .settings-dialog-panel > div {
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
+
+  /* The model page is a single-column surface on phones. Keep the Radix
+     viewport bounded so it owns the page scrollbar, but let its content grow
+     naturally. The desktop rules intentionally give both columns a fixed
+     height for independent scrollbars; carrying those heights into the
+     stacked mobile layout clips the form after the provider list. */
+  .settings-dialog-model-panel > div,
+  .settings-dialog-model-panel > div > div {
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  .settings-dialog-model-panel > div > div > div,
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] {
+    height: 100% !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 {
+    height: auto !important;
+    min-height: 100%;
+    overflow: visible !important;
+  }
+
+  .settings-dialog-model-panel .model-provider-layout {
+    height: auto !important;
+    min-height: 0 !important;
+    grid-template-rows: auto;
+  }
+
+  .settings-dialog-model-panel .model-provider-sidebar {
+    height: auto !important;
+    display: block;
+  }
+
+  .settings-dialog-model-panel .model-provider-list-scroll {
+    flex: 0 1 auto;
+    max-height: min(42vh, 22rem) !important;
+    overflow-y: auto;
+  }
+
+  .settings-dialog-model-panel .model-provider-form {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .settings-dialog-model-panel [data-radix-scroll-area-viewport] > div > .p-6 > .settings-page-models {
+    display: block;
+    flex: none;
+    min-height: auto;
+  }
 }
 
-.topbar-review-button[class*="bg-accent/60"] {
+/* ========================================================================
+ * Desktop sidebar modes
+ *
+ * The compact rail is a real layout state, not a squeezed copy of the full
+ * sidebar. It keeps a predictable hit area for each action and leaves the
+ * conversation list in the expanded surface where it can be scanned.
+ * ====================================================================== */
+.sidebar-compact-rail {
+  display: none;
+}
+
+/* Sidebar workspace surface
+ *
+ * The expanded rail is intentionally quiet: one action row, one workspace
+ * header, then a single scroll container. Project and conversation hierarchy
+ * comes from spacing and typography rather than heavy cards or blue focus
+ * blocks, which keeps the navigation readable at both desktop and phone
+ * widths.
+ */
+.sidebar-header {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+}
+
+.sidebar-new-button {
+  width: 2.1rem !important;
+  height: 2.1rem !important;
+  border-radius: 0.7rem !important;
+  color: hsl(var(--foreground) / 0.74);
+}
+
+.sidebar-new-button:hover {
   background: hsl(var(--foreground) / 0.07) !important;
+  color: hsl(var(--foreground));
+}
+
+.sidebar-workspace-toolbar {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+}
+
+.sidebar-workspace-label,
+.sidebar-toolbar-actions,
+.sidebar-workspace-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.sidebar-workspace-label {
+  gap: 0.25rem;
+  color: hsl(var(--foreground) / 0.82);
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-toolbar-actions {
+  gap: 0.1rem;
+}
+
+.sidebar-toolbar-button,
+.sidebar-search-clear {
+  display: inline-flex;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.58rem;
+  color: hsl(var(--muted-foreground) / 0.8);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.sidebar-toolbar-button:hover,
+.sidebar-toolbar-button.is-active,
+.sidebar-search-clear:hover {
+  background: hsl(var(--foreground) / 0.065);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-search-row {
+  display: flex;
+  min-height: 2.35rem;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.75rem 0.45rem;
+  padding: 0 0.5rem;
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  border-radius: 999px;
+  background: hsl(var(--card) / 0.68);
+  color: hsl(var(--muted-foreground));
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.06), 0 4px 14px hsl(240 20% 3% / 0.06);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.sidebar-search-row input {
+  min-width: 0;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.sidebar-search-row:focus-within {
+  border-color: hsl(var(--foreground) / 0.22);
+  background: hsl(var(--card) / 0.82);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.07), 0 0 0 2px hsl(var(--foreground) / 0.045), 0 5px 16px hsl(240 20% 3% / 0.08);
+}
+
+.sidebar-search-row input:focus,
+.sidebar-search-row input:focus-visible {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.sidebar-content-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.4rem 0.7rem 1rem;
+  scrollbar-gutter: stable;
+}
+
+/* Keep global navigation reachable when the conversation list is empty or
+ * long. The list scrolls independently; settings stays anchored to the rail. */
+.sidebar-footer-action {
+  flex: 0 0 auto;
+  padding: 0.5rem 0.7rem max(0.65rem, env(safe-area-inset-bottom));
+  background: hsl(var(--card) / 0.18);
+}
+
+.sidebar-settings-row {
+  display: flex;
+  width: 100%;
+  min-height: 2.35rem;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 0.7rem;
+  padding: 0 0.7rem;
+  color: hsl(var(--muted-foreground) / 0.82);
+  font-size: 0.78rem;
+  text-align: left;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.sidebar-settings-row:hover {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-settings-row:active {
+  background: hsl(var(--foreground) / 0.09);
+}
+
+/* Workspace launchpad — the first useful action sits in the content area,
+ * with the same quiet rounded material as the rest of the app. */
+.workspace-launchpad {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workspace-launchpad-inner {
+  padding: clamp(1rem, 4vw, 3rem) 0;
+}
+
+.workspace-launchpad-mark {
+  border: 1px solid hsl(var(--primary) / 0.24);
+  background: hsl(var(--primary) / 0.11);
+  color: hsl(var(--primary));
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08), 0 10px 28px hsl(var(--primary) / 0.08);
+}
+
+.workspace-launchpad-pill {
+  display: inline-flex;
+  min-height: 2.45rem;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid hsl(var(--foreground) / 0.13);
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+  background: hsl(var(--card) / 0.7);
+  color: hsl(var(--foreground) / 0.88);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.06), 0 5px 16px hsl(240 20% 3% / 0.06);
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.workspace-launchpad-pill:hover {
+  border-color: hsl(var(--foreground) / 0.22);
+  background: hsl(var(--card) / 0.9);
+}
+
+.workspace-launchpad-pill:active {
+  transform: scale(0.98);
+}
+
+.workspace-launchpad-mode-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.58);
+  box-shadow: 0 0 0 3px hsl(var(--muted-foreground) / 0.09);
+}
+
+.workspace-launchpad-mode-dot.is-active {
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+}
+
+.workspace-launchpad-composer {
+  display: block;
+  width: 100%;
+  min-height: 9rem;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  border: 1px solid hsl(var(--foreground) / 0.14);
+  border-radius: 1.35rem;
+  background: hsl(var(--card) / 0.82);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.06), 0 14px 34px hsl(240 20% 3% / 0.1);
+  -webkit-backdrop-filter: blur(20px) saturate(135%);
+  backdrop-filter: blur(20px) saturate(135%);
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.workspace-launchpad-composer:hover {
+  border-color: hsl(var(--foreground) / 0.23);
+  background: hsl(var(--card) / 0.92);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08), 0 16px 36px hsl(240 20% 3% / 0.13);
+}
+
+.workspace-launchpad-composer:active {
+  transform: scale(0.995);
+}
+
+.workspace-launchpad-composer:focus-visible {
+  outline: 2px solid hsl(var(--foreground) / 0.24);
+  outline-offset: 3px;
+}
+
+.workspace-launchpad-placeholder {
+  display: block;
+  min-height: 5.5rem;
+  padding: 1rem 1.15rem 0.5rem;
+  color: hsl(var(--muted-foreground) / 0.8);
+  font-size: 0.875rem;
+}
+
+.workspace-launchpad-composer:hover .workspace-launchpad-placeholder {
+  color: hsl(var(--foreground) / 0.8);
+}
+
+.workspace-launchpad-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0.65rem 0.65rem 1.15rem;
+  color: hsl(var(--muted-foreground) / 0.7);
+  font-size: 0.6875rem;
+}
+
+.workspace-launchpad-send {
+  display: inline-flex;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: hsl(var(--primary) / 0.9);
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 4px 12px hsl(var(--primary) / 0.16);
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.workspace-launchpad-composer:hover .workspace-launchpad-send {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 5px 14px hsl(var(--primary) / 0.22);
+}
+
+.workspace-launchpad-composer:active .workspace-launchpad-send {
+  transform: scale(0.94);
+}
+
+@media (max-width: 520px) {
+  .workspace-launchpad {
+    align-items: flex-start;
+    padding-top: 12vh;
+  }
+
+  .workspace-launchpad-context {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-launchpad-pill {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.sidebar-workspace-list,
+.sidebar-list-mode {
+  display: grid;
+  gap: 1rem;
+}
+
+.sidebar-workspace-group {
+  min-width: 0;
+}
+
+.sidebar-workspace-heading {
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.15rem 0.2rem 0.35rem;
+}
+
+.sidebar-workspace-new {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  color: hsl(var(--muted-foreground) / 0.72);
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.sidebar-workspace-new:hover {
+  background: hsl(var(--foreground) / 0.07);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-workspace-new:active {
+  transform: scale(0.94);
+}
+
+.sidebar-workspace-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  color: hsl(var(--muted-foreground) / 0.82);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-align: left;
+  text-transform: uppercase;
+  transition: color 150ms ease;
+}
+
+.sidebar-workspace-title:hover,
+.sidebar-workspace-title.is-active {
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.sidebar-workspace-count {
+  color: hsl(var(--muted-foreground) / 0.5);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-workspace-empty {
+  margin: 0;
+  padding: 0.25rem 0.55rem 0.35rem 1.55rem;
+  color: hsl(var(--muted-foreground) / 0.52);
+  font-size: 0.7rem;
+}
+
+.sidebar-session-list {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.sidebar-session-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 3.05rem;
+  align-items: center;
+  border-radius: 0.7rem;
+  color: hsl(var(--foreground) / 0.82);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.sidebar-session-row:hover {
+  background: hsl(var(--foreground) / 0.045);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-session-row.is-active {
+  background: hsl(var(--foreground) / 0.075);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-session-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.55rem;
+  align-self: stretch;
+  padding: 0.45rem 0.45rem 0.45rem 0.55rem;
+  text-align: left;
+}
+
+.sidebar-session-icon {
+  display: inline-flex;
+  width: 1.45rem;
+  height: 1.45rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.48rem;
+  background: hsl(var(--foreground) / 0.055);
+  color: hsl(var(--muted-foreground) / 0.78);
+}
+
+.sidebar-session-row.is-active .sidebar-session-icon {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--foreground) / 0.88);
+}
+
+.sidebar-session-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 0.08rem;
+}
+
+.sidebar-session-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 580;
+  line-height: 1.25;
+}
+
+.sidebar-session-preview {
+  overflow: hidden;
+  color: hsl(var(--muted-foreground) / 0.66);
+  font-size: 0.66rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-session-time {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  padding: 0.55rem 0.25rem 0 0;
+  color: hsl(var(--muted-foreground) / 0.55);
+  font-size: 0.61rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-session-actions {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.25rem;
+  border-radius: 0.5rem;
+  color: hsl(var(--muted-foreground) / 0.6);
+  opacity: 0;
+  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+.sidebar-session-row:hover .sidebar-session-actions,
+.sidebar-session-row:focus-within .sidebar-session-actions,
+.sidebar-session-actions[data-state='open'] {
+  opacity: 1;
+}
+
+.sidebar-session-actions:hover {
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  padding: 3rem 1rem;
+  color: hsl(var(--muted-foreground) / 0.58);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.sidebar-mobile-close {
+  display: none;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.6rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.sidebar-mobile-close:hover {
+  background: hsl(var(--foreground) / 0.07);
+  color: hsl(var(--foreground));
+}
+
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .sidebar-mobile-close {
+    display: inline-flex;
+  }
+
+  .sidebar-header {
+    display: flex;
+    min-height: 3.75rem;
+    padding-top: max(0.7rem, env(safe-area-inset-top));
+    padding-inline: 0.75rem;
+  }
+
+  .sidebar-content-scroll {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  .sidebar-footer-action {
+    padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  }
+
+  .sidebar-session-actions {
+    opacity: 1;
+  }
+}
+
+@media (min-width: 768px) {
+  .sidebar-wrapper[data-sidebar-compact="true"] {
+    width: var(--sidebar-compact-width) !important;
+  }
+
+  .sidebar-wrapper[data-sidebar-compact="true"] .sidebar-compact-rail {
+    display: flex;
+  }
+
+  .sidebar-wrapper[data-sidebar-compact="true"] .sidebar-expanded-content {
+    display: none !important;
+  }
+
+  .sidebar-compact-rail {
+    min-width: 0;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    overflow-y: auto;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .sidebar-rail-button {
+    display: inline-flex;
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.85rem !important;
+    color: hsl(var(--muted-foreground));
+    transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .sidebar-rail-button:hover {
+    background: hsl(var(--foreground) / 0.07) !important;
+    color: hsl(var(--foreground));
+  }
+
+  .sidebar-rail-button:active {
+    transform: scale(0.95);
+  }
+
+  .sidebar-rail-primary {
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1) !important;
+  }
+
+  .sidebar-rail-sessions {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding-top: 0.35rem;
+  }
+
+  .sidebar-rail-session {
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.85rem;
+    color: hsl(var(--muted-foreground));
+    transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .sidebar-rail-session:hover {
+    background: hsl(var(--foreground) / 0.07);
+    color: hsl(var(--foreground));
+  }
+
+  .sidebar-rail-session:active {
+    transform: scale(0.95);
+  }
+
+  .sidebar-rail-session.is-active {
+    background: hsl(var(--primary) / 0.13);
+    color: hsl(var(--primary));
+  }
+
+  .sidebar-rail-spacer {
+    min-height: 0.75rem;
+    flex: 1 1 auto;
+  }
+}
+
+/* A compact preference is desktop-only. If the viewport becomes phone-sized
+   while the preference is still persisted, the full drawer remains usable. */
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .sidebar-compact-rail {
+    display: none !important;
+  }
+
+  .sidebar-expanded-content {
+    display: flex !important;
+  }
+}
+
+/* The remaining settings pages use the same section rhythm. Their business
+ * logic still owns the individual rows, while these rules remove the old
+ * visual noise from the legacy card templates. */
+.settings-page-tools > .settings-section,
+.settings-page-appearance > .settings-section {
+  border-bottom: 0;
+  padding-bottom: 0.5rem;
+}
+
+.settings-page-tools > .settings-section + .settings-section,
+.settings-page-appearance > .settings-section + .settings-section {
+  padding-top: 2.25rem;
+}
+
+.settings-page-tools [data-orientation="horizontal"],
+.settings-page-appearance [data-orientation="horizontal"] {
+  display: none;
+}
+
+.settings-page-tools .settings-refresh-actions,
+.settings-page-appearance .settings-refresh-actions {
+  justify-content: flex-end;
+}
+
+.settings-tool-list .rounded-xl.border,
+.settings-permission-group .rounded-xl.border,
+.settings-tray-section .rounded-xl.border,
+.settings-about-section .rounded-xl.border,
+.settings-mcp-section .rounded-xl.border,
+.settings-wechat-section .rounded-xl.border {
+  border-color: hsl(var(--foreground) / 0.1) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: none !important;
+}
+
+.settings-tool-list .rounded-xl.border,
+.settings-tray-section .rounded-xl.border,
+.settings-about-section .rounded-xl.border,
+.settings-mcp-section .rounded-xl.border,
+.settings-wechat-section .rounded-xl.border {
+  background: hsl(var(--card) / 0.28) !important;
+}
+
+.settings-permission-group > div:last-of-type {
+  gap: 0.75rem;
+}
+
+.settings-permission-group button {
+  min-height: 8.5rem;
+  border-radius: 0.8rem !important;
+  box-shadow: none !important;
+}
+
+.settings-appearance-section .settings-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.settings-appearance-section .settings-theme-option {
+  min-height: 6rem;
+  border-color: hsl(var(--foreground) / 0.12) !important;
+  background: hsl(var(--card) / 0.26) !important;
+  box-shadow: none !important;
+}
+
+.settings-appearance-section .settings-theme-option.text-primary {
+  border-color: hsl(var(--primary) / 0.34) !important;
+  background: hsl(var(--primary) / 0.08) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.settings-preview {
+  border: 1px solid hsl(var(--foreground) / 0.1);
+  border-radius: 0.75rem;
+  background: hsl(var(--foreground) / 0.025);
+  padding: 0.8rem;
+}
+
+.settings-tray-section .space-y-3 > .flex.items-center.gap-2,
+.settings-about-section .space-y-3 > .flex.items-center.gap-2,
+.settings-mcp-section .space-y-3 > .flex.items-center.gap-2 {
+  color: hsl(var(--foreground) / 0.86);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (max-width: 767px) {
+  .settings-appearance-section .settings-theme-grid {
+    gap: 0.5rem;
+  }
+
+  .settings-appearance-section .settings-theme-option {
+    min-height: 5.5rem;
+    padding: 0.75rem 0.45rem;
+  }
+
+  .settings-permission-group button {
+    min-height: 0;
+  }
+}
+
+.topbar-review-button[data-panel-open="true"] {
+  background: hsl(var(--foreground) / 0.07) !important;
+}
+
+/* Touch WebViews can keep :hover on the last tapped control. That leaves a
+ * misleading halo behind after a panel is closed. Keep touch chrome quiet;
+ * the explicit review-panel state below remains the only persistent tint. */
+@media (hover: none) and (pointer: coarse) {
+  .topbar-icon-button,
+  .topbar-settings-button,
+  .topbar-review-button,
+  .topbar-clear-button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .topbar-icon-button:hover,
+  .topbar-settings-button:hover,
+  .topbar-review-button:hover,
+  .topbar-clear-button:hover {
+    background: transparent !important;
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  .topbar-review-button[data-panel-open="true"],
+  .topbar-review-button[data-panel-open="true"]:hover {
+    background: hsl(var(--foreground) / 0.07) !important;
+    color: hsl(var(--foreground)) !important;
+  }
 }
 
 .empty-state-hero .empty-state-icon {
@@ -2865,6 +3806,87 @@ select:focus-visible {
   background: hsl(var(--card) / 0.96);
   padding: clamp(1.5rem, 5vw, 2.5rem);
   box-shadow: 0 24px 70px hsl(240 20% 3% / 0.28), inset 0 1px 0 hsl(var(--foreground) / 0.08);
+  animation: first-run-surface-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes first-run-surface-enter {
+  from { opacity: 0; transform: translateY(18px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.first-run-surface-expanded {
+  width: min(100%, 40rem);
+}
+
+.first-run-provider-step {
+  min-height: 0;
+}
+
+.first-run-provider-list,
+.first-run-model-list {
+  display: grid;
+  gap: 0.4rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  padding: 0.15rem;
+  overscroll-behavior: contain;
+}
+
+.first-run-provider-option,
+.first-run-model-option {
+  display: flex;
+  min-height: 2.9rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid hsl(var(--foreground) / 0.1);
+  border-radius: 0.75rem;
+  background: hsl(var(--background) / 0.42);
+  padding: 0.55rem 0.75rem;
+  color: hsl(var(--foreground) / 0.9);
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.first-run-provider-option:hover,
+.first-run-model-option:hover {
+  background: hsl(var(--foreground) / 0.05);
+}
+
+.first-run-provider-option.is-selected,
+.first-run-model-option.is-selected {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.08);
+}
+
+.first-run-provider-option span {
+  min-width: 0;
+}
+
+.first-run-provider-option strong,
+.first-run-provider-option small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.first-run-provider-option strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.first-run-provider-option small {
+  margin-top: 0.15rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.7rem;
+}
+
+.first-run-custom-form {
+  display: grid;
+  gap: 0.5rem;
+  border-top: 1px solid hsl(var(--foreground) / 0.08);
+  padding-top: 0.75rem;
 }
 
 .first-run-mark,
@@ -3011,6 +4033,12 @@ select:focus-visible {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .first-run-surface {
+    animation: none;
+  }
+}
+
 .composer-edge-controls {
   display: none;
 }
@@ -3054,8 +4082,16 @@ select:focus-visible {
   }
 
   .composer-edge-controls .composer-edge-trigger:active {
-    transform: scale(0.98);
+    transform: none !important;
   }
+}
+
+/* Composer controls keep a stable footprint while menus open. The active
+ * state is communicated through color, never by changing the hit target. */
+.composer-edge-controls button:active,
+.composer-options > button:active,
+.composer-actions > button:active {
+  transform: none !important;
 }
 
 @media (max-width: 767px) {
@@ -3091,6 +4127,8 @@ select:focus-visible {
 .titlebar {
   position: relative;
   z-index: 45;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
 }
 
 /* Menus: lift the popper wrapper above dialogs/toasts. Geometry is left
@@ -3207,6 +4245,20 @@ body > [data-radix-popper-content-wrapper] {
   backdrop-filter: blur(32px) saturate(170%);
   box-shadow: 0 -18px 50px hsl(240 24% 3% / 0.36) !important;
   animation: hakus-sheet-up 460ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+
+/* The More sheet also carries an inline viewport contract from Composer.
+ * Keep the CSS fallback explicit for older WebViews that do not attach the
+ * phone root class before the first Radix portal paint. In particular,
+ * `m-auto` from the shared dialog primitive must not turn this into a
+ * centered max-width card. */
+[data-hakus-overlay="dialog-content"].mobile-settings-sheet {
+  box-sizing: border-box;
+  margin: 0 !important;
+  min-width: 0;
+  max-width: 100vw !important;
+  transform: none !important;
+  translate: none !important;
 }
 :root.is-phone .mobile-settings-header {
   min-height: 4.75rem;
@@ -3396,5 +4448,435 @@ body > [data-radix-popper-content-wrapper] {
   :root.is-phone [data-hakus-overlay="dialog-content"]:not(.settings-dialog-content):not(.mobile-settings-sheet),
   :root.is-phone .mobile-settings-sheet {
     animation: none !important;
+  }
+}
+
+/* Settings page composition
+ *
+ * Settings are a reading surface, not a stack of feature cards. The rules
+ * below give every panel the same section rhythm and keep the active state
+ * quiet enough that the content remains the focus.
+ */
+.settings-dialog-content {
+  background: hsl(var(--background)) !important;
+}
+
+.settings-dialog-header {
+  min-height: 4.5rem;
+  border-bottom: 1px solid hsl(var(--foreground) / 0.09) !important;
+  background: hsl(var(--background) / 0.92) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+.settings-dialog-header [data-radix-dialog-title] {
+  font-size: 0.98rem;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.settings-dialog-heading {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.settings-dialog-eyebrow {
+  color: hsl(var(--muted-foreground) / 0.72);
+  font-size: 0.625rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.settings-dialog-header [data-radix-dialog-description] {
+  margin-top: 0.25rem;
+  color: hsl(var(--muted-foreground) / 0.82);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.settings-dialog-nav {
+  width: 14rem !important;
+  border-right: 1px solid hsl(var(--foreground) / 0.08) !important;
+  background: hsl(var(--muted) / 0.16) !important;
+  padding: 1rem 0.75rem !important;
+}
+
+.settings-dialog-nav ul {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settings-dialog-nav button {
+  min-height: 2.65rem;
+  border: 1px solid transparent;
+  border-radius: 0.7rem !important;
+  padding: 0.55rem 0.7rem !important;
+  color: hsl(var(--foreground) / 0.68);
+  font-size: 0.8125rem;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.settings-dialog-nav button:hover {
+  border-color: hsl(var(--foreground) / 0.08);
+  background: hsl(var(--foreground) / 0.045) !important;
+  color: hsl(var(--foreground) / 0.9) !important;
+}
+
+.settings-dialog-nav button[aria-current="page"] {
+  border-color: hsl(var(--foreground) / 0.1) !important;
+  background: hsl(var(--foreground) / 0.075) !important;
+  color: hsl(var(--foreground)) !important;
+  font-weight: 600;
+  box-shadow: none !important;
+}
+
+.settings-dialog-nav button[aria-current="page"] svg {
+  color: hsl(var(--foreground) / 0.78) !important;
+}
+
+/* A single-panel category should read as one continuous page. The composite
+ * Workspace & data page keeps its internal grouping; all other categories do
+ * not need a trailing rule after their only section. */
+.settings-page-single > .settings-section {
+  border-bottom: 0;
+  padding-bottom: 0.5rem;
+}
+
+/* Keep keyboard focus discoverable without the saturated blue rectangle that
+ * previously made settings feel like a debug form. */
+.settings-dialog-panel input:not([type="range"]):focus-visible,
+.settings-dialog-panel textarea:focus-visible,
+.settings-dialog-panel select:focus-visible {
+  outline: 1px solid hsl(var(--foreground) / 0.24) !important;
+  outline-offset: 1px;
+  border-color: hsl(var(--foreground) / 0.22) !important;
+  box-shadow: 0 0 0 1px hsl(var(--foreground) / 0.07) !important;
+}
+
+.settings-dialog-panel > div > div > .p-6 {
+  width: min(100%, 56rem);
+  margin: 0 auto;
+  padding: 2rem clamp(1.25rem, 4vw, 3rem) 3rem !important;
+}
+
+.settings-group-stack {
+  display: grid;
+  gap: 0;
+  max-width: none;
+}
+
+.settings-section {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+  padding: 0 0 2.25rem;
+  border-bottom: 1px solid hsl(var(--foreground) / 0.09);
+}
+
+.settings-section + .settings-section {
+  padding-top: 2.25rem;
+}
+
+.settings-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0.5rem;
+}
+
+.settings-section-heading {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-section-heading h2 {
+  margin: 0;
+  color: hsl(var(--foreground));
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+
+.settings-section-heading p,
+.settings-field-group-heading p {
+  max-width: 48rem;
+  margin: 0;
+  color: hsl(var(--muted-foreground) / 0.86);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.settings-field-group {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.settings-field-group + .settings-field-group {
+  padding-top: 0.6rem;
+}
+
+.settings-field-group-heading {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.settings-field-group-heading h3 {
+  margin: 0;
+  color: hsl(var(--foreground) / 0.9);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.settings-field > label,
+.settings-field > [data-slot="label"] {
+  color: hsl(var(--foreground) / 0.82);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.settings-field input:not([type="range"]),
+.settings-field textarea,
+.settings-field select {
+  border-color: hsl(var(--foreground) / 0.14) !important;
+  border-radius: 0.65rem !important;
+  background: hsl(var(--card) / 0.52) !important;
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
+}
+
+.settings-field input:not([type="range"]),
+.settings-field select {
+  min-height: 2.65rem;
+}
+
+.settings-field textarea {
+  min-height: 6rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.settings-field input:not([type="range"]):focus,
+.settings-field textarea:focus,
+.settings-field select:focus {
+  border-color: hsl(var(--ring) / 0.5) !important;
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.1) !important;
+}
+
+.settings-field-help {
+  margin: 0;
+  color: hsl(var(--muted-foreground) / 0.78);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  padding-top: 0.35rem;
+}
+
+.settings-actions button {
+  min-height: 2.45rem;
+}
+
+.settings-option-list {
+  display: grid;
+  border-top: 1px solid hsl(var(--foreground) / 0.09);
+}
+
+.settings-option-row {
+  display: flex;
+  min-width: 0;
+  min-height: 3.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid hsl(var(--foreground) / 0.09);
+  padding: 0.8rem 0.1rem;
+  transition: background-color 150ms ease;
+}
+
+.settings-option-row:hover {
+  background: hsl(var(--foreground) / 0.025);
+}
+
+.settings-option-copy {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.settings-option-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  color: hsl(var(--muted-foreground) / 0.82);
+}
+
+.settings-option-title {
+  display: block;
+  color: hsl(var(--foreground) / 0.9);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.settings-option-description {
+  max-width: 42rem;
+  margin: 0.2rem 0 0;
+  color: hsl(var(--muted-foreground) / 0.8);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.settings-option-row > button[role="switch"] {
+  flex: 0 0 auto;
+}
+
+.settings-voice-groups {
+  display: grid;
+  gap: 1.75rem;
+}
+
+.settings-subsection {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.settings-subsection-heading {
+  min-width: 0;
+}
+
+.settings-subsection-heading > div:last-child,
+.settings-subsection-heading > div:nth-child(2) {
+  min-width: 0;
+}
+
+.settings-subsection-heading .text-sm {
+  color: hsl(var(--foreground) / 0.9);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.settings-subsection-heading p {
+  max-width: 42rem;
+  margin-top: 0.2rem;
+  color: hsl(var(--muted-foreground) / 0.8);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.settings-subsection-heading > div:first-child > div:first-child {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.65rem !important;
+  background: hsl(var(--foreground) / 0.055) !important;
+  color: hsl(var(--muted-foreground) / 0.9) !important;
+}
+
+.settings-subpanel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  border: 1px solid hsl(var(--foreground) / 0.1);
+  border-radius: 0.8rem;
+  background: hsl(var(--card) / 0.28);
+  padding: 1rem;
+}
+
+.settings-subpanel .rounded-xl.border,
+.settings-subpanel .rounded-lg.border,
+.settings-subpanel .rounded-md.border {
+  border-color: hsl(var(--foreground) / 0.1) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.settings-connection-status {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  border: 1px solid hsl(var(--foreground) / 0.1);
+  border-radius: 0.8rem;
+  background: hsl(var(--foreground) / 0.025);
+  padding: 0.85rem 1rem;
+}
+
+.settings-connection-status .text-sm {
+  font-size: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .settings-character-section .settings-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .settings-dialog-panel > div > div > .p-6 {
+    padding: 1.35rem 1rem max(2rem, env(safe-area-inset-bottom)) !important;
+  }
+
+  .settings-dialog-header {
+    min-height: 4.25rem;
+  }
+
+  .settings-section {
+    gap: 1.25rem;
+    padding-bottom: 1.75rem;
+  }
+
+  .settings-section + .settings-section {
+    padding-top: 1.75rem;
+  }
+
+  .settings-option-row {
+    min-height: 4rem;
+    padding: 0.85rem 0.1rem;
+  }
+
+  .settings-option-description {
+    padding-right: 0.35rem;
+  }
+
+  .settings-subsection-heading {
+    align-items: flex-start;
+  }
+
+  .settings-subsection-heading > div:last-child {
+    min-width: 0;
+  }
+
+  .settings-subpanel {
+    padding: 0.85rem;
+  }
+
+  .settings-actions {
+    align-items: stretch;
+  }
+
+  .settings-actions button {
+    flex: 0 0 auto;
   }
 }

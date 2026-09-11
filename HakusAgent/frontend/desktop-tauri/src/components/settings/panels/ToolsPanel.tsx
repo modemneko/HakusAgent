@@ -5,10 +5,8 @@
 import { useEffect, useState } from 'react'
 import { Shield, ShieldAlert, ShieldCheck, ShieldOff, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
@@ -139,7 +137,13 @@ export function ToolsPanel() {
   }
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-tools-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('工具与权限', 'Tools & permissions')}</h2>
+          <p>{copy('管理可用工具、命令执行范围和调用确认策略。', 'Manage available tools, command access, and confirmation rules.')}</p>
+        </div>
+      </div>
       {outdatedError && (
         <BackendOutdatedBanner
           message={outdatedError.message}
@@ -147,7 +151,7 @@ export function ToolsPanel() {
           onRetry={refresh}
         />
       )}
-      <div className="flex items-center justify-between">
+      <div className="settings-actions settings-refresh-actions">
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           {copy('刷新', 'Refresh')}
@@ -155,8 +159,10 @@ export function ToolsPanel() {
       </div>
 
       {/* 工具列表 */}
-      <div className="space-y-2">
-        <Label>{copy('工具列表', 'Tools')}</Label>
+      <div className="settings-field-group settings-tool-list">
+        <div className="settings-field-group-heading">
+          <h3>{copy('工具列表', 'Tools')}</h3>
+        </div>
         {usesEmbeddedRuntime ? (
           <div className="space-y-3">
             <p className="text-[11px] text-muted-foreground">
@@ -254,14 +260,14 @@ export function ToolsPanel() {
         )}
       </div>
 
-      <Separator />
-
       {/* 权限模式 */}
-      <div className="space-y-2">
-        <Label>{copy('权限模式', 'Permission mode')}</Label>
-        <p className="text-[11px] text-muted-foreground">
+      <div className="settings-field-group settings-permission-group">
+        <div className="settings-field-group-heading">
+          <h3>{copy('权限模式', 'Permission mode')}</h3>
+          <p>
           {copy('决定 AI 调用工具时是否需要用户确认。修改后立即生效。', 'Controls whether the AI needs confirmation before using tools. Changes apply immediately.')}
-        </p>
+          </p>
+        </div>
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
           {(Object.keys(PERMISSION_META) as PermissionMode[])
             .filter((m) => availableModes.includes(m))
@@ -304,6 +310,6 @@ export function ToolsPanel() {
           </div>
         )}
       </div>
-    </div>
+    </section>
   )
 }

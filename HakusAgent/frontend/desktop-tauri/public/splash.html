@@ -8,12 +8,11 @@
       HakusAI native splash — shown by the desktop shell the instant the
       process starts, before the React webview has finished booting.
 
-      Timeline (per design spec):
+      Timeline (per Electron-era design):
         0.0s  black window
         0.3s  aurora blobs breathe in (left side, blur ~110px, low saturation)
-        0.8s  "AWAKENING" rises in the clean center
-        1.2s  "HAKUS" wordmark appears below (soft violet-blue gradient)
-        1.8s  text starts breathing / gradient starts flowing
+        0.8s  "HAKUS" wordmark rises into view
+        1.0s  "WORKSPACE IS STARTING" appears below
         finish Rust closes this window after the frontend calls finish_splash
               (minimum display enforced Rust-side); fade-out = 480ms
 
@@ -40,6 +39,26 @@
         border-radius: 16px;
         background: #0a0a0d;
       }
+
+      /* Remotion export is the preferred startup animation. The CSS scene
+         below remains visible until the asset is ready and acts as the
+         offline/slow-device fallback. */
+      .motion-splash {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease-out;
+      }
+      html.motion-ready .motion-splash { opacity: 1; }
+      html.motion-ready .aurora,
+      html.motion-ready .vignette,
+      html.motion-ready .glass,
+      html.motion-ready .stack { opacity: 0; }
 
       /* ── Aurora field ───────────────────────────────────────────────
          Four huge, heavily blurred, deliberately desaturated glow blobs
@@ -98,63 +117,60 @@
           rgba(255, 255, 255, 0) 72%);
       }
 
-      /* ── Center stack ─────────────────────────────────────────────── */
+      /* ── Electron-era center stack ────────────────────────────────── */
       .stack {
         position: absolute; inset: 0;
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        gap: 18px;
+        gap: 16px;
         text-align: center;
       }
-      .awakening {
-        font-size: 13px;
-        font-weight: 500;
-        letter-spacing: 0.42em;
-        text-indent: 0.42em; /* optically re-center the tracked text */
-        text-transform: uppercase;
-        color: rgba(232, 233, 246, 0.62);
+      .mark {
+        display: flex;
+        width: 80px;
+        height: 80px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(142, 122, 255, 0.52);
+        border-radius: 22px;
+        background: rgba(142, 122, 255, 0.08);
+        color: #aa9cff;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-indent: 0.2em;
         opacity: 0;
-        animation:
-          rise-in 900ms cubic-bezier(0.22, 0.8, 0.3, 1) 0.8s forwards,
-          breathing 3.4s ease-in-out 1.8s infinite;
-      }
-      .rule {
-        width: 92px; height: 1px;
-        background: linear-gradient(90deg,
-          transparent, rgba(214, 210, 240, 0.30), transparent);
-        opacity: 0;
-        animation: rise-in 800ms ease 1.45s forwards;
+        animation: mark-in 520ms ease-out 0.3s forwards;
       }
       .wordmark {
-        font-size: 30px;
-        font-weight: 650;
-        letter-spacing: 0.34em;
-        text-indent: 0.34em;
+        color: #f4f2ff;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.25em;
+        text-indent: 0.25em;
         text-transform: uppercase;
-        background: linear-gradient(100deg,
-          #f1f1f7 0%, #cfc8f2 30%, #a7b6f0 55%, #e4e1f4 80%, #f1f1f7 100%);
-        background-size: 220% 100%;
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
         opacity: 0;
-        animation:
-          rise-in 900ms cubic-bezier(0.22, 0.8, 0.3, 1) 1.2s forwards,
-          gradient-flow 7s ease-in-out 1.8s infinite;
+        animation: text-in 520ms ease-out 0.42s forwards;
+      }
+      .subtitle {
+        margin-top: 8px;
+        color: rgba(220, 218, 237, 0.72);
+        font-size: 10px;
+        font-weight: 400;
+        letter-spacing: 0.32em;
+        text-indent: 0.32em;
+        text-transform: uppercase;
+        opacity: 0;
+        animation: text-in 520ms ease-out 0.54s forwards;
       }
 
-      @keyframes rise-in {
+      @keyframes text-in {
         from { opacity: 0; transform: translateY(8px); }
         to   { opacity: 1; transform: translateY(0); }
       }
-      /* Gentle breathing: opacity only — no glow, no scale jumps. */
-      @keyframes breathing {
-        0%, 100% { opacity: 1; }
-        50%      { opacity: 0.55; }
-      }
-      @keyframes gradient-flow {
-        0%, 100% { background-position: 0% 50%; }
-        50%      { background-position: 100% 50%; }
+      @keyframes mark-in {
+        from { opacity: 0; transform: scale(0.96); }
+        to   { opacity: 1; transform: scale(1); }
       }
 
       /* ── Exit transition (triggered by finish_splash) ─────────────── */
@@ -167,7 +183,8 @@
         animation-play-state: paused;
       }
       @media (prefers-reduced-motion: reduce) {
-        .aurora, .awakening, .rule, .wordmark {
+        .motion-splash { display: none; }
+        .aurora, .mark, .wordmark, .subtitle {
           animation-duration: 0.01s !important;
           animation-delay: 0s !important;
           animation-iteration-count: 1 !important;
@@ -178,6 +195,9 @@
   </head>
   <body>
     <div class="frame">
+      <video class="motion-splash" autoplay muted playsinline preload="auto" aria-hidden="true">
+        <source src="./motion/hakus-startup.mp4" type="video/mp4" />
+      </video>
       <div class="aurora" aria-hidden="true">
         <div class="blob blob-purple"></div>
         <div class="blob blob-blue"></div>
@@ -187,10 +207,21 @@
       <div class="vignette" aria-hidden="true"></div>
       <div class="glass" aria-hidden="true"></div>
       <main class="stack">
-        <div class="awakening">Awakening</div>
-        <div class="rule" aria-hidden="true"></div>
-        <div class="wordmark">Hakus</div>
+        <div class="mark" aria-hidden="true">H</div>
+        <div class="copy">
+          <div class="wordmark">HAKUS</div>
+          <div class="subtitle">WORKSPACE IS STARTING</div>
+        </div>
       </main>
     </div>
+    <script>
+      // Keep native splash startup deterministic if the optional export is
+      // unavailable or blocked by a platform WebView.
+      const motionSplash = document.querySelector('.motion-splash');
+      if (motionSplash) {
+        motionSplash.addEventListener('canplay', () => document.documentElement.classList.add('motion-ready'), { once: true });
+        motionSplash.addEventListener('error', () => motionSplash.remove(), { once: true });
+      }
+    </script>
   </body>
 </html>

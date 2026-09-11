@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { apiClient } from '@/api/client'
@@ -66,60 +65,74 @@ export function ConnectionPanel() {
   }
 
   return (
-    <div className="space-y-5">
-
-      <Separator />
-
-      <div className="space-y-2">
-        <Label htmlFor="server-url">{rustPreview ? 'Rust Runtime URL' : 'HakusAI Server URL'}</Label>
-        <Input
-          id="server-url"
-          value={serverUrl}
-          onChange={(e) => setServerUrl(e.target.value)}
-          placeholder="http://127.0.0.1:48081"
-          className="font-mono"
-        />
-        <p className="text-[11px] text-muted-foreground">
-          {rustPreview && (
-            <>
-              {copy(`当前预览已连接到 Rust Runtime（${apiClient.getBaseUrl()}）。`, `This preview is connected to the Rust Runtime (${apiClient.getBaseUrl()}).`)}
-            </>
-          )}
-          {!rustPreview && (
-            <>
-              {copy('桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，例如', 'Desktop can use the local service. On Android, enter the computer or server running HakusAI, for example')} <code>http://192.168.1.20:48081</code>{copy('。', '.')}
-            </>
-          )}
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="timeout">{copy('请求超时 (ms)', 'Request timeout (ms)')}</Label>
-        <Input
-          id="timeout"
-          type="number"
-          value={timeout}
-          onChange={(e) => setTimeoutValue(Number(e.target.value) || 30000)}
-          min={5000}
-          max={300000}
-          step={1000}
-        />
-      </div>
-
-      <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4">
-        <div className="flex items-start gap-3">
-          <div>
-            <Label className="text-sm font-medium">{copy('使用 WebSocket（实验性）', 'Use WebSocket (experimental)')}</Label>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {copy('改用全双工 WebSocket 而非 SSE，支持流式中断。', 'Use full-duplex WebSocket instead of SSE for interruptible streams.')}
-            </p>
-          </div>
+    <section className="settings-section settings-connection-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('连接', 'Connection')}</h2>
+          <p>{copy('管理 HakusAI 服务地址和实时连接选项。', 'Manage the HakusAI service address and live connection options.')}</p>
         </div>
-        <Switch checked={useWebSocket} onCheckedChange={setUseWebSocket} />
+      </div>
+
+      <div className="settings-field-group">
+        <div className="settings-field-group-heading">
+          <h3>{copy('服务地址', 'Service address')}</h3>
+          <p>{copy('桌面端通常连接本机服务，手机端可填写同一网络中的电脑地址。', 'Desktop usually connects locally; on mobile, use the computer address on the same network.')}</p>
+        </div>
+        <div className="settings-field">
+          <Label htmlFor="server-url">{copy('HakusAI 服务 URL', 'HakusAI server URL')}</Label>
+          <Input
+            id="server-url"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="http://127.0.0.1:48081"
+            className="font-mono"
+          />
+          <p className="settings-field-help">
+            {rustPreview && (
+              <>
+                {copy(`当前预览已连接到 Rust 服务（${apiClient.getBaseUrl()}）。`, `This preview is connected to the Rust service (${apiClient.getBaseUrl()}).`)}
+              </>
+            )}
+            {!rustPreview && (
+              <>
+                {copy('桌面版可使用本机服务；Android 版请填写运行 HakusAI 服务的电脑或服务器地址，例如', 'Desktop can use the local service. On Android, enter the computer or server running HakusAI, for example')} <code>http://192.168.1.20:48081</code>{copy('。', '.')}
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="settings-field-group settings-connection-options">
+        <div className="settings-field-group-heading">
+          <h3>{copy('连接选项', 'Connection options')}</h3>
+        </div>
+        <div className="settings-field">
+          <Label htmlFor="timeout">{copy('请求超时 (ms)', 'Request timeout (ms)')}</Label>
+          <Input
+            id="timeout"
+            type="number"
+            value={timeout}
+            onChange={(e) => setTimeoutValue(Number(e.target.value) || 30000)}
+            min={5000}
+            max={300000}
+            step={1000}
+          />
+        </div>
+        <div className="settings-option-row">
+          <div className="settings-option-copy">
+            <div>
+              <Label className="settings-option-title">{copy('使用 WebSocket（实验性）', 'Use WebSocket (experimental)')}</Label>
+              <p className="settings-option-description">
+                {copy('改用全双工 WebSocket 而非 SSE，支持流式中断。', 'Use full-duplex WebSocket instead of SSE for interruptible streams.')}
+              </p>
+            </div>
+          </div>
+          <Switch checked={useWebSocket} onCheckedChange={setUseWebSocket} />
+        </div>
       </div>
 
       {/* 连接状态 */}
-      <div className="rounded-xl border border-border bg-card/40 p-4">
+      <div className="settings-connection-status">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {connState === 'connected' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
@@ -149,7 +162,7 @@ export function ConnectionPanel() {
         )}
       </div>
 
-      <div className="flex items-center gap-2 pt-1">
+      <div className="settings-actions">
         <Button onClick={handleSave} disabled={saving || !dirty}>
           {saving ? (
             <>
@@ -169,6 +182,6 @@ export function ConnectionPanel() {
           )}
         </Button>
       </div>
-    </div>
+    </section>
   )
 }

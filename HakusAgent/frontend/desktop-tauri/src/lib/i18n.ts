@@ -148,6 +148,11 @@ type MessageKey =
   | 'connectionDesc'
   | 'advancedDesc'
   | 'aboutDesc'
+  | 'settingsGeneral'
+  | 'settingsModels'
+  | 'settingsWorkspaceData'
+  | 'settingsToolsIntegrations'
+  | 'settingsAppearanceAbout'
 
 const messages: Record<ResolvedLocale, Record<MessageKey, string>> = {
   'zh-CN': {
@@ -178,6 +183,7 @@ const messages: Record<ResolvedLocale, Record<MessageKey, string>> = {
     skillsDesc: '安装、启用与管理任务能力', trayDesc: '任务栏图标与全局快捷键', mcpDesc: '外部 MCP server 接入与工具调用',
     wechatDesc: 'ClawBot 扫码连接', projectsDesc: '文件夹注册表：添加、重命名、置顶与移除', connectionDesc: '服务地址与超时',
     advancedDesc: '诊断、导入导出与重启', aboutDesc: '版本信息与自动更新',
+    settingsGeneral: '通用', settingsModels: '模型与模型商', settingsWorkspaceData: '工作区与数据', settingsToolsIntegrations: '工具与集成', settingsAppearanceAbout: '外观与关于',
   },
   'en-US': {
     settings: 'Settings', settingsCategory: 'Settings categories', backToChat: 'Back to chat', closeSidebar: 'Close sidebar',
@@ -207,6 +213,7 @@ const messages: Record<ResolvedLocale, Record<MessageKey, string>> = {
     skillsDesc: 'Install, enable, and manage capabilities', trayDesc: 'Taskbar icon and global shortcut', mcpDesc: 'External MCP servers and tools',
     wechatDesc: 'ClawBot QR connection', projectsDesc: 'Folder registry: add, rename, pin, and remove', connectionDesc: 'Server address and timeout',
     advancedDesc: 'Diagnostics, import/export, and restart', aboutDesc: 'Version information and updates',
+    settingsGeneral: 'General', settingsModels: 'Models & providers', settingsWorkspaceData: 'Workspace & data', settingsToolsIntegrations: 'Tools & integrations', settingsAppearanceAbout: 'Appearance & about',
   },
 }
 

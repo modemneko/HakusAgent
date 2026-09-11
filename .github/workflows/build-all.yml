@@ -278,6 +278,21 @@ jobs:
           if ! grep -q 'android.permission.INTERNET' "$manifest"; then
             sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET" />' "$manifest"
           fi
+          # Do not let Android Auto Backup restore the settings store after
+          # uninstall/reinstall. A restored onboardingCompleted flag makes a
+          # fresh install skip the initialization wizard unexpectedly.
+          if grep -q 'android:allowBackup=' "$manifest"; then
+            sed -i 's/android:allowBackup="[^"]*"/android:allowBackup="false"/' "$manifest"
+          else
+            sed -i 's#<application #<application android:allowBackup="false" #' "$manifest"
+          fi
+          if grep -q 'android:fullBackupContent=' "$manifest"; then
+            sed -i 's/android:fullBackupContent="[^"]*"/android:fullBackupContent="false"/' "$manifest"
+          else
+            sed -i 's#<application #<application android:fullBackupContent="false" #' "$manifest"
+          fi
+          grep -q 'android:allowBackup="false"' "$manifest"
+          grep -q 'android:fullBackupContent="false"' "$manifest"
 
       - name: Build Android APK
         working-directory: HakusAgent/frontend/desktop-tauri

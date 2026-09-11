@@ -2783,6 +2783,35 @@ async fn wait_for_terminal_turn(
 }
 
 #[test]
+fn tombstone_blocks_late_engine_writes() {
+    let dir = test_runtime_dir();
+    let store = RuntimeThreadStore::open(dir.clone()).expect("open store");
+
+    let thread = sample_thread("thr_tombstone");
+    store.save_thread(&thread).expect("save thread");
+    let turn = sample_turn(&thread.id, "turn_tombstone", RuntimeTurnStatus::InProgress);
+    store.save_turn(&turn).expect("save turn");
+
+    store.tombstone_thread(&thread.id);
+    // Simulate delete_thread_cascade: every durable file for the thread goes
+    // away while a wedged engine may still hold clones of the store.
+    std::fs::remove_file(store.threads_dir.join("thr_tombstone.json")).expect("remove thread");
+    std::fs::remove_file(store.turns_dir.join("turn_tombstone.json")).expect("remove turn");
+
+    // Late writes from the wedged engine must not resurrect the records.
+    store.save_thread(&thread).expect("save succeeds as a no-op");
+    store.save_turn(&turn).expect("save succeeds as a no-op");
+    assert!(
+        store.load_thread(&thread.id).is_err(),
+        "tombstoned thread must stay deleted"
+    );
+    assert!(!store.threads_dir.join("thr_tombstone.json").exists());
+    assert!(!store.turns_dir.join("turn_tombstone.json").exists());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn store_load_thread_rejects_newer_schema_version() {
     let dir = test_runtime_dir();
     let store = RuntimeThreadStore::open(dir.clone()).expect("open store");

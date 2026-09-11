@@ -11964,7 +11964,7 @@ fn provider_env_api_key(provider: ApiProvider) -> Option<String> {
 }
 
 /// Canonical durable-credential slot shared with the CLI dispatcher.
-fn provider_secret_store_slot(provider: ApiProvider) -> &'static str {
+pub(crate) fn provider_secret_store_slot(provider: ApiProvider) -> &'static str {
     match provider {
         // TUI compatibility variants share the canonical CLI provider slots.
         ApiProvider::DeepseekCN => "deepseek",
@@ -12185,7 +12185,45 @@ fn missing_provider_api_key_message(provider: ApiProvider) -> Result<String> {
 /// (Path 0) ensures a freshly-entered key still wins over a stale env
 /// var that lingers from a previous session.
 pub fn clear_api_key() -> Result<()> {
-    hakus_config::with_xai_oauth_revocation_transaction(clear_api_key_unlocked)
+    // The xAI OAuth transaction opens and secures its private credentials
+    // directory with platform-specific owner-only handles. A fresh install
+    // has no xAI OAuth state at all, so forcing that transaction here can make
+    // a harmless first-run credential wipe fail (notably on Windows where the
+    // directory ACL operation may require privileges unavailable to the app).
+    // Only enter the transaction when the persisted config actually carries
+    // xAI OAuth authority metadata; ordinary API-key cleanup remains durable
+    // and does not create a credentials directory as a side effect.
+    if xai_oauth_state_is_persisted() {
+        hakus_config::with_xai_oauth_revocation_transaction(clear_api_key_unlocked)
+    } else {
+        clear_api_key_unlocked()
+    }
+}
+
+fn xai_oauth_state_is_persisted() -> bool {
+    let Ok(path) = hakus_config::default_config_path() else {
+        return false;
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(document) = raw.parse::<toml::Value>() else {
+        return false;
+    };
+    let Some(xai) = document
+        .get("providers")
+        .and_then(|providers| providers.get("xai"))
+    else {
+        return false;
+    };
+    xai.get("oauth_credential_generation")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || xai
+            .get("auth_mode")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("oauth"))
+        || xai.get("external_credentials").is_some()
 }
 
 fn clear_api_key_unlocked() -> Result<()> {

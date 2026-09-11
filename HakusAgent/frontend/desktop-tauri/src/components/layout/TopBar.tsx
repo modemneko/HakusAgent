@@ -5,7 +5,6 @@ import {
   Minus,
   PanelLeft,
   PanelRight,
-  Settings,
   Square,
   Trash2,
   X,
@@ -20,11 +19,12 @@ import type { AgentMode } from '@/api/types'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { useI18n } from '@/lib/i18n'
+import { isProviderConfigured } from '@/lib/providerState'
 
 interface TopBarProps {
   onToggleSidebar: () => void
   onToggleRightPanel: () => void
-  onOpenSettings: () => void
+  showSidebarToggle?: boolean
 }
 
 // Mode segments — Work / Code. Binds to agentMode (not the legacy runMode).
@@ -117,7 +117,7 @@ function WindowButtons() {
 
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
-export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: TopBarProps) {
+export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle = true }: TopBarProps) {
   const { t } = useI18n()
   const activeId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
@@ -125,16 +125,14 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
   const connState = useConnectionStore((s) => s.state)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
-  const model = useAppStore((s) => s.model)
   const characterName = useAppStore((s) => s.characterName)
   const providers = useSettingsStore((s) => s.providers)
   const defaultModel = useSettingsStore((s) => s.defaultModel)
-  const currentProvider = providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel)
+  const configuredProviders = providers.filter(isProviderConfigured)
+  const currentProvider = configuredProviders.find((p) => p.is_default) || configuredProviders.find((p) => p.id === defaultModel)
   const currentModelLabel = currentProvider
     ? `${currentProvider.display_name || currentProvider.id} · ${currentProvider.model_name || ''}`
-    : model
-      ? `${model.provider} · ${model.model_name}`
-      : t('awaitingModel')
+    : t('awaitingModel')
   const agentMode = useAppStore((s) => s.agentMode)
   const setAgentMode = useAppStore((s) => s.setAgentMode)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
@@ -183,16 +181,18 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
       data-tauri-drag-region
     >
       <div className={cn('topbar-leading app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-          onClick={onToggleSidebar}
-          title={t('toggleSidebar')}
-          aria-label={t('toggleSidebar')}
-        >
-          <PanelLeft className="h-4 w-4" />
-        </Button>
+        {showSidebarToggle && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+            onClick={onToggleSidebar}
+            title={t('toggleSidebar')}
+            aria-label={t('toggleSidebar')}
+          >
+            <PanelLeft className="h-4 w-4" />
+          </Button>
+        )}
 
         <div className="segment topbar-mode-segment">
           {MODE_SEGMENTS.map((mode) => {
@@ -237,22 +237,12 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, onOpenSettings }: 
             'topbar-icon-button topbar-review-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
             rightPanelOpen && 'bg-accent/60 text-foreground',
           )}
+          data-panel-open={rightPanelOpen ? 'true' : undefined}
           onClick={onToggleRightPanel}
           title={t('reviewPanel')}
           aria-label={t('reviewPanel')}
         >
           <PanelRight className="h-4 w-4" />
-        </Button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          className="topbar-icon-button topbar-settings-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-          onClick={onOpenSettings}
-          title={t('settings')}
-          aria-label={t('settings')}
-        >
-          <Settings className="h-3.5 w-3.5" />
         </Button>
 
         {activeId && (

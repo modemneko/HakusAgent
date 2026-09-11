@@ -35,17 +35,28 @@ function App() {
   const [showFirstRun, setShowFirstRun] = useState(false)
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
+  const sidebarCompact = useAppStore((s) => s.sidebarCompact)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
   const setSidebar = useAppStore((s) => s.setSidebar)
+  const setSidebarCompact = useAppStore((s) => s.setSidebarCompact)
   const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
 
   const toggleSidebar = () => {
-    const next = !useAppStore.getState().sidebarOpen
-    setSidebar(next)
-    if (next && isPhoneViewport()) setRightPanelOpen(false)
+    const state = useAppStore.getState()
+    if (isPhoneViewport()) {
+      const next = !state.sidebarOpen
+      setSidebar(next)
+      if (next) setRightPanelOpen(false)
+      return
+    }
+
+    // The sidebar toggle controls visibility only. The compact preference is
+    // a user setting and must not be changed as a side effect of opening or
+    // closing the navigation rail.
+    setSidebar(!state.sidebarOpen)
   }
 
   const toggleRightPanel = () => {
@@ -53,6 +64,8 @@ function App() {
     setRightPanelOpen(next)
     if (next && isPhoneViewport()) setSidebar(false)
   }
+
+  const compactSidebarActive = sidebarCompact && !isPhoneViewport()
 
   // Codex-style global keyboard shortcuts. Meta on macOS, Ctrl elsewhere.
   // Esc interrupts the in-flight turn (same key the composer uses to close
@@ -108,7 +121,9 @@ function App() {
   // the desktop workspace-folder step, so a fresh install on either platform
   // always surfaces the initialization wizard.
   useEffect(() => {
-    if (!IS_TAURI || !appReady || !settingsLoaded) return
+    // Browser Rust preview participates in onboarding too, which keeps the
+    // preview and packaged Tauri clients on the same state machine.
+    if (!(IS_TAURI || IS_RUST_PREVIEW) || !appReady || !settingsLoaded) return
     setShowFirstRun(!onboardingCompleted)
   }, [appReady, onboardingCompleted, settingsLoaded])
 
@@ -291,19 +306,9 @@ function App() {
       void loadProjects().catch((e) => console.warn('projects load failed:', e))
       await loadSessions()
       if (cancelled) return
-      const st = useSessionStore.getState()
-      if (st.sessions.length === 0) {
-        // Auto-create the first session. If the runtime rejects it (e.g. a
-        // stale provider pointer), keep the error visible instead of leaving
-        // the user in an unexplained empty state.
-        st.createSession('New Chat').catch((e: unknown) => {
-          const detail = e instanceof Error ? e.message : String(e)
-          console.error('[app] auto createSession failed:', detail)
-          toastApi.error(`新建会话失败：${detail}`)
-        })
-      } else if (!st.activeSessionId) {
-        st.setActiveSession(st.sessions[0].id)
-      }
+      // Keep the first view session-free. Historical sessions remain
+      // available in the sidebar, but the user explicitly starts a turn by
+      // choosing one or pressing New chat.
     })()
     return () => { cancelled = true }
   }, [appReady, connState, loadSessions, loadSettings, loadProjects, migrateSessions])
@@ -377,7 +382,10 @@ function App() {
           <TopBar
             onToggleSidebar={toggleSidebar}
             onToggleRightPanel={toggleRightPanel}
-            onOpenSettings={() => setSettingsOpen(true)}
+            // Keep a way back into a hidden compact rail. When the rail is
+            // already visible it stays out of the titlebar, avoiding the
+            // duplicate toggle that made compact mode feel like two sidebars.
+            showSidebarToggle={!compactSidebarActive || !sidebarOpen}
           />
 
           <div className="app-main relative flex min-h-0 flex-1">
@@ -397,6 +405,7 @@ function App() {
             <div
               data-testid="sidebar-wrapper"
               data-panel-open={sidebarOpen}
+              data-sidebar-compact={compactSidebarActive ? 'true' : 'false'}
               className={cn(
                 'sidebar-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
                 sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
@@ -407,14 +416,21 @@ function App() {
             </div>
 
             {/* Sidebar resize handle — auto-collapses when dragged narrow */}
-            {sidebarOpen && (
+            {sidebarOpen && !isPhoneViewport() && (
               <ResizeHandle
                 className="panel-resize-handle panel-resize-handle-left"
                 cssVar="--sidebar-width"
                 side="left"
                 minPx={160}
-                maxPx={480}
-                collapseThreshold={120}
+                maxPx={compactSidebarActive ? 360 : 420}
+                startWidthPx={compactSidebarActive ? 68 : undefined}
+                expandThreshold={compactSidebarActive ? 144 : undefined}
+                onExpand={compactSidebarActive ? (width) => {
+                  setSidebarCompact(false)
+                  setSidebar(true)
+                  document.documentElement.style.setProperty('--sidebar-width', `${width}px`)
+                } : undefined}
+                collapseThreshold={compactSidebarActive ? undefined : 120}
                 onCollapse={() => useAppStore.getState().setSidebar(false)}
               />
             )}

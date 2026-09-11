@@ -1,5 +1,5 @@
 /**
- * Advanced panel — 诊断信息 + 配置导出/导入 + 重启 backend + 日志查看
+ * Advanced panel — data backup, configuration transfer, and local cleanup.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -26,8 +26,10 @@ import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
 import { apiClient } from '@/api/client'
 import { useSessionStore } from '@/store/session'
+import { useSettingsStore } from '@/store/settings'
+import { useProjectsStore } from '@/store/projects'
 import { cn } from '@/lib/utils'
-import type { DiagnosticsInfo, MetricsResponse } from '@/api/types'
+import { DEFAULT_SETTINGS, type DiagnosticsInfo, type MetricsResponse } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
 
 export function AdvancedPanel() {
@@ -69,7 +71,7 @@ export function AdvancedPanel() {
     setMetrics(m)
   }
 
-  // backend log path (if available)
+  // Native diagnostics stay internal; users only see product-facing status.
   useEffect(() => {
     const electron = (window as any).electron
     if (electron?.backend?.status) {
@@ -234,19 +236,27 @@ export function AdvancedPanel() {
   }
 
   const handleClearUserData = async () => {
-    if (!window.confirm(copy('清除全部用户数据？这会删除会话、记忆、日志和客户端设置，且无法恢复。', 'Clear all user data? This removes conversations, memory, logs, and client settings. This cannot be undone.'))) return
+    if (!window.confirm(copy('清除全部用户数据？外部工作目录不会删除。', 'Clear all user data? External workspace folders will not be deleted.'))) return
+    if (!window.confirm(copy('再次确认：配置、会话、模型商、记忆和日志都会被永久清除。', 'Confirm again: providers, sessions, memory, and logs will be permanently removed.'))) return
     setClearingUserData(true)
     try {
-      await Promise.allSettled([
+      const projects = useProjectsStore.getState().projects
+      await Promise.all([
         apiClient.wipeAllSessions(),
         apiClient.clearMemory(),
-        apiClient.clearLogs(),
+        ...projects.map((project) => apiClient.deleteProject(project.id)),
       ])
+      await apiClient.clearRuntimeUserData()
       const electron = (window as any).electron
       if (electron?.store?.clear) await electron.store.clear()
-      else localStorage.removeItem('hakusai-settings')
+      else {
+        localStorage.removeItem('hakusai-settings')
+        localStorage.removeItem('hakusai-active-project-id')
+      }
+      useSettingsStore.setState({ ...DEFAULT_SETTINGS, loaded: true, providers: [], defaultModel: '', providersLoading: false, providersError: null, providersLoadingSince: null })
+      useProjectsStore.setState({ projects: [], loaded: true, activeProjectId: null, activeProject: null })
       await useSessionStore.getState().loadFromServer()
-      toast.success(copy('用户数据已清除，重启后将以空白状态开始', 'User data cleared. Restart to begin with a clean profile.'))
+      toast.success(copy('用户数据已清除，将重新进入初始化流程', 'User data cleared. The initialization flow will start again.'))
     } catch (error: any) {
       toast.error(copy(`清除失败：${error?.message || error}`, `Could not clear data: ${error?.message || error}`))
     } finally {
@@ -265,10 +275,10 @@ export function AdvancedPanel() {
 
       <Separator />
 
-      {/* 诊断信息 */}
+      {/* 状态检查 */}
       <div className="space-y-2">
         <Label className="flex items-center gap-2">
-          <Activity className="h-3.5 w-3.5" /> {copy('诊断信息', 'Diagnostics')}
+          <Activity className="h-3.5 w-3.5" /> {copy('状态检查', 'Status check')}
         </Label>
         {loadingDiag && !diag ? (
           <div className="flex items-center py-6 text-sm text-muted-foreground">
@@ -341,115 +351,6 @@ export function AdvancedPanel() {
 
       <Separator />
 
-      {/* Phase 5: Metrics — 5h SWE 任务可观测性 */}
-      <div className="space-y-2">
-        <Label className="flex items-center gap-2">
-          <Gauge className="h-3.5 w-3.5" /> {copy('运行指标', 'Runtime metrics')}
-          <button
-            onClick={refreshMetrics}
-            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
-            title={copy('立即刷新指标', 'Refresh metrics now')}
-          >
-            <RefreshCw className="h-3 w-3" />
-          </button>
-        </Label>
-        {metrics ? (
-          <div className="space-y-3">
-            {/* 总览卡片 */}
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-              <MetricCard
-                label={copy('运行时长', 'Uptime')}
-                value={formatUptime(metrics.uptime_seconds)}
-                title={`${metrics.uptime_seconds.toFixed(1)}s`}
-              />
-              <MetricCard
-                label="Turns"
-                value={String(metrics.total_turns)}
-                tone={metrics.total_turns > 0 ? 'success' : 'muted'}
-              />
-              <MetricCard
-                label={copy('错误', 'Errors')}
-                value={String(metrics.total_errors)}
-                tone={
-                  metrics.total_errors === 0
-                    ? 'muted'
-                    : metrics.total_errors > metrics.total_turns * 0.1
-                      ? 'error'
-                      : 'warning'
-                }
-              />
-              <MetricCard
-                label={copy('WS 连接', 'WebSocket connections')}
-                value={String(metrics.active_websockets)}
-                tone={metrics.active_websockets > 0 ? 'success' : 'muted'}
-              />
-            </div>
-
-            {/* 详细指标 */}
-            <div className="rounded-xl border border-border bg-card/40 p-4">
-              <div className="mb-2 text-[11px] text-muted-foreground">{copy('详细计数器', 'Detailed counters')}</div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 md:grid-cols-3">
-                <MetricRow label={copy('LLM 调用', 'LLM calls')} value={metrics.llm_calls} />
-                <MetricRow label={copy('LLM 重试', 'LLM retries')} value={metrics.llm_retries} />
-                <MetricRow label="Checkpoints" value={metrics.checkpoints_saved} />
-                <MetricRow
-                  label={copy('错误率', 'Error rate')}
-                  value={
-                    metrics.total_turns > 0
-                      ? `${((metrics.total_errors / metrics.total_turns) * 100).toFixed(1)}%`
-                      : '-'
-                  }
-                />
-                <MetricRow
-                  label={copy('平均 LLM/Turn', 'Average LLM/turn')}
-                  value={
-                    metrics.total_turns > 0
-                      ? (metrics.llm_calls / metrics.total_turns).toFixed(2)
-                      : '-'
-                  }
-                />
-                <MetricRow
-                  label={copy('启动时间', 'Started at')}
-                  value={new Date(Date.now() - metrics.uptime_seconds * 1000).toLocaleTimeString()}
-                />
-              </div>
-            </div>
-
-            {/* 按 provider 细分 */}
-            {metrics.by_provider && Object.keys(metrics.by_provider).length > 0 && (
-              <div className="rounded-xl border border-border bg-card/40 p-3">
-                <div className="mb-1.5 text-[11px] text-muted-foreground">{copy('按 Provider 细分', 'By provider')}</div>
-                <div className="space-y-1">
-                  {Object.entries(metrics.by_provider).map(([provider, stats]) => (
-                    <div
-                      key={provider}
-                      className="flex items-center gap-2 text-[11px] font-mono"
-                    >
-                      <Badge variant="secondary" className="text-[10px]">
-                        {provider}
-                      </Badge>
-                      <span className="text-muted-foreground">
-                        turns: <span className="text-foreground">{stats.turns}</span>
-                      </span>
-                      <span className="text-muted-foreground">
-                        errors: <span className="text-foreground">{stats.errors}</span>
-                      </span>
-                      <span className="text-muted-foreground">
-                        llm: <span className="text-foreground">{stats.llm_calls}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
-            {copy('指标不可用（服务版本过旧或未启动）。', 'Metrics are unavailable (the service may be outdated or stopped).')}
-          </div>
-        )}
-      </div>
-
       <Separator />
 
       {/* 配置导出/导入 */}
@@ -486,9 +387,7 @@ export function AdvancedPanel() {
         </div>
         <p className="text-[11px] text-muted-foreground">
           {copy('导出的 JSON 中 API Key 已脱敏，可直接分享。', 'API keys are masked in exported JSON, so it can be shared safely.')}{' '}
-          {rustRuntime
-            ? copy('配置导入会自动热重载，API Key 等密钥不会从导出文件恢复。', 'Imported configuration is reloaded automatically; secrets such as API keys are not restored.')
-            : <>{copy('导入会覆盖', 'Importing will overwrite')} <code>~/.hakus/config.yaml</code>{copy('。', '.')}</>}
+          {copy('导入后会应用新的偏好设置，API Key 等密钥不会从导出文件恢复。', 'Imported preferences are applied automatically; secrets such as API keys are not restored.')}
         </p>
       </div>
 
@@ -530,10 +429,7 @@ export function AdvancedPanel() {
             <span>{copy('导出包含所有会话 + 消息 + 工具调用记录，格式为 JSON。', 'Exports all conversations, messages, and tool calls as JSON.')}</span>
           </div>
           <div>
-            {rustRuntime
-              ? copy('会按会话与消息 ID 幂等迁移导入，并保留现有线程。', 'Imports are idempotent by conversation and message ID and preserve existing threads.')
-              : <>{copy('换机或重装时点“导出”保存文件，新机器上点“导入”恢复。导入是幂等的（按消息 ID 覆盖），不会重复。', 'Export before moving or reinstalling, then import on the new machine. Imports are idempotent by message ID.')}</>}{' '}
-            {copy('原始数据仍在', 'Raw data remains at')} <code>~/.hakus/sessions.db</code>{copy('，也可以直接复制这个文件备份。', '; you can also copy this file as a backup.')}
+            {copy('换机或重装时点“导出”保存文件，新机器上点“导入”恢复。导入会按消息 ID 合并，不会重复。', 'Export before moving or reinstalling, then import on the new machine. Imports merge by message ID without duplicates.')}
           </div>
         </div>
       </div>
@@ -549,46 +445,6 @@ export function AdvancedPanel() {
         </Button>
       </div>
 
-      {/* 服务控制 */}
-      <div className="space-y-2">
-        <Label>{copy('服务控制', 'Service control')}</Label>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRestart}
-            disabled={restarting || !hasRestartApi}
-            title={hasRestartApi ? copy('重启本地服务', 'Restart local service') : copy('当前环境不支持重启服务', 'Restart is unavailable in this environment')}
-          >
-            {restarting ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RotateCcw className="mr-2 h-3.5 w-3.5" />
-            )}
-            {copy('重启服务', 'Restart service')}
-          </Button>
-          {!hasRestartApi && (
-            <span className="text-[11px] text-muted-foreground">{copy('仅打包版可用', 'Available in packaged builds only')}</span>
-          )}
-        </div>
-      </div>
-
-      {/* 日志查看 */}
-      <div className="space-y-2">
-        <Label className="flex items-center gap-2">
-          <FileText className="h-3.5 w-3.5" /> {copy('日志', 'Logs')}
-        </Label>
-        <div className="rounded-xl border border-border bg-card/40 p-3 text-[11px] text-muted-foreground">
-          {logPath ? (
-            <>
-              {copy('服务日志路径：', 'Service log path:')}
-              <code className="ml-1 break-all font-mono text-foreground/80">{logPath}</code>
-            </>
-          ) : (
-            <>{copy('开发模式下日志会输出到 stderr。', 'Development logs are written to stderr.')}</>
-          )}
-        </div>
-      </div>
     </div>
   )
 }

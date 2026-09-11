@@ -41,7 +41,6 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import {
   Dialog,
   DialogContent,
@@ -353,8 +352,7 @@ export function McpPanel() {
 
   if (outdatedError) {
     return (
-      <div className="space-y-5">
-        <Separator />
+      <div className="settings-section settings-mcp-section">
         <BackendOutdatedBanner
           message={outdatedError.message}
           backendVersion={outdatedError.backendVersion}
@@ -365,7 +363,13 @@ export function McpPanel() {
   }
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-mcp-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('MCP 服务器', 'MCP servers')}</h2>
+          <p>{copy('连接外部工具服务，并管理它们的启动和命名方式。', 'Connect external tool servers and manage startup and naming.')}</p>
+        </div>
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between">
         <Button
@@ -376,8 +380,6 @@ export function McpPanel() {
           <Plus className="mr-1 h-3.5 w-3.5" /> {copy('添加', 'Add')}
         </Button>
       </div>
-
-      <Separator />
 
       {/* Server list */}
       <div className="space-y-3">
@@ -422,8 +424,6 @@ export function McpPanel() {
         )}
       </div>
 
-      <Separator />
-
       {/* Global MCP options */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -432,7 +432,7 @@ export function McpPanel() {
 
         <GlobalToggleRow
           id="mcp-auto-start"
-          title={copy('启动 backend 时自动启动所有 enabled 的 MCP server', 'Start all enabled MCP servers with the backend')}
+          title={copy('打开应用时自动启动已启用的 MCP 服务', 'Start enabled MCP services when the app opens')}
           desc={copy('关闭则需在列表里手动点启动按钮。', 'When off, start servers manually from the list.')}
           checked={globalCfg.auto_start}
           onChange={(v) => handleUpdateGlobal({ auto_start: v })}
@@ -475,9 +475,7 @@ export function McpPanel() {
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {copy('MCP 配置写入', 'MCP configuration is written to')} <code className="rounded bg-muted px-1 py-0.5">~/.hakus/config.yaml</code>{' '}
-        {copy('的', 'under')} <code className="rounded bg-muted px-1 py-0.5">mcp.servers</code>.
-        {copy('环境变量的值在服务端持久化，但通过 API 返回时只暴露 key（值被 mask 成 ***）。', 'Environment values are persisted server-side; the API only returns their keys (values are masked as ***).')}
+        {copy('MCP 设置会随 HakusAI 一起保存。环境变量只会以脱敏形式显示。', 'MCP settings are saved with HakusAI. Environment variables are only shown in masked form.')}
       </p>
 
       {/* Edit / Create dialog */}
@@ -593,7 +591,7 @@ export function McpPanel() {
           </DialogContent>
         </Dialog>
       )}
-    </div>
+    </section>
   )
 }
 

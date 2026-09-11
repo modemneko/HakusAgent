@@ -26,6 +26,7 @@ import { create } from 'zustand'
 import type { ChatMessage, ChatSession, ToolCall, TextSegment, ReasoningSegment } from '@/api/types'
 import { generateId } from '@/lib/utils'
 import { apiClient } from '@/api/client'
+import { removeSessionWorkspace } from '@/lib/sessionWorkspaces'
 
 interface SessionStore {
   sessions: ChatSession[]
@@ -221,8 +222,22 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   deleteSession: async (id) => {
+    // If this session's stream is still running locally, end it first. The
+    // stream's abort hook also fires the Runtime turn interrupt, which lifts
+    // the "has an active turn" guard the Runtime holds against deletion —
+    // and lets late stream events die instead of writing into a deleted
+    // session. Mirrors clearMessages()/rewindToMessage().
+    if (get().streamingLogId[id]) {
+      get().streamingAbort?.abort()
+      set({
+        isStreaming: false,
+        streamingAbort: null,
+        streamingLogId: { ...get().streamingLogId, [id]: null },
+      })
+    }
     const prev = get().sessions
     const prevMessages = get().messages
+    const previousActiveSessionId = get().activeSessionId
     // Optimistic
     const sessions = prev.filter((s) => s.id !== id)
     const messages = { ...prevMessages }
@@ -237,9 +252,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       await apiClient.deleteSession(remoteId)
     } catch (e) {
       // Rollback
-      set({ sessions: prev, messages: prevMessages, activeSessionId: get().activeSessionId })
+      set({ sessions: prev, messages: prevMessages, activeSessionId: previousActiveSessionId })
       throw e
     }
+    removeSessionWorkspace(id)
   },
 
   renameSession: async (id, title) => {
@@ -724,17 +740,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         created_at: s.created_at,
         updated_at: s.updated_at,
       }))
-      const activeSessionId = sessions[0]?.id || null
       set({
         sessions,
-        activeSessionId,
+        // Loading history should not open a conversation automatically. The
+        // user chooses a session from the sidebar or creates a new one.
+        activeSessionId: null,
         loaded: true,
         loadError: null,
       })
-      // Lazy-hydrate the active session's messages
-      if (activeSessionId) {
-        void get().hydrateSession(activeSessionId)
-      }
     } catch (e: any) {
       console.error('[session] loadFromServer failed:', e)
       // Keep `loaded: false` so the App.tsx init effect can retry once

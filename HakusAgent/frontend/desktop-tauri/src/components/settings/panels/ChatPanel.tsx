@@ -3,10 +3,9 @@
  * 直接复用 settings store，即时保存。
  */
 
-import { MessageSquare, CornerDownLeft, Brain, ArrowDownToLine } from 'lucide-react'
+import { CornerDownLeft, Brain, ArrowDownToLine } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import { useSettingsStore } from '@/store/settings'
 import { useI18n } from '@/lib/i18n'
 
@@ -26,16 +25,14 @@ function SwitchRow({
   onChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-4 transition-colors hover:border-primary/30 hover:bg-accent/30">
-      <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Icon className="h-4 w-4" />
-        </div>
+    <div className="settings-option-row">
+      <div className="settings-option-copy">
+        <Icon className="settings-option-icon" aria-hidden="true" />
         <div>
-          <Label htmlFor={id} className="text-sm font-medium">
+          <Label htmlFor={id} className="settings-option-title">
             {title}
           </Label>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{desc}</p>
+          <p className="settings-option-description">{desc}</p>
         </div>
       </div>
       <Switch id={id} checked={checked} onCheckedChange={onChange} />
@@ -49,11 +46,15 @@ export function ChatPanel() {
   const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-chat-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('对话行为', 'Conversation')}</h2>
+          <p>{copy('控制输入和回答在聊天窗口中的表现。', 'Control how input and responses behave in the chat window.')}</p>
+        </div>
+      </div>
 
-      <Separator />
-
-      <div className="space-y-3">
+      <div className="settings-option-list">
         <SwitchRow
           icon={CornerDownLeft}
           id="chat-enter"
@@ -79,6 +80,6 @@ export function ChatPanel() {
           onChange={(v) => settings.update({ autoScroll: v })}
         />
       </div>
-    </div>
+    </section>
   )
 }

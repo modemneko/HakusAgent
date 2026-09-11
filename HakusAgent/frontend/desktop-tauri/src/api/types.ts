@@ -168,7 +168,7 @@ export interface ProviderInfo {
   group?: string
   auth_mode?: string
   /** Explicit request dialect for providers that support more than one API. */
-  wire?: 'openai' | 'anthropic' | string
+  wire?: 'openai' | 'responses' | 'anthropic' | string
   supports_connection_test?: boolean
   supports_live_models?: boolean
   supports_headers?: boolean
@@ -336,6 +336,7 @@ export interface CreateCustomProviderBody {
   group?: string
   models?: string[]
   enabled?: boolean
+  wire?: string
 }
 
 export interface ProviderMutationResponse {

@@ -1,146 +1,165 @@
-import { useState } from 'react'
-import { Check, FolderOpen, Globe2, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronLeft, ChevronRight, Download, FolderOpen, Globe2, KeyRound, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/store/settings'
 import { useProjectsStore } from '@/store/projects'
 import { apiClient } from '@/api/client'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
 import { LANGUAGE_OPTIONS, languageOptionLabel, localeForRuntime, resolveLocale, useI18n, type AppLanguage } from '@/lib/i18n'
+import type { ProviderInfo, ProviderModel } from '@/api/types'
 
-type SetupStep = 'language' | 'workspace' | 'ready'
+type SetupStep = 'language' | 'provider' | 'key' | 'model' | 'workspace' | 'ready'
+const SETUP_STEPS: SetupStep[] = ['language', 'provider', 'key', 'model', 'workspace', 'ready']
+const DEFAULT_MODEL_HINTS: Record<string, string> = { deepseek: 'deepseek-chat', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-20250514', qwen: 'qwen-plus', gemini: 'gemini-2.5-flash', ollama: 'qwen2.5:7b' }
 
-const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
-
-// Android skips the desktop workspace-folder step (workspace access there is
-// granted per-project through the SAF picker), so first run is a two-step
-// welcome instead of three.
-const SETUP_STEPS: SetupStep[] = IS_ANDROID ? ['language', 'ready'] : ['language', 'workspace', 'ready']
-
-interface FirstRunSetupProps {
-  onComplete: () => void
-}
+interface FirstRunSetupProps { onComplete: () => void }
 
 export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
   const settings = useSettingsStore()
+  const providers = useSettingsStore((state) => state.providers)
+  const providersLoading = useSettingsStore((state) => state.providersLoading)
+  const loadProviders = useSettingsStore((state) => state.loadProviders)
   const createProject = useProjectsStore((state) => state.create)
   const { locale, t } = useI18n()
   const [step, setStep] = useState<SetupStep>('language')
   const [language, setLanguage] = useState<AppLanguage>(settings.language)
+  const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [providerSearch, setProviderSearch] = useState('')
+  const [model, setModel] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [models, setModels] = useState<ProviderModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const [workspace, setWorkspace] = useState<string | null>(null)
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customId, setCustomId] = useState('')
+  const [customName, setCustomName] = useState('')
+  const [customUrl, setCustomUrl] = useState('')
+  const [customModel, setCustomModel] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const clearedKeysRef = useRef(false)
 
-  const saveLanguage = async (next: AppLanguage) => {
-    setLanguage(next)
-    setError(null)
-    try {
-      await settings.update({ language: next })
-      // Keep the Rust TUI/runtime locale in step with the shared UI when the
-      // embedded server is available. A local UI preference still works when
-      // the remote/browser preview has no runtime endpoint.
-      try {
-        await apiClient.setRuntimeConfig('locale', localeForRuntime(resolveLocale(next)))
-      } catch {
-        // Runtime locale sync is best effort during first launch.
-      }
-    } catch {
-      setError(t('saveLanguageFailed'))
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId)
+  const filteredProviders = useMemo(() => {
+    const query = providerSearch.trim().toLowerCase()
+    return providers.filter((provider) => !query || `${provider.id} ${provider.display_name}`.toLowerCase().includes(query))
+  }, [providerSearch, providers])
+  const stepIndex = SETUP_STEPS.indexOf(step)
+
+  useEffect(() => { void loadProviders() }, [loadProviders])
+
+  useEffect(() => {
+    if (!providers.length) return
+    if (!selectedProviderId) {
+      const current = providers.find((provider) => provider.is_default && provider.enabled !== false) || providers.find((provider) => provider.enabled !== false) || providers[0]
+      setSelectedProviderId(current.id)
+      setModel(current.configured_models?.[0] || '')
+      setBaseUrl(current.base_url || '')
     }
+    // A restored config may contain keys from before uninstall/backup. Clear
+    // every persisted provider secret before the user reaches the key step,
+    // while keeping provider/model metadata available for confirmation.
+    if (!clearedKeysRef.current) {
+      clearedKeysRef.current = true
+      void apiClient.clearRuntimeCredentials().catch(() => undefined)
+    }
+  }, [providers, selectedProviderId])
+
+  const selectProvider = (provider: ProviderInfo) => {
+    setSelectedProviderId(provider.id)
+    setModel(provider.configured_models?.[0] || '')
+    setBaseUrl(provider.base_url || '')
+    setApiKey('')
+    setModels([])
+    setError(null)
+  }
+
+  const addCustomProvider = async () => {
+    const id = customId.trim()
+    const url = customUrl.trim()
+    if (!id || !url) { setError(locale === 'zh-CN' ? '请填写模型商 ID 和 Base URL。' : 'Enter a provider ID and Base URL.'); return }
+    setSaving(true); setError(null)
+    try {
+      await apiClient.createCustomProvider({ id, display_name: customName.trim() || id, base_url: url, model: customModel.trim() || undefined, models: customModel.trim() ? [customModel.trim()] : [], enabled: true })
+      await loadProviders()
+      setSelectedProviderId(id); setModel(customModel.trim()); setBaseUrl(url); setCustomOpen(false)
+      setCustomId(''); setCustomName(''); setCustomUrl(''); setCustomModel('')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setSaving(false) }
+  }
+
+  const fetchModels = async () => {
+    if (!selectedProvider) return
+    setModelsLoading(true); setError(null)
+    try {
+      const result = await apiClient.fetchProviderModels(selectedProvider.id, { api_key: apiKey.trim() || undefined, base_url: baseUrl.trim() || undefined })
+      setModels(result.models)
+      if (!model && result.models[0]) setModel(result.models[0].id)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setModelsLoading(false) }
   }
 
   const chooseWorkspace = async () => {
     setError(null)
     const selection = await pickProjectFolder()
-    if (!selection?.path) return
-    if (!(await confirmProjectAccess())) return
+    if (!selection?.path || !(await confirmProjectAccess())) return
     try {
       const name = selection.name || selection.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace'
-      await createProject({ name, path: selection.path, source_uri: selection.sourceUri })
-      useProjectsStore.getState().setActive(useProjectsStore.getState().projects.find((project) => project.path === selection.path)?.id || null)
+      const project = await createProject({ name, path: selection.path, source_uri: selection.sourceUri })
+      useProjectsStore.getState().setActive(project.id)
       setWorkspace(selection.path)
-    } catch {
-      setError(t('projectCreateFailed'))
-    }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t('projectCreateFailed')) }
   }
 
-  const finish = async () => {
-    setSaving(true)
-    try {
-      await settings.update({ onboardingCompleted: true })
-      onComplete()
-    } finally {
+  const persistProvider = async () => {
+    if (!selectedProvider) return
+    const selectedModel = model.trim() || selectedProvider.configured_models?.[0] || ''
+    if (selectedModel || apiKey.trim()) {
+      await apiClient.updateProvider({ provider: selectedProvider.id, model_name: selectedModel || undefined, base_url: selectedProvider.has_url ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined, models: Array.from(new Set([...(selectedProvider.configured_models || []), ...(selectedModel ? [selectedModel] : [])])), enabled: true })
+    }
+    if (selectedModel) await apiClient.setDefaultModel(selectedProvider.id, selectedModel)
+    await loadProviders()
+  }
+
+  const next = async () => {
+    setError(null)
+    if (step === 'provider' && !selectedProvider) { setError(locale === 'zh-CN' ? '请选择或添加一个模型商。' : 'Choose or add a provider.'); return }
+    if (step === 'key' || step === 'model') {
+      setSaving(true)
+      try { await persistProvider() } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setSaving(false); return }
       setSaving(false)
     }
+    if (step === 'language') {
+      try { await settings.update({ language }); await apiClient.setRuntimeConfig('locale', localeForRuntime(resolveLocale(language))) } catch { /* best effort */ }
+    }
+    setStep(SETUP_STEPS[Math.min(stepIndex + 1, SETUP_STEPS.length - 1)])
   }
 
-  const next = () => {
-    const index = SETUP_STEPS.indexOf(step)
-    const nextStep = SETUP_STEPS[Math.min(index + 1, SETUP_STEPS.length - 1)]
-    setStep(nextStep)
-  }
+  const finish = async () => { setSaving(true); try { await settings.update({ onboardingCompleted: true }); onComplete() } finally { setSaving(false) } }
 
   return (
     <div className="first-run-overlay" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
-      <div className="first-run-surface">
+      <div className="first-run-surface first-run-surface-expanded">
         <div className="first-run-mark" aria-hidden="true"><Sparkles className="h-5 w-5" /></div>
-        <div className="first-run-progress" aria-label={t('stepOf').replace('{step}', String(SETUP_STEPS.indexOf(step) + 1)).replace('{total}', String(SETUP_STEPS.length))}>
-          {SETUP_STEPS.map((item) => (
-            <span key={item} className={cn('first-run-progress-dot', (item === step || (step === 'ready' && item !== 'ready')) && 'is-active')} />
-          ))}
-        </div>
+        <div className="first-run-progress" aria-label={t('stepOf').replace('{step}', String(stepIndex + 1)).replace('{total}', String(SETUP_STEPS.length))}>{SETUP_STEPS.map((item, index) => <span key={item} className={cn('first-run-progress-dot', index <= stepIndex && 'is-active')} />)}</div>
         <h1 id="first-run-title">{t('firstRunTitle')}</h1>
-        <p className="first-run-subtitle">{t('firstRunSubtitle')}</p>
+        <p className="first-run-subtitle">{locale === 'zh-CN' ? '逐项确认你的环境。已有配置会预填，API Key 不会恢复。' : 'Confirm each part of your setup. Existing values are prefilled, but API keys are never restored.'}</p>
 
-        {step === 'language' && (
-          <section className="first-run-step" aria-labelledby="first-run-language-title">
-            <div className="first-run-step-icon"><Globe2 className="h-5 w-5" /></div>
-            <h2 id="first-run-language-title">{t('firstRunLanguageTitle')}</h2>
-            <p>{t('firstRunLanguageDescription')}</p>
-            <div className="first-run-language-options">
-              {LANGUAGE_OPTIONS.map((option) => (
-                <button key={option.value} type="button" className={cn('first-run-language-option', language === option.value && 'is-selected')} onClick={() => void saveLanguage(option.value)}>
-                  <span>{languageOptionLabel(option, locale)}</span>
-                  {language === option.value && <Check className="h-4 w-4" aria-hidden="true" />}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
+        {step === 'language' && <section className="first-run-step" aria-labelledby="first-run-language-title"><div className="first-run-step-icon"><Globe2 className="h-5 w-5" /></div><h2 id="first-run-language-title">{t('firstRunLanguageTitle')}</h2><p>{t('firstRunLanguageDescription')}</p><div className="first-run-language-options">{LANGUAGE_OPTIONS.map((option) => <button key={option.value} type="button" className={cn('first-run-language-option', language === option.value && 'is-selected')} onClick={() => setLanguage(option.value)}><span>{languageOptionLabel(option, locale)}</span>{language === option.value && <Check className="h-4 w-4" aria-hidden="true" />}</button>)}</div></section>}
 
-        {step === 'workspace' && (
-          <section className="first-run-step" aria-labelledby="first-run-workspace-title">
-            <div className="first-run-step-icon"><FolderOpen className="h-5 w-5" /></div>
-            <h2 id="first-run-workspace-title">{t('firstRunWorkspaceTitle')}</h2>
-            <p>{t('firstRunWorkspaceDescription')}</p>
-            <Button type="button" variant="outline" className="first-run-folder-button" onClick={() => void chooseWorkspace()}>
-              <FolderOpen className="h-4 w-4" />
-              {workspace ? t('changeFolder') : t('chooseFolder')}
-            </Button>
-            <p className="first-run-selection">{workspace || t('workspaceNotSelected')}</p>
-          </section>
-        )}
+        {step === 'provider' && <section className="first-run-step first-run-provider-step" aria-labelledby="first-run-provider-title"><div className="first-run-step-icon"><Sparkles className="h-5 w-5" /></div><h2 id="first-run-provider-title">{locale === 'zh-CN' ? '选择模型商' : 'Choose a provider'}</h2><p>{locale === 'zh-CN' ? '只选择你准备使用的模型商，之后可以在设置中继续添加。' : 'Choose the provider you plan to use. You can add more later in Settings.'}</p><Input value={providerSearch} onChange={(event) => setProviderSearch(event.target.value)} placeholder={locale === 'zh-CN' ? '搜索模型商' : 'Search providers'} /><div className="first-run-provider-list">{providersLoading && !providers.length ? <div className="first-run-selection"><RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />{locale === 'zh-CN' ? '正在加载...' : 'Loading...'}</div> : filteredProviders.map((provider) => <button type="button" key={provider.id} className={cn('first-run-provider-option', selectedProviderId === provider.id && 'is-selected')} onClick={() => selectProvider(provider)}><span><strong>{provider.display_name}</strong><small>{provider.configured_models?.[0] || (locale === 'zh-CN' ? '尚未配置模型' : 'No model configured')}</small></span>{selectedProviderId === provider.id && <Check className="h-4 w-4" />}</button>)}</div><Button type="button" variant="outline" className="w-full" onClick={() => setCustomOpen((open) => !open)}><Plus className="mr-2 h-4 w-4" />{locale === 'zh-CN' ? '添加自定义模型商' : 'Add custom provider'}</Button>{customOpen && <div className="first-run-custom-form"><div className="grid grid-cols-2 gap-2"><Input value={customId} onChange={(event) => setCustomId(event.target.value)} placeholder="provider-id" /><Input value={customName} onChange={(event) => setCustomName(event.target.value)} placeholder={locale === 'zh-CN' ? '显示名称' : 'Display name'} /></div><Input value={customUrl} onChange={(event) => setCustomUrl(event.target.value)} placeholder="https://api.example.com/v1" /><Input value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder={locale === 'zh-CN' ? '初始模型（可选）' : 'Initial model (optional)'} /><Button type="button" onClick={() => void addCustomProvider()} disabled={saving}>{locale === 'zh-CN' ? '保存模型商' : 'Save provider'}</Button></div>}</section>}
 
-        {step === 'ready' && (
-          <section className="first-run-step first-run-ready" aria-labelledby="first-run-ready-title">
-            <div className="first-run-step-icon"><Check className="h-5 w-5" /></div>
-            <h2 id="first-run-ready-title">{t('readyTitle')}</h2>
-            <p>{t('readyDescription')}</p>
-            <p className="first-run-selection">{t('setupLater')}</p>
-          </section>
-        )}
+        {step === 'key' && <section className="first-run-step" aria-labelledby="first-run-key-title"><div className="first-run-step-icon"><KeyRound className="h-5 w-5" /></div><h2 id="first-run-key-title">{locale === 'zh-CN' ? '填写 API Key' : 'Enter API key'}</h2><p>{selectedProvider?.display_name || ''} · {locale === 'zh-CN' ? '旧 Key 已清除，请重新输入。可以稍后在设置中添加。' : 'Any previous key was cleared. Enter it again, or add it later in Settings.'}</p><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-..." autoComplete="new-password" />{selectedProvider?.auth_mode === 'none' && <p className="first-run-selection">{locale === 'zh-CN' ? '此模型商不需要 API Key。' : 'This provider does not require an API key.'}</p>}</section>}
+
+        {step === 'model' && <section className="first-run-step" aria-labelledby="first-run-model-title"><div className="first-run-step-icon"><Download className="h-5 w-5" /></div><h2 id="first-run-model-title">{locale === 'zh-CN' ? '选择默认模型' : 'Choose a default model'}</h2><p>{locale === 'zh-CN' ? '一个模型商可以保存多个模型。没有模型也可以完成初始化，但发送会保持禁用。' : 'A provider can keep multiple models. You can finish without one, but sending stays disabled until a model is configured.'}</p><div className="flex gap-2"><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={DEFAULT_MODEL_HINTS[selectedProvider?.id || ''] || 'model-id'} /><Button type="button" variant="outline" size="icon" onClick={() => void fetchModels()} disabled={modelsLoading || !selectedProvider} title={locale === 'zh-CN' ? '获取模型列表' : 'Fetch models'} aria-label={locale === 'zh-CN' ? '获取模型列表' : 'Fetch models'}>{modelsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button></div>{selectedProvider?.has_url && <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="Base URL" />}{models.length > 0 && <div className="first-run-model-list">{models.slice(0, 30).map((item) => <button type="button" key={item.id} className={cn('first-run-model-option', model === item.id && 'is-selected')} onClick={() => setModel(item.id)}><span>{item.name || item.id}</span>{model === item.id && <Check className="h-4 w-4" />}</button>)}</div>}</section>}
+
+        {step === 'workspace' && <section className="first-run-step" aria-labelledby="first-run-workspace-title"><div className="first-run-step-icon"><FolderOpen className="h-5 w-5" /></div><h2 id="first-run-workspace-title">{t('firstRunWorkspaceTitle')}</h2><p>{t('firstRunWorkspaceDescription')}</p><Button type="button" variant="outline" className="first-run-folder-button" onClick={() => void chooseWorkspace()}><FolderOpen className="h-4 w-4" />{workspace ? t('changeFolder') : t('chooseFolder')}</Button><p className="first-run-selection">{workspace || t('workspaceNotSelected')}</p></section>}
+
+        {step === 'ready' && <section className="first-run-step first-run-ready" aria-labelledby="first-run-ready-title"><div className="first-run-step-icon"><Check className="h-5 w-5" /></div><h2 id="first-run-ready-title">{t('readyTitle')}</h2><p>{t('readyDescription')}</p><p className="first-run-selection">{selectedProvider ? `${selectedProvider.display_name}${model ? ` / ${model}` : ''}` : (locale === 'zh-CN' ? '尚未配置模型' : 'No model configured')}</p></section>}
 
         {error && <p className="first-run-error" role="alert">{error}</p>}
-        <div className="first-run-actions">
-          {step !== 'ready' ? (
-            <>
-              <Button type="button" variant="ghost" onClick={() => setStep('ready')}>{t('skip')}</Button>
-              <Button type="button" onClick={next}>{t('continue')}</Button>
-            </>
-          ) : (
-            <Button type="button" onClick={() => void finish()} disabled={saving}>{t('finish')}</Button>
-          )}
-        </div>
+        <div className="first-run-actions"><Button type="button" variant="ghost" onClick={() => setStep(SETUP_STEPS[Math.max(0, stepIndex - 1)])} disabled={stepIndex === 0 || saving}><ChevronLeft className="mr-1 h-4 w-4" />{locale === 'zh-CN' ? '上一步' : 'Back'}</Button>{step === 'ready' ? <Button type="button" onClick={() => void finish()} disabled={saving}>{saving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}{t('finish')}</Button> : <Button type="button" onClick={() => void next()} disabled={saving}>{locale === 'zh-CN' ? '确认并继续' : 'Confirm and continue'}<ChevronRight className="ml-1 h-4 w-4" /></Button>}</div>
       </div>
     </div>
   )

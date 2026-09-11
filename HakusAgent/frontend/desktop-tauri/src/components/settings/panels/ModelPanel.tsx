@@ -20,7 +20,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import {
   Check, Eye, EyeOff, Loader2,
   Activity, ListPlus, KeyRound, Settings2, Search, Trash2, Plus, RefreshCw,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, ArrowLeft, ChevronDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -70,7 +70,11 @@ const DEFAULT_BASE_URL_HINTS: Record<string, string> = {
 }
 
 function providerRouteHint(provider: ProviderInfo, locale: 'zh-CN' | 'en-US'): string {
-  const protocol = provider.wire === 'anthropic' ? 'Anthropic Messages' : 'OpenAI Chat Completions'
+  const protocol = provider.wire === 'anthropic'
+    ? 'Anthropic Messages'
+    : provider.wire === 'responses'
+      ? 'OpenAI Responses'
+      : 'OpenAI Chat Completions'
   const auth = provider.auth_mode === 'oauth' ? 'OAuth' : provider.auth_mode === 'none'
     ? (locale === 'zh-CN' ? '无需密钥' : 'No key required')
     : 'API Key'
@@ -102,9 +106,11 @@ export function ModelPanel() {
   const resetProvidersLoading = useSettingsStore((s) => s.resetProvidersLoading)
 
   const [selectedId, setSelectedId] = useState<string>('')
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [customEditorOpen, setCustomEditorOpen] = useState(false)
   const [modelName, setModelName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
-  const [apiFormat, setApiFormat] = useState<'openai' | 'anthropic'>('openai')
+  const [apiFormat, setApiFormat] = useState<'openai' | 'responses' | 'anthropic'>('openai')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [providerModels, setProviderModels] = useState<string[]>([])
@@ -134,11 +140,10 @@ export function ModelPanel() {
   // 新增: 自定义 Header 对话框
   const [headersDialogOpen, setHeadersDialogOpen] = useState(false)
   const [headerEntries, setHeaderEntries] = useState<{ k: string; v: string }[]>([])
-  const [customDialogOpen, setCustomDialogOpen] = useState(false)
   const [customSaving, setCustomSaving] = useState(false)
   const [lastProviderRefresh, setLastProviderRefresh] = useState<Date | null>(null)
   const [customForm, setCustomForm] = useState({
-    id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: '自定义模型商',
+    id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: '自定义模型商', wire: 'openai',
   })
   const providerRowRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const providerListRef = useRef<HTMLDivElement | null>(null)
@@ -219,7 +224,7 @@ export function ModelPanel() {
       if (providerFormRef.current) providerFormRef.current.scrollTop = 0
       setModelName(selected.model_name || '')
       setBaseUrl(selected.base_url || '')
-      setApiFormat(selected.wire === 'anthropic' ? 'anthropic' : 'openai')
+      setApiFormat(selected.wire === 'anthropic' ? 'anthropic' : selected.wire === 'responses' ? 'responses' : 'openai')
       setApiKey('')
       setShowKey(false)
       // `models` is the provider's catalog (or a live discovery result), not
@@ -242,7 +247,12 @@ export function ModelPanel() {
   const groupedProviders = useMemo(() => {
     const metaMap = new Map(metaList.map((m) => [m.id, m]))
     const filtered = providers.filter((p) => {
-      if (!search.trim()) return true
+      // Dsh keeps the overview focused on routes the user has actually added
+      // or enabled. Searching is the explicit escape hatch for the full
+      // built-in catalog, so no provider becomes unreachable.
+      if (!search.trim()) {
+        return p.is_custom || p.enabled !== false || p.has_api_key || p.is_default || p.id === 'ollama'
+      }
       const q = search.toLowerCase()
       return p.id.toLowerCase().includes(q) || p.display_name.toLowerCase().includes(q)
     })
@@ -263,6 +273,16 @@ export function ModelPanel() {
       .filter((g) => groups.has(g))
       .map((g) => ({ group: g, items: groups.get(g)! }))
   }, [providers, metaList, search])
+
+  const openProviderEditor = (providerId?: string) => {
+    const nextId = providerId
+      || providers.find((provider) => provider.enabled === false)?.id
+      || providers.find((provider) => !provider.has_api_key && provider.id !== 'ollama')?.id
+      || providers[0]?.id
+    if (!nextId) return
+    setSelectedId(nextId)
+    setEditorOpen(true)
+  }
 
   const handleSave = async () => {
     if (!selected) return
@@ -452,11 +472,13 @@ export function ModelPanel() {
         group: customForm.group.trim() || copy('自定义模型商', 'Custom providers'),
         models: customForm.model.trim() ? [customForm.model.trim()] : [],
         enabled: true,
+        wire: customForm.wire,
       })
       await loadProviders()
       setSelectedId(id)
-      setCustomDialogOpen(false)
-      setCustomForm({ id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: copy('自定义模型商', 'Custom providers') })
+      setCustomEditorOpen(false)
+      setEditorOpen(true)
+      resetCustomProviderForm()
       toast.success(copy('自定义模型商已添加', 'Custom provider added'))
     } catch (error: any) {
       toast.error(copy(`添加失败：${error?.message || error}`, `Could not add: ${error?.message || error}`))
@@ -473,12 +495,26 @@ export function ModelPanel() {
       await apiClient.deleteCustomProvider(selected.id)
       await loadProviders()
       setSelectedId('')
+      setEditorOpen(false)
       toast.success(copy('自定义模型商已删除', 'Custom provider deleted'))
     } catch (error: any) {
       toast.error(copy(`删除失败：${error?.message || error}`, `Could not delete: ${error?.message || error}`))
     } finally {
       setSaving(false)
     }
+  }
+
+  const resetCustomProviderForm = () => {
+    setCustomForm({
+      id: '',
+      display_name: '',
+      base_url: '',
+      model: '',
+      api_key: '',
+      api_key_env: '',
+      group: copy('自定义模型商', 'Custom providers'),
+      wire: 'openai',
+    })
   }
 
   const handleToggleProvider = async (enabled: boolean, providerOverride?: ProviderInfo) => {
@@ -520,6 +556,8 @@ export function ModelPanel() {
     }
   }
 
+  // Loading and backend failures belong to the catalog entry point too. An
+  // empty provider list should explain its state before offering actions.
   if (providersLoading && providers.length === 0) {
     return (
       <div className="space-y-3 py-12">
@@ -550,7 +588,7 @@ export function ModelPanel() {
           <div className="mb-1 font-medium">{copy('加载 Provider 列表失败', 'Could not load providers')}</div>
           <div className="break-all text-[12px] text-red-500/80">{providersError.message}</div>
           <div className="mt-2 text-[11px] text-muted-foreground">
-            {copy('请确认 Rust Runtime 已启动且 /v1/providers 可访问。可尝试「高级 → 重启 Backend」或在「连接」页检查服务地址。', 'Make sure the Rust Runtime is running and /v1/providers is reachable. Try Advanced > Restart backend or check the server address under Connection.')}
+            {copy('模型列表暂时无法加载，请稍后重试或重新打开 HakusAI。', 'The model list is temporarily unavailable. Try again or reopen HakusAI.')}
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => loadProviders()}>
@@ -560,10 +598,241 @@ export function ModelPanel() {
     )
   }
 
+  // Keep the first screen focused on the provider catalog. Editing a route is
+  // an intentional second step, matching the compact Dsh settings flow.
+  if (!editorOpen) {
+    return (
+      <div className="model-provider-overview mx-auto w-full max-w-3xl space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-xl font-semibold tracking-tight">{copy('模型', 'Models')}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {copy('填入各模型商的 API 密钥即可使用对应模型。', 'Add a provider API key to use its models.')}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => void loadProviders().then(() => setLastProviderRefresh(new Date()))}
+            disabled={providersLoading}
+            title={copy('刷新模型商列表', 'Refresh providers')}
+            aria-label={copy('刷新模型商列表', 'Refresh providers')}
+          >
+            <RefreshCw className={cn('h-4 w-4', providersLoading && 'animate-spin')} />
+          </Button>
+        </div>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={copy('搜索模型商…', 'Search providers…')}
+            className="h-10 rounded-xl pl-9"
+          />
+        </div>
+
+        <div className="space-y-5">
+          {groupedProviders.map(({ group, items }) => (
+            <section key={group} aria-labelledby={`provider-group-${group}`} className="space-y-2">
+              <h3 id={`provider-group-${group}`} className="px-1 text-xs font-medium text-muted-foreground">
+                {providerGroupLabel(group, locale)}
+              </h3>
+              <div className="space-y-2">
+                {items.map((provider) => {
+                  const enabled = provider.enabled !== false
+                  const configured = provider.has_api_key || provider.auth_mode === 'none' || provider.id === 'ollama'
+                  return (
+                    <div
+                      key={provider.id}
+                      className={cn(
+                        'model-provider-overview-row glass-card flex items-center gap-3 px-4 py-3',
+                        !enabled && 'opacity-65',
+                      )}
+                    >
+                      <ProviderLogo providerId={provider.id} size={24} className="shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-sm font-semibold">{provider.display_name}</span>
+                          <span
+                            className={cn('h-1.5 w-1.5 shrink-0 rounded-full', configured ? 'bg-emerald-400' : 'bg-amber-400')}
+                            title={configured ? copy('已配置', 'Configured') : copy('尚未配置密钥', 'API key not configured')}
+                          />
+                          {provider.is_default && <span className="text-[10px] text-muted-foreground">{copy('当前使用', 'In use')}</span>}
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {provider.model_name || copy('尚未选择模型', 'No model selected')}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={enabled}
+                        disabled={saving}
+                        onCheckedChange={(value) => void handleToggleProvider(value, provider)}
+                        aria-label={`${provider.display_name} ${enabled ? copy('已启用', 'enabled') : copy('已停用', 'disabled')}`}
+                        className="h-5 w-9 shrink-0"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 px-3 text-xs"
+                        onClick={() => openProviderEditor(provider.id)}
+                      >
+                        {copy('编辑', 'Edit')}
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+          {groupedProviders.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-border/80 px-4 py-10 text-center text-sm text-muted-foreground">
+              {search.trim()
+                ? copy('没有匹配的模型商', 'No matching providers')
+                : copy('还没有添加模型商，点击下方按钮开始配置。', 'No providers have been added yet. Start with one of the actions below.')}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-dashed border-border/90 px-4 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-foreground/[0.03] hover:text-foreground"
+            onClick={() => openProviderEditor()}
+          >
+            <Plus className="h-4 w-4" />
+            {copy('添加提供方', 'Add provider')}
+          </button>
+          <button
+            type="button"
+            className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-dashed border-border/90 px-4 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-foreground/[0.03] hover:text-foreground"
+            onClick={() => {
+              resetCustomProviderForm()
+              setCustomEditorOpen(true)
+              setEditorOpen(true)
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            {copy('添加自定义提供方', 'Add custom provider')}
+          </button>
+        </div>
+
+        {lastProviderRefresh && (
+          <p className="text-right text-[11px] text-muted-foreground/70">
+            {copy('上次更新', 'Updated')} {lastProviderRefresh.toLocaleTimeString()}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  if (customEditorOpen) {
+    return (
+      <div className="model-provider-editor-layout block">
+        <div className="model-provider-form mx-auto w-full max-w-3xl space-y-5">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => {
+                resetCustomProviderForm()
+                setCustomEditorOpen(false)
+                setEditorOpen(false)
+              }}
+              aria-label={copy('返回模型列表', 'Back to models')}
+              title={copy('返回模型列表', 'Back to models')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium text-muted-foreground">{copy('模型', 'Models')}</span>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              <h2 className="text-xl font-semibold tracking-tight">{copy('添加自定义模型商', 'Add custom provider')}</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {copy('添加一个兼容 OpenAI Chat Completions 的第三方服务或内网网关。', 'Add an OpenAI Chat Completions-compatible service or private gateway.')}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-id">{copy('唯一 ID', 'Unique ID')}</Label>
+            <Input id="custom-provider-id" value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} placeholder="e.g. acme-ai" />
+            <p className="text-[11px] text-muted-foreground">{copy('用于保存配置和后续识别，建议使用小写短横线。', 'Used to store and identify this provider. Use lowercase kebab-case.')}</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-name">{copy('显示名称', 'Display name')}</Label>
+            <Input id="custom-provider-name" value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} placeholder="e.g. Acme AI" />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-url">Base URL</Label>
+            <Input id="custom-provider-url" value={customForm.base_url} onChange={(e) => setCustomForm((v) => ({ ...v, base_url: e.target.value }))} placeholder="https://api.example.com/v1" />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="custom-provider-model">{copy('初始模型（可选）', 'Initial model (optional)')}</Label>
+              <Input id="custom-provider-model" value={customForm.model} onChange={(e) => setCustomForm((v) => ({ ...v, model: e.target.value }))} placeholder="e.g. acme-chat" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="custom-provider-group">{copy('分组', 'Group')}</Label>
+              <Input id="custom-provider-group" value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} placeholder={copy('自定义模型商', 'Custom providers')} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-wire">{copy('接口格式', 'API format')}</Label>
+            <div className="relative">
+              <select id="custom-provider-wire" value={customForm.wire} onChange={(e) => setCustomForm((v) => ({ ...v, wire: e.target.value }))} className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm">
+                <option value="openai">OpenAI Chat Completions</option>
+                <option value="responses">Responses（原生）</option>
+                <option value="anthropic">Anthropic Messages</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-key">{copy('API Key（可选）', 'API key (optional)')}</Label>
+            <Input id="custom-provider-key" type="password" value={customForm.api_key} onChange={(e) => setCustomForm((v) => ({ ...v, api_key: e.target.value }))} placeholder={copy('保存到系统凭据存储', 'Saved to secure system storage')} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-env">{copy('环境变量名（可选）', 'Environment variable (optional)')}</Label>
+            <Input id="custom-provider-env" value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))} placeholder="e.g. ACME_API_KEY" />
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <Button type="button" variant="ghost" onClick={() => {
+              resetCustomProviderForm()
+              setCustomEditorOpen(false)
+              setEditorOpen(false)
+            }}>
+              {copy('取消', 'Cancel')}
+            </Button>
+            <Button type="button" onClick={handleCreateCustomProvider} disabled={customSaving}>
+              {customSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              {copy('添加模型商', 'Add provider')}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="model-provider-layout grid grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
+    <div className="model-provider-editor-layout block">
       {/* Left: provider list with group + search */}
-      <div className="model-provider-sidebar space-y-1.5">
+      <div className="model-provider-sidebar !hidden" aria-hidden="true">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="text-xs font-medium text-foreground">{copy('模型服务商', 'Model providers')}</div>
@@ -588,7 +857,10 @@ export function ModelPanel() {
               variant="outline"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              onClick={() => setCustomDialogOpen(true)}
+              onClick={() => {
+                resetCustomProviderForm()
+                setCustomEditorOpen(true)
+              }}
               title={copy('添加自定义模型商', 'Add custom provider')}
             >
               <Plus className="mr-1 h-3.5 w-3.5" /> {copy('添加', 'Add')}
@@ -664,9 +936,23 @@ export function ModelPanel() {
       </div>
 
       {/* Right: edit form */}
-      <div ref={providerFormRef} className="model-provider-form space-y-5">
+      <div ref={providerFormRef} className="model-provider-form mx-auto w-full max-w-3xl space-y-5">
         {selected && (
           <>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => setEditorOpen(false)}
+              aria-label={copy('返回模型列表', 'Back to models')}
+              title={copy('返回模型列表', 'Back to models')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium text-muted-foreground">{copy('模型', 'Models')}</span>
+          </div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
                 <ProviderLogo providerId={selected.id} size={28} />
@@ -686,6 +972,26 @@ export function ModelPanel() {
                 )}
                 <Button variant="outline" size="sm" onClick={handleUseModel} disabled={saving || selected.enabled === false}>{copy('使用此模型', 'Use this model')}</Button>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="provider-route">{copy('提供方', 'Provider')}</Label>
+              <div className="relative">
+                <select
+                  id="provider-route"
+                  value={selectedId}
+                  onChange={(event) => setSelectedId(event.target.value)}
+                  className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm"
+                >
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.display_name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              </div>
+              <p className="text-[11px] text-muted-foreground">{providerRouteHint(selected, locale)}</p>
             </div>
 
             <Separator />
@@ -808,15 +1114,19 @@ export function ModelPanel() {
 
             <div className="space-y-2">
               <Label htmlFor="api-format">{copy('API 格式', 'API format')}</Label>
-              <select
-                id="api-format"
-                value={apiFormat}
-                onChange={(event) => setApiFormat(event.target.value as 'openai' | 'anthropic')}
-                className="flex h-10 w-full items-center justify-between rounded-xl border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="openai">OpenAI Chat Completions</option>
-                <option value="anthropic">Anthropic Messages</option>
-              </select>
+              <div className="relative">
+                <select
+                  id="api-format"
+                  value={apiFormat}
+                  onChange={(event) => setApiFormat(event.target.value as 'openai' | 'responses' | 'anthropic')}
+                  className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm"
+                >
+                  <option value="openai">OpenAI Chat Completions</option>
+                  <option value="responses">Responses（原生）</option>
+                  <option value="anthropic">Anthropic Messages</option>
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              </div>
               <p className="text-[11px] text-muted-foreground">{copy('按当前模型商支持的接口选择，保存后立即应用。', 'Choose the interface supported by this provider; changes apply after saving.')}</p>
             </div>
 
@@ -878,33 +1188,6 @@ export function ModelPanel() {
         )}
       </div>
 
-      {/* Add a named OpenAI-compatible route without requiring users to edit TOML. */}
-      <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{copy('添加自定义模型商', 'Add custom provider')}</DialogTitle>
-            <DialogDescription>{copy('适用于兼容 OpenAI Chat Completions 的第三方服务或内网网关。配置会写入 Rust Runtime 的用户配置。', 'For OpenAI Chat Completions-compatible services or private gateways. The configuration is saved to the Rust Runtime user config.')}</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>{copy('唯一 ID', 'Unique ID')}</Label><Input value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} placeholder="e.g. acme-ai" /></div>
-              <div className="space-y-1.5"><Label>{copy('显示名称', 'Display name')}</Label><Input value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} placeholder="e.g. Acme AI" /></div>
-            </div>
-            <div className="space-y-1.5"><Label>Base URL</Label><Input value={customForm.base_url} onChange={(e) => setCustomForm((v) => ({ ...v, base_url: e.target.value }))} placeholder="https://api.example.com/v1" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>{copy('初始模型（可选）', 'Initial model (optional)')}</Label><Input value={customForm.model} onChange={(e) => setCustomForm((v) => ({ ...v, model: e.target.value }))} placeholder="e.g. acme-chat" /></div>
-              <div className="space-y-1.5"><Label>{copy('分组', 'Group')}</Label><Input value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} placeholder={copy('自定义模型商', 'Custom providers')} /></div>
-            </div>
-            <div className="space-y-1.5"><Label>{copy('API Key（可选）', 'API key (optional)')}</Label><Input type="password" value={customForm.api_key} onChange={(e) => setCustomForm((v) => ({ ...v, api_key: e.target.value }))} placeholder={copy('直接保存到系统凭据存储', 'Saved directly to secure system storage')} /></div>
-            <div className="space-y-1.5"><Label>{copy('环境变量名（可选）', 'Environment variable (optional)')}</Label><Input value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))} placeholder="e.g. ACME_API_KEY" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCustomDialogOpen(false)}>{copy('取消', 'Cancel')}</Button>
-            <Button onClick={handleCreateCustomProvider} disabled={customSaving}>{customSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}{copy('添加模型商', 'Add provider')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* === 获取模型列表对话框 === */}
       <Dialog open={modelDialogOpen} onOpenChange={setModelDialogOpen}>
         <DialogContent className="max-w-2xl">
@@ -958,7 +1241,7 @@ export function ModelPanel() {
               {copy('一个 provider 可配多个 Key。主 Key 在下方编辑表单中维护，这里管理额外 Key。', 'A provider can have multiple keys. Maintain the primary key in the form and manage additional keys here.')}
               <br />
               <span className="text-[11px] text-muted-foreground/70">
-                {copy('注意：当前 agent runtime 仍只用主 Key，多 Key 轮换将在 Phase 2 接入。', 'Note: the agent runtime currently uses only the primary key. Key rotation will be added later.')}
+                {copy('当前仅使用主 Key，多 Key 轮换功能将在后续版本提供。', 'Only the primary key is used right now. Key rotation will arrive in a future version.')}
               </span>
             </DialogDescription>
           </DialogHeader>

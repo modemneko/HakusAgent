@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, type AppSettings, type ProviderInfo } from '@/api/typ
 import { applyTheme } from '@/lib/utils'
 import { apiClient } from '@/api/client'
 import { normalizeLanguage, useLocaleStore, type AppLanguage } from '@/lib/i18n'
+import { isProviderConfigured } from '@/lib/providerState'
 
 interface SettingsStore extends AppSettings {
   loaded: boolean
@@ -158,7 +159,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...DEFAULT_SETTINGS,
   loaded: false,
   providers: [],
-  defaultModel: 'deepseek',
+  defaultModel: '',
   providersLoading: false,
   providersError: null,
   providersLoadingSince: null,
@@ -234,9 +235,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ providersLoading: true, providersError: null, providersLoadingSince: Date.now() })
     try {
       const resp = await apiClient.getProviders()
+      const nextProviders = resp.providers || []
+      // Rust exposes the whole built-in catalog. Do not persist its current
+      // pointer as a usable provider when that route is disabled/unconfigured.
+      const selectedDefault = nextProviders.some((provider) =>
+        provider.id === resp.default_model && isProviderConfigured(provider),
+      ) ? resp.default_model : ''
       set({
-        providers: resp.providers || [],
-        defaultModel: resp.default_model || 'deepseek',
+        providers: nextProviders,
+        defaultModel: selectedDefault,
         providersLoading: false,
         providersLoadingSince: null,
       })

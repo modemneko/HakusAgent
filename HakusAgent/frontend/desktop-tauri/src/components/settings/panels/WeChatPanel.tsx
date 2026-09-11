@@ -6,7 +6,6 @@ import { QrCode, Unplug, RefreshCw, Loader2, CheckCircle2, XCircle, MessageSquar
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
@@ -138,10 +137,14 @@ export function WeChatPanel() {
   const StatusIcon = status === 'connected' ? CheckCircle2 : status === 'not_configured' || status === 'expired' ? XCircle : Loader2
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-wechat-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('微信集成', 'WeChat integration')}</h2>
+          <p>{copy('管理微信连接、自动回复和测试消息。', 'Manage the WeChat connection, auto-replies, and test messages.')}</p>
+        </div>
+      </div>
       {/* Header */}
-
-      <Separator />
 
       {/* 连接状态 */}
       <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
@@ -183,8 +186,6 @@ export function WeChatPanel() {
         </div>
       )}
 
-      <Separator />
-
       {/* 配置 */}
       <div className="space-y-3">
         <div className="text-xs font-medium text-muted-foreground">{copy('配置', 'Configuration')}</div>
@@ -193,8 +194,6 @@ export function WeChatPanel() {
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </div>
       </div>
-
-      <Separator />
 
       {/* 手动发送测试 */}
       {status === 'connected' && (
@@ -222,6 +221,6 @@ export function WeChatPanel() {
           </div>
         </div>
       )}
-    </div>
+    </section>
   )
 }

@@ -148,7 +148,7 @@ export function MemoryPanel() {
               <div>
                 <Label className="text-sm font-medium">{copy('长期记忆', 'Long-term memory')}</Label>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {copy('向量化长期记忆。开关仅本地展示，重启 backend 时由配置文件决定。', 'Vectorized long-term memory. This switch is read-only; the backend config controls it on restart.')}
+                  {copy('向量化长期记忆。此状态由应用配置控制。', 'Vectorized long-term memory. This status is controlled by your app settings.')}
                 </p>
               </div>
             </div>

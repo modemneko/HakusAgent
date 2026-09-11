@@ -1562,6 +1562,8 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             get(get_provider_headers).put(set_provider_headers),
         )
         .route("/v1/config", get(get_config).post(set_config))
+        .route("/v1/config/credentials", delete(clear_runtime_credentials))
+        .route("/v1/config/user-data", delete(clear_user_config))
         .route("/v1/config/import", post(import_config))
         .route("/v1/upload", post(upload_files))
         .route("/v1/files", get(list_files))
@@ -1597,6 +1599,7 @@ pub fn build_router(state: RuntimeApiState) -> Router {
             get(list_provider_keys).post(add_provider_key),
         )
         .route("/v1/providers/{id}/keys/{key_id}", delete(delete_provider_key))
+        .route("/v1/providers/{id}/key", delete(clear_provider_api_key))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_runtime_token,
@@ -2101,8 +2104,12 @@ fn read_provider_multi_keys(
     }
     let raw = fs::read_to_string(&path)
         .map_err(|error| ApiError::internal(format!("Failed to read provider config: {error}")))?;
-    let value: toml::Value = raw
-        .parse()
+    // Parse the complete TOML document through serde. `toml::Value`'s
+    // `FromStr` implementation is value-oriented in the version used by the
+    // runtime and rejects a document as soon as it contains a root key.
+    // `toml::from_str` is the document parser used by the rest of the config
+    // stack and preserves support for ordinary root/provider tables.
+    let value: toml::Value = toml::from_str(&raw)
         .map_err(|error| ApiError::internal(format!("Failed to parse provider config: {error}")))?;
     let Some(entries) = value
         .get("providers")
@@ -2257,6 +2264,30 @@ async fn delete_provider_key(
     })
     .map_err(|error| ApiError::internal(format!("Failed to delete provider key: {error}")))?;
     Ok(Json(json!({ "message": "Key deleted", "key_id": key_id })))
+}
+
+/// Remove the primary credential for one provider. This is intentionally a
+/// separate endpoint from multi-key deletion so first-run re-authentication
+/// can clear restored secrets without exposing key material to the client.
+async fn clear_provider_api_key(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let route = {
+        let config = state.config.read().clone();
+        resolve_runtime_provider(&config, &id)?
+    };
+    crate::config::clear_active_provider_api_key(route.id())
+        .map_err(|error| ApiError::internal(format!("Failed to clear provider API key: {error}")))?;
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+    Ok(Json(json!({ "provider": route.id(), "cleared": true })))
 }
 
 async fn create_task(
@@ -6770,6 +6801,8 @@ struct CreateCustomProviderRequest {
     models: Vec<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    #[serde(default)]
+    wire: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -6905,12 +6938,42 @@ fn provider_entry_for_identity(
     display_name: &str,
 ) -> ProviderEntry {
     let route = provider_route_config_for_identity(config, identity);
-    let model = route.default_model();
-    let base_url = route.deepseek_base_url();
+    let route_config = route.provider_config_for(provider);
+    // `Config::default_model()` resolves the active route's built-in default;
+    // using it for every catalog row made an unconfigured OpenAI/Anthropic
+    // entry appear to have the current DeepSeek model. Keep explicit
+    // per-provider values, and only expose the active route's effective
+    // fallback for display.
+    let explicit_model = route_config
+        .and_then(|entry| entry.model.clone())
+        .or_else(|| {
+            (provider == active_provider && identity == active_identity)
+                .then(|| config.default_text_model.clone())
+                .flatten()
+        })
+        .filter(|model| !model.trim().is_empty());
+    let model = explicit_model
+        .clone()
+        .unwrap_or_else(|| {
+            if provider == active_provider {
+                route.default_model()
+            } else {
+                String::new()
+            }
+        });
+    let base_url = route_config
+        .and_then(|entry| entry.base_url.clone())
+        .unwrap_or_else(|| {
+            if provider == active_provider {
+                route.deepseek_base_url()
+            } else {
+                provider.default_base_url().to_string()
+            }
+        });
     let has_api_key = crate::config::has_api_key_for(&route, provider);
-    let key = route
-        .deepseek_api_key_read_only()
-        .ok()
+    let key = has_api_key
+        .then(|| route.deepseek_api_key_read_only().ok())
+        .flatten()
         .filter(|key| !key.trim().is_empty());
     let has_custom_headers = if matches!(provider, ApiProvider::Deepseek | ApiProvider::DeepseekCN) {
         route.http_headers.as_ref().is_some_and(|headers| !headers.is_empty())
@@ -6939,7 +7002,6 @@ fn provider_entry_for_identity(
     } else {
         provider.default_base_url().to_string()
     };
-    let route_config = route.provider_config_for(provider);
     let custom_config = if provider == ApiProvider::Custom {
         route.provider_config_for(provider)
     } else {
@@ -6969,9 +7031,12 @@ fn provider_entry_for_identity(
         provider,
         identity,
     );
-    let configured_models = route_config
+    let mut configured_models = route_config
         .map(|entry| entry.models.clone())
         .unwrap_or_default();
+    if let Some(model) = explicit_model {
+        push_unique_model(&mut configured_models, &model);
+    }
     let description = route_config
         .and_then(|entry| entry.description.clone())
         .filter(|value| !value.trim().is_empty());
@@ -7283,6 +7348,22 @@ async fn create_custom_provider(
         req.api_key_env.as_deref(),
     )
     .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    if let Some(wire) = req.wire.as_deref() {
+        let normalized = wire.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+        let value = match normalized.as_str() {
+            "openai" | "openai-compatible" | "chat-completions" | "completions" => "openai",
+            "responses" | "openai-responses" | "responses-api" => "responses",
+            "anthropic" | "anthropic-messages" | "messages" | "anthropic-compatible" => "anthropic",
+            _ => return Err(ApiError::bad_request("wire must be openai, responses, or anthropic")),
+        };
+        config_persistence::persist_provider_wire_for_identity(
+            state.config_path.as_deref(),
+            ApiProvider::Custom,
+            id,
+            Some(value),
+        )
+        .map_err(|error| ApiError::internal(format!("Failed to save provider API format: {error}")))?;
+    }
     config_persistence::persist_custom_provider_metadata(
         state.config_path.as_deref(),
         id,
@@ -7548,7 +7629,7 @@ async fn update_provider(
         let value = match normalized.as_str() {
             "openai" | "openai-compatible" | "chat-completions" | "completions" => "openai",
             "anthropic" | "anthropic-messages" | "messages" | "anthropic-compatible" => "anthropic",
-            _ => return Err(ApiError::bad_request("wire must be openai or anthropic")),
+            _ => return Err(ApiError::bad_request("wire must be openai, responses, or anthropic")),
         };
         config_persistence::persist_provider_wire_for_identity(
             state.config_path.as_deref(),
@@ -8595,6 +8676,220 @@ async fn set_config(
         persisted: persist,
         requires_reload,
     }))
+}
+
+/// `DELETE /v1/config/credentials` — clear every stored provider credential
+/// without discarding model routes, provider metadata, or the workspace.
+///
+/// First-run uses this narrower operation when a platform restore brings back
+/// an old secret. The key itself is never sent to the client and the user's
+/// explicit model/provider choices remain available for confirmation.
+fn clear_runtime_provider_credentials(state: &RuntimeApiState) -> Result<(), ApiError> {
+    let config_path = config_persistence::config_toml_path(state.config_path.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to resolve config path: {error}")))?;
+    if config_path.exists() {
+        config_persistence::mutate_config_document(&config_path, |document| {
+            config_persistence::remove_document_key_recursive(
+                document.as_table_mut(),
+                "api_key",
+            );
+            config_persistence::remove_document_key_recursive(
+                document.as_table_mut(),
+                "api_keys",
+            );
+            config_persistence::unset_document_value(
+                document,
+                &["providers", "xai", "oauth_credential_generation"],
+            )?;
+            config_persistence::unset_document_value(
+                document,
+                &["providers", "xai", "auth_mode"],
+            )?;
+            config_persistence::unset_document_value(
+                document,
+                &["providers", "xai", "external_credentials"],
+            )?;
+            Ok(())
+        })
+        .map_err(|error| ApiError::internal(format!("Failed to clear config credentials: {error}")))?;
+    }
+
+    // Delete durable slots directly instead of going through the CLI logout
+    // helper, whose xAI revocation transaction opens the credentials
+    // directory even on a fresh install that has none.
+    let secrets = hakus_secrets::Secrets::auto_detect();
+    let mut slots = BTreeSet::new();
+    let mut failures = Vec::new();
+    for provider in ApiProvider::all() {
+        let slot = crate::config::provider_secret_store_slot(*provider);
+        if !slots.insert(slot) {
+            continue;
+        }
+        match secrets.get(slot) {
+            Ok(Some(value)) if !value.trim().is_empty() => {
+                if let Err(error) = secrets.delete(slot) {
+                    failures.push(format!("{slot}: {error}"));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => failures.push(format!("{slot}: {error}")),
+        }
+    }
+    if !failures.is_empty() {
+        return Err(ApiError::internal(format!(
+            "Failed to clear stored provider credentials: {}",
+            failures.join(", ")
+        )));
+    }
+
+    // xAI OAuth files are separate from API-key slots. Skip the lifecycle
+    // lock entirely when no owned file exists; otherwise remove every valid
+    // Hakus-owned generation.
+    if let Ok(directory) = hakus_config::xai_oauth_credentials_dir() {
+        let has_owned_file = fs::read_dir(directory)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name == "xai-auth.json"
+                    || (name.starts_with("xai-auth-") && name.ends_with(".json"))
+            });
+        if has_owned_file {
+            hakus_config::clear_all_xai_oauth_credentials().map_err(|error| {
+                ApiError::internal(format!("Failed to clear xAI OAuth credentials: {error}"))
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn clear_runtime_credentials(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<Value>, ApiError> {
+    clear_runtime_provider_credentials(&state)?;
+
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload provider config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+
+    Ok(Json(json!({ "credentials_cleared": true })))
+}
+
+/// `DELETE /v1/config/user-data` — clear Runtime-owned configuration and
+/// credentials without touching the user's selected workspace directory.
+///
+/// The desktop/mobile clients clear sessions, projects, memory and logs in
+/// their respective stores. This endpoint handles the Rust-owned remainder:
+/// provider routes/models, default selections, API keys, and TUI preferences.
+/// It intentionally removes only files in Hakus' managed state locations;
+/// arbitrary paths referenced by a workspace or MCP configuration are never
+/// recursively deleted.
+async fn clear_user_config(
+    State(state): State<RuntimeApiState>,
+) -> Result<Json<Value>, ApiError> {
+    clear_runtime_provider_credentials(&state)?;
+
+    // Reset the active config document to an empty TOML document instead of
+    // deleting its parent directory. The next load recreates only defaults.
+    let config_path = config_persistence::config_toml_path(state.config_path.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to resolve config path: {error}")))?;
+    if config_path.exists() {
+        config_persistence::mutate_config_document(&config_path, |document| {
+            *document = toml_edit::DocumentMut::new();
+            Ok(())
+        })
+            .map_err(|error| ApiError::internal(format!("Failed to clear config: {error}")))?;
+    }
+    // The TOML writer keeps a one-time `.bak` beside the config. That backup
+    // is useful for migration, but it is still user data and must not survive
+    // an explicit wipe.
+    if let (Some(parent), Some(file_name)) = (config_path.parent(), config_path.file_name()) {
+        let mut backup_name = file_name.to_os_string();
+        backup_name.push(".bak");
+        let backup_path = parent.join(backup_name);
+        if backup_path.exists() {
+            fs::remove_file(&backup_path).map_err(|error| {
+                ApiError::internal(format!("Failed to clear config backup: {error}"))
+            })?;
+        }
+    }
+
+    // TUI preferences are separate from config.toml and can otherwise make a
+    // fresh initialization look partially restored. Missing files are fine.
+    for path in [
+        crate::settings::Settings::path().ok(),
+        crate::settings::TuiPrefs::path().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| {
+                ApiError::internal(format!("Failed to clear settings file {}: {error}", path.display()))
+            })?;
+        }
+    }
+
+    // Audit and tracing logs are managed under Hakus' own state root. Empty
+    // active files in place so open handles remain valid on Windows; rotate
+    // files are safe to remove.
+    if let Some(path) = crate::audit::audit_log_path() {
+        if path.exists() {
+            fs::write(&path, []).map_err(|error| {
+                ApiError::internal(format!("Failed to clear audit log: {error}"))
+            })?;
+        }
+        for suffix in [".1", ".2"] {
+            let mut rotated_name = path
+                .file_name()
+                .map(std::ffi::OsString::from)
+                .unwrap_or_else(|| std::ffi::OsString::from("audit.log"));
+            rotated_name.push(suffix);
+            let rotated = path
+                .parent()
+                .unwrap_or_else(|| FsPath::new("."))
+                .join(rotated_name);
+            if rotated.exists() {
+                fs::remove_file(rotated).map_err(|error| {
+                    ApiError::internal(format!("Failed to clear rotated audit log: {error}"))
+                })?;
+            }
+        }
+    }
+    if let Some(log_dir) = crate::runtime_log::log_directory() {
+        if let Ok(entries) = fs::read_dir(log_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = fs::write(path, []);
+                }
+            }
+        }
+    }
+
+    let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
+        .map_err(|error| ApiError::internal(format!("Failed to reload empty config: {error}")))?;
+    state
+        .runtime_threads
+        .reload_config(reloaded.clone())
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Config reload rejected: {error}")))?;
+    *state.config.write() = reloaded;
+
+    Ok(Json(json!({
+        "cleared": true,
+        "config": config_path.display().to_string(),
+        "workspace_preserved": true,
+    })))
 }
 
 #[derive(Debug, Deserialize)]

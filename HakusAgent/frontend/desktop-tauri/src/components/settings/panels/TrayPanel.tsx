@@ -15,7 +15,6 @@ import { useEffect, useRef, useState } from 'react'
 import { LayoutGrid, Pin, Keyboard, RotateCcw, AlertCircle, Check, CircleDot } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/store/settings'
@@ -260,9 +259,13 @@ export function TrayPanel() {
   const isRegistered = registeredAccelerator === settings.toggleShortcut && Boolean(registeredAccelerator)
 
   return (
-    <div className="space-y-5">
-
-      <Separator />
+    <section className="settings-section settings-tray-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('托盘与快捷键', 'Tray & shortcuts')}</h2>
+          <p>{copy('控制后台驻留、窗口唤起和全局快捷键。', 'Control background presence, window summon, and global shortcuts.')}</p>
+        </div>
+      </div>
 
       {/* Section 1: System Tray */}
       <div className="space-y-3">
@@ -291,8 +294,6 @@ export function TrayPanel() {
           onChange={(v) => settings.setMinimizeToTray(v)}
         />
       </div>
-
-      <Separator />
 
       {/* Section 2: Global Shortcut */}
       <div className="space-y-3">
@@ -408,6 +409,6 @@ export function TrayPanel() {
           {copy('，多个修饰键用', ', join multiple modifiers with')} <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">+</code>.
         </p>
       </div>
-    </div>
+    </section>
   )
 }

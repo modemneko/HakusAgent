@@ -4,7 +4,19 @@ import { Check, ChevronRight, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { X } from 'lucide-react'
 
-const DropdownMenu = DropdownMenuPrimitive.Root
+type DropdownMenuRootProps = React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root>
+
+/**
+ * App menus should not make every other control on the page inert while they
+ * are open. Radix's modal menu mode disables outside pointer events, which
+ * means clicking a neighbouring menu trigger first dismisses the old menu and
+ * only opens the new one on a second click. A non-modal menu still dismisses
+ * on a genuine outside click, while allowing the same pointer event to reach
+ * another trigger and switch menus in one click.
+ */
+const DropdownMenu = ({ modal = false, ...props }: DropdownMenuRootProps) => (
+  <DropdownMenuPrimitive.Root {...props} modal={modal} />
+)
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 const DropdownMenuGroup = DropdownMenuPrimitive.Group
 // Radix default body portal — Floating UI anchors the menu to its trigger

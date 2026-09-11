@@ -1,9 +1,5 @@
 /**
- * BackendOutdatedBanner — 当客户端调用 Runtime API 拿到 404 时显示的提示横幅。
- *
- * 场景: 客户端连接到了旧的 Runtime，或远程服务尚未升级。
- *
- * 这个组件告诉用户 Runtime 版本过旧，以及如何更新本地或远程 Runtime。
+ * A product-facing recovery banner for an unavailable capability.
  */
 
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react'
@@ -18,41 +14,34 @@ interface Props {
   onRetry?: () => void
 }
 
-export function BackendOutdatedBanner({ message, backendVersion, onRetry }: Props) {
+export function BackendOutdatedBanner({ message, onRetry }: Props) {
   return (
     <div className="space-y-4 py-6">
       <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5 text-sm">
         <div className="mb-2 flex items-center gap-2 font-medium text-amber-600 dark:text-amber-400">
           <AlertTriangle className="h-4 w-4" />
-          Runtime 版本过旧
+          功能暂时不可用
         </div>
         <div className="space-y-2 text-[12px] text-amber-700/90 dark:text-amber-300/80">
           <p>
-            客户端向 Runtime 请求了一个新版才有的端点，但当前 Runtime 返回了 404。
-            Tauri 桌面端通常会随应用一起启动 Rust Runtime；如果使用远程地址，请先升级远程服务。
+            当前应用版本暂时无法完成这项操作。请重试，或安装最新版本的 HakusAI。
           </p>
           {message && (
             <p className="rounded-md bg-amber-500/10 p-2 font-mono text-[11px] break-all">
               {message}
             </p>
           )}
-          {typeof backendVersion === 'number' && (
-            <p className="text-[11px]">
-              当前 Runtime API 版本: <code className="font-mono">v{backendVersion}</code>
-              {' '}（客户端期望 v2+）
-            </p>
-          )}
         </div>
       </div>
 
       <div className="rounded-xl border border-border bg-card/40 p-4 text-[12px]">
-        <div className="mb-2 font-medium">解决方法：</div>
+        <div className="mb-2 font-medium">你可以这样处理：</div>
         <ol className="ml-5 list-decimal space-y-1.5 text-muted-foreground">
           <li>
-            重启当前 HakusAI 客户端；如使用远程 Runtime，请确认服务已升级并可访问。
+            重新打开 HakusAI，然后再次尝试刚才的操作。
           </li>
           <li>
-            打开项目发布页：
+            从项目发布页获取最新版本：
             <a
               href="https://github.com/modemneko/HakusAgent/actions"
               target="_blank"
@@ -64,13 +53,13 @@ export function BackendOutdatedBanner({ message, backendVersion, onRetry }: Prop
             </a>
           </li>
           <li>
-            下载对应平台的最新客户端，Tauri 包含 Rust Runtime，无需另装 Python。
+            下载与你的系统对应的安装包并完成更新。
           </li>
           <li>
             安装完成后重新打开客户端，再打开设置面板。
           </li>
           <li>
-            如果仍有 404，请检查设置中的 Runtime 地址和版本。
+            如果问题仍然存在，请稍后再试。
           </li>
         </ol>
       </div>

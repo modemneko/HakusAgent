@@ -1,26 +1,9 @@
 {
-  "name": "hakusagent",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs",
-    "example": "examples",
-    "test": "tests"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/modemneko/HakusAgent.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/modemneko/HakusAgent/issues"
-  },
-  "homepage": "https://github.com/modemneko/HakusAgent#readme"
+  "name": "@mengluo/desktop",
+  "version": "0.4.11",
+  "description": "DeepSeek harness, a private Windows desktop shell for the official DeepSeek Harness UI",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "packageManager": "traversal@0"
 }

@@ -2,10 +2,11 @@
  * Appearance panel — theme 三选一 + 字体大小 slider
  */
 
-import { Palette, Sun, Moon, Monitor, Type } from 'lucide-react'
+import { Palette, Sun, Moon, Monitor, Type, PanelLeft } from 'lucide-react'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/store/settings'
+import { useAppStore } from '@/store/app'
 import { cn } from '@/lib/utils'
 import { LANGUAGE_OPTIONS, languageOptionLabel, localeForRuntime, resolveLocale, useI18n } from '@/lib/i18n'
 import { apiClient } from '@/api/client'
@@ -18,8 +19,20 @@ const THEME_OPTIONS = [
 
 export function AppearancePanel() {
   const settings = useSettingsStore()
+  const sidebarCompact = useAppStore((state) => state.sidebarCompact)
+  const setSidebarCompact = useAppStore((state) => state.setSidebarCompact)
+  const setSidebar = useAppStore((state) => state.setSidebar)
   const { locale, t } = useI18n()
+  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const isAndroidRuntime = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
+  const handleCompactSidebarChange = (compact: boolean) => {
+    setSidebarCompact(compact)
+    // A compact rail is a navigation surface, not a hidden-sidebar state.
+    // Keep it visible when the user enables the preference so it cannot look
+    // as if the switch immediately failed.
+    if (compact && !isAndroidRuntime) setSidebar(true)
+  }
 
   const handleLanguageChange = async (language: typeof settings.language) => {
     await settings.update({ language })
@@ -31,9 +44,20 @@ export function AppearancePanel() {
   }
 
   return (
-    <div className="space-y-5">
+    <section className="settings-section settings-appearance-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('外观', 'Appearance')}</h2>
+          <p>{copy('选择应用主题、语言和文字大小。', 'Choose the app theme, language, and text size.')}</p>
+        </div>
+      </div>
 
-      <div className="space-y-2">
+      <div className="settings-field-group">
+        <div className="settings-field-group-heading">
+          <h3>{t('language')}</h3>
+          <p>{t('languageDescription')}</p>
+        </div>
+        <div className="settings-field">
         <Label htmlFor="ui-language">{t('language')}</Label>
         {isAndroidRuntime ? (
           <div id="ui-language" className="flex h-10 items-center justify-between rounded-xl border border-input bg-muted/30 px-3 py-2 text-sm" aria-label={t('systemLanguage')}>
@@ -50,14 +74,15 @@ export function AppearancePanel() {
             {LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{languageOptionLabel(option, locale)}</option>)}
           </select>
         )}
-        <p className="text-[11px] text-muted-foreground">{t('languageDescription')}</p>
+        </div>
       </div>
 
-      <Separator />
-
-      <div className="space-y-2">
-        <Label>{t('theme')}</Label>
-        <div className="grid grid-cols-3 gap-2.5">
+      <div className="settings-field-group">
+        <div className="settings-field-group-heading">
+          <h3>{t('theme')}</h3>
+          <p>{copy('颜色会跟随系统或手动选择。', 'Follow the system theme or choose one manually.')}</p>
+        </div>
+        <div className="settings-theme-grid">
           {THEME_OPTIONS.map((opt) => {
             const Icon = opt.icon
             const active = settings.theme === opt.value
@@ -66,7 +91,7 @@ export function AppearancePanel() {
                 key={opt.value}
                 onClick={() => settings.setTheme(opt.value)}
                 className={cn(
-                  'flex flex-col items-center gap-2 rounded-xl border p-4 transition-all duration-200',
+                  'settings-theme-option flex flex-col items-center gap-2 rounded-xl border p-4 transition-all duration-200',
                   active
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-border bg-card/40 hover:border-primary/30 hover:bg-accent/30',
@@ -81,9 +106,38 @@ export function AppearancePanel() {
         </div>
       </div>
 
-      <Separator />
+      <div className="settings-field-group settings-sidebar-preference">
+        <div className="settings-field-group-heading">
+          <h3>{copy('侧栏布局', 'Sidebar layout')}</h3>
+          <p>{copy('桌面端默认使用窄图标栏，手机端仍使用完整抽屉。', 'Use a compact icon rail on desktop; phones keep the full drawer.')}</p>
+        </div>
+        <div className="settings-toggle-row flex items-center justify-between gap-4 rounded-xl border border-border bg-card/40 p-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <PanelLeft className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="compact-sidebar" className="text-sm font-medium">
+                {copy('紧凑侧栏', 'Compact sidebar')}
+              </Label>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {copy('关闭后恢复完整的会话列表侧栏。', 'Turn off to restore the full conversation sidebar.')}
+              </p>
+            </div>
+          </div>
+          <Switch
+            id="compact-sidebar"
+            checked={sidebarCompact}
+            onCheckedChange={handleCompactSidebarChange}
+          />
+        </div>
+      </div>
 
-      <div className="space-y-3">
+      <div className="settings-field-group settings-font-size-group">
+        <div className="settings-field-group-heading">
+          <h3>{t('chatFontSize')}</h3>
+          <p>{copy('调整聊天内容的阅读密度。', 'Adjust the reading density of chat content.')}</p>
+        </div>
         <div className="flex items-center justify-between">
           <Label className="flex items-center gap-2">
             <Type className="h-3.5 w-3.5" /> {t('chatFontSize')}
@@ -108,13 +162,13 @@ export function AppearancePanel() {
         </div>
 
         {/* 预览 */}
-        <div className="rounded-xl border border-border bg-card/40 p-3">
+        <div className="settings-preview">
           <div className="text-[11px] text-muted-foreground">{t('preview')}</div>
           <div className="mt-1" style={{ fontSize: `${settings.fontSize}px` }}>
             {t('preview')}: HakusAI
           </div>
         </div>
       </div>
-    </div>
+    </section>
   )
 }

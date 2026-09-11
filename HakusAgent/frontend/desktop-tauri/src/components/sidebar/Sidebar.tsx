@@ -1,152 +1,329 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Plus,
-  Search,
+  Check,
+  Clock3,
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  LayoutList,
+  ListFilter,
   MessageSquare,
   MoreHorizontal,
-  Trash2,
   Pencil,
   Pin,
   PinOff,
+  Plus,
+  Search,
+  Settings2,
   Smartphone,
+  Trash2,
   X,
 } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useAppStore } from '@/store/app'
+import { useProjectsStore } from '@/store/projects'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn, truncate } from '@/lib/utils'
 import { isPhoneViewport } from '@/lib/responsive'
 import { useToast } from '@/components/ui/toast'
-import type { ChatSession } from '@/api/types'
+import type { ChatSession, Project } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
+import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
+import {
+  readSessionWorkspaceMap,
+  writeSessionWorkspaceMap,
+  SESSION_WORKSPACE_EVENT,
+  type SessionWorkspaceMap,
+} from '@/lib/sessionWorkspaces'
 
-interface SessionGroup {
-  label: string
-  sessions: ChatSession[]
-}
+type GroupMode = 'workspace' | 'list'
+type SortMode = 'manual' | 'recent'
+const SIDEBAR_GROUP_KEY = 'hakusai:sidebar-group-mode'
+const SIDEBAR_SORT_KEY = 'hakusai:sidebar-sort-mode'
 
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
-}
-
-function isWeChatSession(s: ChatSession): boolean {
-  return s.provider === 'wechat'
-}
-
-function getSessionGroups(sessions: ChatSession[], language: 'zh-CN' | 'en-US'): SessionGroup[] {
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const weekAgo = new Date(today)
-  weekAgo.setDate(weekAgo.getDate() - 7)
-  const monthAgo = new Date(today)
-  monthAgo.setDate(monthAgo.getDate() - 30)
-
-  const wechat: ChatSession[] = []
-  const pinned: ChatSession[] = []
-  const todayList: ChatSession[] = []
-  const yesterdayList: ChatSession[] = []
-  const weekList: ChatSession[] = []
-  const monthList: ChatSession[] = []
-  const olderList: ChatSession[] = []
-
-  for (const s of sessions) {
-    // 微信会话单独置顶分组，始终排在最上方
-    if (isWeChatSession(s)) {
-      wechat.push(s)
-      continue
-    }
-    if (s.pinned) {
-      pinned.push(s)
-      continue
-    }
-    const d = new Date(s.updated_at)
-    if (isSameDay(d, today)) {
-      todayList.push(s)
-    } else if (isSameDay(d, yesterday)) {
-      yesterdayList.push(s)
-    } else if (d >= weekAgo) {
-      weekList.push(s)
-    } else if (d >= monthAgo) {
-      monthList.push(s)
-    } else {
-      olderList.push(s)
-    }
+function readSidebarPreference<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  try {
+    const value = localStorage.getItem(key) as T | null
+    return value && allowed.includes(value) ? value : fallback
+  } catch {
+    return fallback
   }
+}
 
-  const groups: SessionGroup[] = []
-  const zh = language === 'zh-CN'
-  if (wechat.length) groups.push({ label: zh ? '微信' : 'WeChat', sessions: wechat })
-  if (pinned.length) groups.push({ label: zh ? '置顶' : 'Pinned', sessions: pinned })
-  if (todayList.length) groups.push({ label: zh ? '今天' : 'Today', sessions: todayList })
-  if (yesterdayList.length) groups.push({ label: zh ? '昨天' : 'Yesterday', sessions: yesterdayList })
-  if (weekList.length) groups.push({ label: zh ? '最近 7 天' : 'Last 7 days', sessions: weekList })
-  if (monthList.length) groups.push({ label: zh ? '最近 30 天' : 'Last 30 days', sessions: monthList })
-  if (olderList.length) groups.push({ label: zh ? '更早' : 'Earlier', sessions: olderList })
-  return groups
+function writeSidebarPreference(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Ignore storage failures in private or constrained WebViews.
+  }
+}
+
+function formatSessionTime(timestamp: number, locale: string): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(date)
+  }
+  const sameYear = date.getFullYear() === now.getFullYear()
+  return new Intl.DateTimeFormat(locale, sameYear
+    ? { month: 'short', day: 'numeric' }
+    : { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
+}
+
+function isWeChatSession(session: ChatSession): boolean {
+  return session.provider === 'wechat'
+}
+
+function sessionPreview(session: ChatSession, messages: Record<string, { content: string }[]>, emptyLabel: string): string {
+  const entries = messages[session.id] || []
+  const last = entries[entries.length - 1]
+  return last ? truncate(last.content.replace(/\s+/g, ' ').trim(), 46) : emptyLabel
+}
+
+function sortSessions(sessions: ChatSession[], sortMode: SortMode): ChatSession[] {
+  if (sortMode === 'recent') return [...sessions].sort((a, b) => b.updated_at - a.updated_at)
+  return [...sessions]
+}
+
+interface SessionRowProps {
+  session: ChatSession
+  active: boolean
+  editing: boolean
+  draftTitle: string
+  preview: string
+  timestamp: string
+  onSelect: () => void
+  onStartRename: () => void
+  onDraftTitleChange: (value: string) => void
+  onCommitRename: () => void
+  onCancelRename: () => void
+  onDelete: () => void
+  onTogglePin: () => void
+  labels: { more: string; rename: string; pin: string; unpin: string; delete: string }
+}
+
+function SessionRow({
+  session,
+  active,
+  editing,
+  draftTitle,
+  preview,
+  timestamp,
+  onSelect,
+  onStartRename,
+  onDraftTitleChange,
+  onCommitRename,
+  onCancelRename,
+  onDelete,
+  onTogglePin,
+  labels,
+}: SessionRowProps) {
+  return (
+    <div className={cn('sidebar-session-row group', active && 'is-active')}>
+      <div
+        className="sidebar-session-main"
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onSelect()
+          }
+        }}
+      >
+        <span className="sidebar-session-icon" aria-hidden>
+          {session.provider === 'wechat' ? <Smartphone className="h-3.5 w-3.5" /> : <MessageSquare className="h-3.5 w-3.5" />}
+        </span>
+        <span className="sidebar-session-copy">
+          {editing ? (
+            <Input
+              autoFocus
+              value={draftTitle}
+              onChange={(event) => onDraftTitleChange(event.target.value)}
+              onBlur={onCommitRename}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') onCommitRename()
+                if (event.key === 'Escape') onCancelRename()
+              }}
+              onClick={(event) => event.stopPropagation()}
+              className="h-6 min-w-0 rounded-md border-foreground/15 bg-background/70 px-1.5 text-xs"
+            />
+          ) : (
+            <span className="sidebar-session-title" title={session.title}>
+              {session.pinned && <Pin className="mr-1 h-3 w-3 shrink-0 text-amber-500" />}
+              <span className="truncate">{session.title}</span>
+            </span>
+          )}
+          {!editing && <span className="sidebar-session-preview">{preview}</span>}
+        </span>
+        {!editing && <time className="sidebar-session-time">{timestamp}</time>}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="sidebar-session-actions"
+            title={labels.more}
+            aria-label={labels.more}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" mobileTitle={labels.more} className="w-40">
+          <DropdownMenuItem onSelect={onStartRename}><Pencil className="h-3.5 w-3.5" />{labels.rename}</DropdownMenuItem>
+          {!isWeChatSession(session) && (
+            <DropdownMenuItem onSelect={onTogglePin}>
+              {session.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+              {session.pinned ? labels.unpin : labels.pin}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" />{labels.delete}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
 }
 
 export function Sidebar() {
   const { locale, t } = useI18n()
-  const sessions = useSessionStore((s) => s.sessions)
-  const activeId = useSessionStore((s) => s.activeSessionId)
-  const messages = useSessionStore((s) => s.messages)
-  const createSession = useSessionStore((s) => s.createSession)
-  const setActiveSession = useSessionStore((s) => s.setActiveSession)
-  const deleteSession = useSessionStore((s) => s.deleteSession)
-  const renameSession = useSessionStore((s) => s.renameSession)
-  const pinSession = useSessionStore((s) => s.pinSession)
-  const setSidebar = useAppStore((s) => s.setSidebar)
+  const sessions = useSessionStore((state) => state.sessions)
+  const activeId = useSessionStore((state) => state.activeSessionId)
+  const messages = useSessionStore((state) => state.messages)
+  const createSession = useSessionStore((state) => state.createSession)
+  const setActiveSession = useSessionStore((state) => state.setActiveSession)
+  const deleteSession = useSessionStore((state) => state.deleteSession)
+  const renameSession = useSessionStore((state) => state.renameSession)
+  const pinSession = useSessionStore((state) => state.pinSession)
+  const projects = useProjectsStore((state) => state.projects)
+  const activeProjectId = useProjectsStore((state) => state.activeProjectId)
+  const setActiveProject = useProjectsStore((state) => state.setActive)
+  const createProject = useProjectsStore((state) => state.create)
+  const setSidebar = useAppStore((state) => state.setSidebar)
+  const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const toast = useToast()
 
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [groupMode, setGroupMode] = useState<GroupMode>(() => readSidebarPreference(SIDEBAR_GROUP_KEY, 'workspace', ['workspace', 'list']))
+  const [sortMode, setSortMode] = useState<SortMode>(() => readSidebarPreference(SIDEBAR_SORT_KEY, 'recent', ['manual', 'recent']))
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+  const [sessionWorkspaces, setSessionWorkspaces] = useState<SessionWorkspaceMap>(readSessionWorkspaceMap)
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set())
+  const [creatingProject, setCreatingProject] = useState(false)
+  const expandedProjectsInitialized = useRef(false)
+  const searchRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    if (expandedProjectsInitialized.current || projects.length === 0) return
+    expandedProjectsInitialized.current = true
+    setExpandedProjects(new Set(projects.map((project) => project.id)))
+  }, [projects])
+
+  useEffect(() => {
+    const refresh = () => setSessionWorkspaces(readSessionWorkspaceMap())
+    window.addEventListener(SESSION_WORKSPACE_EVENT, refresh)
+    return () => window.removeEventListener(SESSION_WORKSPACE_EVENT, refresh)
+  }, [])
+
+  const copy = (zh: string, en: string) => locale.startsWith('zh') ? zh : en
   const closeAfterMobileAction = () => {
-    if (isPhoneViewport()) {
-      setSidebar(false)
-    }
+    if (isPhoneViewport()) setSidebar(false)
   }
 
   const filtered = useMemo(() => {
     if (!search.trim()) return sessions
-    const q = search.toLowerCase()
-    return sessions.filter((s) => {
-      if (s.title.toLowerCase().includes(q)) return true
-      const msgs = messages[s.id] || []
-      return msgs.some((m) => m.content.toLowerCase().includes(q))
+    const query = search.toLowerCase()
+    return sessions.filter((session) => {
+      if (session.title.toLowerCase().includes(query)) return true
+      return (messages[session.id] || []).some((message) => message.content.toLowerCase().includes(query))
     })
-  }, [sessions, messages, search])
+  }, [messages, search, sessions])
 
-  const groups = useMemo(() => {
-    const sorted = [...filtered].sort((a, b) => b.updated_at - a.updated_at)
-    return getSessionGroups(sorted, locale)
-  }, [filtered, locale])
+  const ordered = useMemo(() => sortSessions(filtered, sortMode), [filtered, sortMode])
+  const unassignedSessions = useMemo(
+    () => ordered.filter((session) => !sessionWorkspaces[session.id] || !projects.some((project) => project.id === sessionWorkspaces[session.id])),
+    [ordered, projects, sessionWorkspaces],
+  )
+  const sessionsForProject = (project: Project) => ordered.filter((session) => sessionWorkspaces[session.id] === project.id)
 
-  const handleNew = () => {
-    // Surface backend failures — a silent rollback made "new chat" look
-    // like a dead button whenever POST /v1/threads failed (e.g. a stale
-    // provider pointer). The toast carries the runtime's real error text.
-    createSession().catch((e: unknown) => {
-      const detail = e instanceof Error ? e.message : String(e)
+  const openSearch = () => {
+    setSearchOpen((open) => {
+      const next = !open
+      if (next) window.requestAnimationFrame(() => searchRef.current?.focus())
+      else setSearch('')
+      return next
+    })
+  }
+
+  const changeGroupMode = (mode: GroupMode) => {
+    setGroupMode(mode)
+    writeSidebarPreference(SIDEBAR_GROUP_KEY, mode)
+  }
+
+  const changeSortMode = (mode: SortMode) => {
+    setSortMode(mode)
+    writeSidebarPreference(SIDEBAR_SORT_KEY, mode)
+  }
+
+  const handleNew = async (projectId = activeProjectId) => {
+    if (!projectId) {
+      toast.info(copy('请先选择工作区，或在主区选择“直接对话”。', 'Choose a workspace first, or use “Direct chat” from the main area.'))
+      return
+    }
+    try {
+      if (projectId !== activeProjectId) setActiveProject(projectId)
+      setExpandedProjects((current) => new Set(current).add(projectId))
+      const id = await createSession()
+      const nextMap = { ...sessionWorkspaces, [id]: projectId }
+      setSessionWorkspaces(nextMap)
+      writeSessionWorkspaceMap(nextMap)
+      setSearch('')
+      closeAfterMobileAction()
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
       toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
-    })
-    setSearch('')
-    closeAfterMobileAction()
+    }
+  }
+
+  /**
+   * Harness-style workspace action: choosing a folder is a navigation action,
+   * not a settings action. Register the folder, make it current, then open a
+   * blank conversation in that workspace so the next user action is obvious.
+   */
+  const handleCreateWorkspace = async () => {
+    if (creatingProject) return
+    setCreatingProject(true)
+    try {
+      const selected = await pickProjectFolder()
+      if (!selected) return
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
+      const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
+      const project = await createProject({ name, path: selected.path, source_uri: selected.sourceUri })
+      setExpandedProjects((current) => new Set(current).add(project.id))
+      await handleNew(project.id)
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
+      toast.error(locale.startsWith('zh') ? `新建工作区失败：${detail}` : `Could not create workspace: ${detail}`)
+    } finally {
+      setCreatingProject(false)
+    }
   }
 
   const handleSelect = (id: string) => {
@@ -154,195 +331,167 @@ export function Sidebar() {
     closeAfterMobileAction()
   }
 
-  const handleStartRename = (id: string, currentTitle: string) => {
-    setEditingId(id)
-    setDraftTitle(currentTitle)
-  }
-
-  const handleCommitRename = () => {
-    if (editingId && draftTitle.trim()) {
-      renameSession(editingId, draftTitle.trim())
-    }
-    setEditingId(null)
-  }
-
   const handleDelete = async (id: string) => {
     try {
       await deleteSession(id)
       toast.success(t('deleted'))
-    } catch (e: any) {
-      toast.error(`${t('deleteFailed')}: ${e?.message || e}`)
+    } catch (error: any) {
+      toast.error(`${t('deleteFailed')}: ${error?.message || error}`)
     }
   }
 
-  return (
-    <aside className="sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
-      {/* Brand + new chat (Codex 风格品牌区) */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-[14px] font-semibold tracking-tight">HakusAI</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-            onClick={handleNew}
-            title={t('newChat')}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+  const startRename = (session: ChatSession) => {
+    setEditingId(session.id)
+    setDraftTitle(session.title)
+  }
+
+  const commitRename = () => {
+    if (editingId && draftTitle.trim()) void renameSession(editingId, draftTitle.trim())
+    setEditingId(null)
+  }
+
+  const sessionLabels = { more: t('moreActions'), rename: t('rename'), pin: t('pin'), unpin: t('unpin'), delete: t('delete') }
+
+  const renderSession = (session: ChatSession) => (
+    <SessionRow
+      key={session.id}
+      session={session}
+      active={session.id === activeId}
+      editing={editingId === session.id}
+      draftTitle={draftTitle}
+      preview={sessionPreview(session, messages, t('noMessages'))}
+      timestamp={formatSessionTime(session.updated_at, locale)}
+      onSelect={() => handleSelect(session.id)}
+      onStartRename={() => startRename(session)}
+      onDraftTitleChange={setDraftTitle}
+      onCommitRename={commitRename}
+      onCancelRename={() => setEditingId(null)}
+      onDelete={() => void handleDelete(session.id)}
+      onTogglePin={() => void pinSession(session.id, !session.pinned)}
+      labels={sessionLabels}
+    />
+  )
+
+  const renderWorkspaceGroup = (title: string, project: Project | null, items: ChatSession[]) => {
+    const groupId = project?.id || 'unassigned'
+    const expanded = expandedProjects.has(groupId)
+    return (
+    <section key={groupId} className="sidebar-workspace-group">
+      <div className="sidebar-workspace-heading">
+        <button
+          type="button"
+          className={cn('sidebar-workspace-title', project && activeProjectId === project.id && 'is-active')}
+          onClick={() => {
+            if (project) setActiveProject(project.id)
+            setExpandedProjects((current) => {
+              const next = new Set(current)
+              if (next.has(groupId)) next.delete(groupId)
+              else next.add(groupId)
+              return next
+            })
+          }}
+          title={project?.path}
+          aria-expanded={expanded}
+        >
+          <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !expanded && '-rotate-90')} />
+          <Folder className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{title}</span>
+        </button>
+        {project && (
           <button
             type="button"
-            className="sidebar-mobile-close"
-            onClick={() => setSidebar(false)}
-            aria-label={t('closeSidebar')}
-            title={t('closeSidebar')}
+            className="sidebar-workspace-new"
+            onClick={(event) => {
+              event.stopPropagation()
+              void handleNew(project.id)
+            }}
+            title={copy('在此工作区新建会话', 'New chat in this workspace')}
+            aria-label={copy('在此工作区新建会话', 'New chat in this workspace')}
           >
-            <X className="h-5 w-5" />
+            <Plus className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      {expanded && (items.length > 0 ? <div className="sidebar-session-list">{items.map(renderSession)}</div> : <p className="sidebar-workspace-empty">{copy('暂无会话', 'No conversations yet')}</p>)}
+    </section>
+    )
+  }
+
+  const settingsButton = (
+    <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => setSettingsOpen(true)} title={t('settings')} aria-label={t('settings')}>
+      <Settings2 className="h-[17px] w-[17px]" />
+    </Button>
+  )
+
+  return (
+    <aside className="sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
+      <div className="sidebar-compact-rail" aria-label={t('toggleSidebar')}>
+        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-[17px] w-[17px]" /></Button>
+        <div className="sidebar-rail-sessions" aria-label={t('newChat')}>
+          {sessions.slice(0, 5).map((session) => <button key={session.id} type="button" className={cn('sidebar-rail-session', session.id === activeId && 'is-active')} onClick={() => handleSelect(session.id)} title={session.title} aria-label={session.title}><MessageSquare className="h-4 w-4" /></button>)}
+        </div>
+        <div className="sidebar-rail-spacer" />
+        {settingsButton}
+      </div>
+
+      <div className="sidebar-expanded-content flex h-full min-h-0 w-full min-w-0 shrink-0 flex-col">
+        <div className="sidebar-header">
+          <button type="button" className="sidebar-mobile-close" onClick={() => setSidebar(false)} aria-label={t('closeSidebar')} title={t('closeSidebar')}><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="sidebar-workspace-toolbar">
+          <div className="sidebar-workspace-label"><span>{copy('工作区', 'Workspace')}</span></div>
+          <div className="sidebar-toolbar-actions">
+            <button type="button" className={cn('sidebar-toolbar-button', searchOpen && 'is-active')} onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-3.5 w-3.5" /></button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><button type="button" className="sidebar-toolbar-button" title={copy('分组与排序', 'Group and sort')} aria-label={copy('分组与排序', 'Group and sort')}><ListFilter className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" mobileTitle={copy('分组与排序', 'Group and sort')} className="w-56">
+                <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('分组方式', 'Group by')}</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => changeGroupMode('workspace')}><Folder className="h-3.5 w-3.5" />{copy('按工作区', 'Workspace')}{groupMode === 'workspace' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => changeGroupMode('list')}><LayoutList className="h-3.5 w-3.5" />{copy('单列表', 'Single list')}{groupMode === 'list' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('排序方式', 'Sort by')}</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => changeSortMode('manual')}><ListFilter className="h-3.5 w-3.5" />{copy('手动排序', 'Manual')}{sortMode === 'manual' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => changeSortMode('recent')}><Clock3 className="h-3.5 w-3.5" />{copy('最近更新', 'Recently updated')}{sortMode === 'recent' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <button
+              type="button"
+              className="sidebar-toolbar-button"
+              onClick={() => void handleCreateWorkspace()}
+              disabled={creatingProject}
+              title={copy('添加工作区', 'Add workspace')}
+              aria-label={copy('添加工作区', 'Add workspace')}
+            >{creatingProject ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : <FolderPlus className="h-3.5 w-3.5" />}</button>
+          </div>
+        </div>
+
+        {searchOpen && <div className="sidebar-search-row"><Search className="h-3.5 w-3.5 text-muted-foreground/70" /><Input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchSessions')} className="h-7 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-0" />{search && <button type="button" className="sidebar-search-clear" onClick={() => setSearch('')} aria-label={copy('清空搜索', 'Clear search')}><X className="h-3.5 w-3.5" /></button>}</div>}
+
+        <div className="sidebar-content-scroll">
+          {groupMode === 'workspace' ? (
+            <div className="sidebar-workspace-list">
+              {search && ordered.length === 0 ? (
+                <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{t('noMatches')}</span></div>
+              ) : (
+                <>
+                  {projects.map((project) => renderWorkspaceGroup(project.name, project, sessionsForProject(project)))}
+                  {unassignedSessions.length > 0 && renderWorkspaceGroup(copy('未分组', 'Unassigned'), null, unassignedSessions)}
+                  {sessions.length === 0 && projects.length === 0 && <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="sidebar-list-mode">{ordered.length > 0 ? ordered.map(renderSession) : <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{search ? t('noMatches') : projects.length > 0 ? copy('点击工作区右侧的 + 新建会话', 'Use the + beside a workspace to start a chat') : copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}</div>
+          )}
+        </div>
+        <div className="sidebar-footer-action">
+          <button type="button" className="sidebar-settings-row" onClick={() => setSettingsOpen(true)}>
+            <Settings2 className="h-4 w-4" />
+            <span>{t('settings')}</span>
           </button>
         </div>
       </div>
-
-      {/* Search (Codex 风格搜索框) */}
-      <div className="px-3 pb-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('searchSessions')}
-            className="h-7 rounded-md border-border/70 bg-background/90 pl-8 text-[12px] placeholder:text-muted-foreground/60 focus-visible:rounded-md"
-          />
-        </div>
-      </div>
-
-      {/* Session list */}
-      <div className="flex-1 overflow-y-auto px-3">
-        <div className="w-full min-w-0 space-y-5 py-2">
-          {groups.length === 0 ? (
-            <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-              <MessageSquare className="mx-auto mb-2 h-6 w-6 opacity-40" />
-              {search ? t('noMatches') : t('noSessions')}
-            </div>
-          ) : (
-            groups.map((group) => (
-              <div key={group.label} className="space-y-0.5">
-                <div className="sticky top-0 z-10 bg-card/95 px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground/65">
-                  {group.label}
-                </div>
-                {group.sessions.map((session) => {
-                  const isActive = session.id === activeId
-                  const msgs = messages[session.id] || []
-                  const lastMsg = msgs[msgs.length - 1]
-                  const preview = lastMsg
-                    ? truncate(lastMsg.content.replace(/\s+/g, ' ').trim(), 34)
-                    : t('noMessages')
-
-                  return (
-                    <div
-                      key={session.id}
-                      className={cn(
-                        'group flex w-full min-w-0 cursor-pointer flex-col gap-0.5 rounded-md px-2.5 py-2 transition-colors',
-                        isActive
-                          ? 'bg-primary/10 text-primary'
-                          : 'hover:bg-accent/60 text-foreground',
-                      )}
-                    >
-                      {/* Title row */}
-                      <div className="flex w-full min-w-0 items-center justify-between gap-1">
-                        <div
-                          className="flex min-w-0 flex-1 items-center"
-                          onClick={() => handleSelect(session.id)}
-                        >
-                          {editingId === session.id ? (
-                            <Input
-                              autoFocus
-                              value={draftTitle}
-                              onChange={(e) => setDraftTitle(e.target.value)}
-                              onBlur={handleCommitRename}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleCommitRename()
-                                if (e.key === 'Escape') setEditingId(null)
-                              }}
-                              className="h-5 min-w-0 flex-1 rounded border-border/60 bg-background/60 px-1 text-xs"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          ) : (
-                            <span className="flex min-w-0 flex-1 items-center text-[13px] font-medium">
-                              {session.pinned && (
-                                <Pin className="mr-1 inline h-3 w-3 shrink-0 text-amber-500" />
-                              )}
-                              {session.provider === 'wechat' && (
-                                <Smartphone className="mr-1 inline h-3 w-3 shrink-0 text-green-500" />
-                              )}
-                              <span className="block max-w-full truncate">{session.title}</span>
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Action menu */}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              title={t('moreActions')}
-                              aria-label={t('moreActions')}
-                              className="relative z-20 ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100"
-                            >
-                              <MoreHorizontal className="h-3.5 w-3.5" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" mobileTitle={t('moreActions')} className="w-36">
-                            <DropdownMenuItem
-                              onSelect={() => handleStartRename(session.id, session.title)}
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" /> {t('rename')}
-                            </DropdownMenuItem>
-                            {!isWeChatSession(session) && (
-                              <>
-                                <DropdownMenuItem
-                                  onSelect={() => pinSession(session.id, !session.pinned)}
-                                >
-                                  {session.pinned ? (
-                                    <>
-                                      <PinOff className="mr-2 h-3.5 w-3.5" /> {t('unpin')}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Pin className="mr-2 h-3.5 w-3.5" /> {t('pin')}
-                                    </>
-                                  )}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                              </>
-                            )}
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onSelect={() => handleDelete(session.id)}
-                            >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" /> {t('delete')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                      <div
-                        className="truncate text-[11px] text-muted-foreground"
-                        onClick={() => handleSelect(session.id)}
-                      >
-                        {preview}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Bottom spacer for visual balance */}
-      <div className="h-2 shrink-0" />
     </aside>
   )
 }

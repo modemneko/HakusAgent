@@ -1,0 +1,27 @@
+{
+  "color": {
+    "ink": "#f7f6fb",
+    "muted": "#a8a6b4",
+    "surface": "#17171d",
+    "surfaceRaised": "#202028",
+    "accent": "#a99cff",
+    "accentSoft": "#8074d8",
+    "success": "#72d6a0",
+    "warning": "#e5bb73"
+  },
+  "fontFamily": {
+    "sans": "-apple-system, BlinkMacSystemFont, Segoe UI, Microsoft YaHei, sans-serif",
+    "display": "-apple-system, BlinkMacSystemFont, SF Pro Display, Segoe UI, sans-serif"
+  },
+  "radius": {
+    "surface": 22,
+    "control": 12,
+    "pill": 999
+  },
+  "motion": {
+    "easeOut": "cubic-bezier(0.22, 1, 0.36, 1)",
+    "fastMs": 160,
+    "normalMs": 260,
+    "slowMs": 520
+  }
+}

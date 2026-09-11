@@ -3,7 +3,6 @@ import { Bell, Loader2, Phone, Play, Square, Upload, Volume2 } from 'lucide-reac
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { useSettingsStore } from '@/store/settings'
@@ -223,9 +222,17 @@ export function TtsPanel() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
+    <section className="settings-section settings-voice-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('语音与提示', 'Voice & alerts')}</h2>
+          <p>{copy('把通话、播报和试听集中管理，按需开启即可。', 'Manage calls, alerts, and voice previews in one place.')}</p>
+        </div>
+      </div>
+
+      <div className="settings-voice-groups">
+      <section className="settings-subsection">
+        <div className="settings-subsection-heading flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/12 text-primary">
               <Phone className="h-4 w-4" />
@@ -244,9 +251,9 @@ export function TtsPanel() {
         </div>
 
         {settings.voiceCallEnabled && (
-          <div className="space-y-4 rounded-xl border border-border/70 bg-background/45 p-4">
+          <div className="settings-subpanel">
             <div className="space-y-1.5">
-              <Label htmlFor="voice-call-backend">{copy('通话后端', 'Call backend')}</Label>
+              <Label htmlFor="voice-call-backend">{copy('通话引擎', 'Call engine')}</Label>
               <select
                 id="voice-call-backend"
                 value={settings.voiceCallBackend}
@@ -426,7 +433,7 @@ export function TtsPanel() {
                 </div>
 
                 {/* 语音复刻（声音定制） */}
-                <div className="space-y-3 rounded-xl border border-border/70 bg-background/45 p-4">
+                <div className="settings-subpanel settings-voice-clone">
                   <div className="text-sm font-semibold">{copy('语音复刻（声音定制）', 'Voice cloning')}</div>
                   <p className="text-[11px] text-muted-foreground">
                     {copy('上传 10–20 秒的 WAV 音频文件，即可生成与你声音相似的定制音色。', 'Upload a 10–20 second WAV file to create a custom voice similar to yours.')}
@@ -481,10 +488,8 @@ export function TtsPanel() {
         )}
       </section>
 
-      <Separator />
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
+      <section className="settings-subsection">
+        <div className="settings-subsection-heading flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/12 text-amber-500">
               <Bell className="h-4 w-4" />
@@ -503,7 +508,7 @@ export function TtsPanel() {
         </div>
 
         {settings.voiceBroadcastEnabled && (
-          <div className="space-y-4 rounded-xl border border-border/70 bg-background/45 p-4">
+          <div className="settings-subpanel">
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="broadcast-mode">{copy('提醒方式', 'Notification style')}</Label>
@@ -542,24 +547,22 @@ export function TtsPanel() {
         )}
       </section>
 
-      <Separator />
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
+      <section className="settings-subsection">
+        <div className="settings-subsection-heading flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/12 text-primary">
               <Volume2 className="h-4 w-4" />
             </div>
             <div>
               <div className="text-sm font-semibold">{copy('TTS 引擎', 'TTS engine')}</div>
-              <p className="text-[11px] text-muted-foreground">{copy('用于试听和 TTS 播报，走当前 HakusAI backend。', 'Used for previews and TTS broadcasts through the current HakusAI backend.')}</p>
+              <p className="text-[11px] text-muted-foreground">{copy('用于试听和语音播报。', 'Used for previews and voice playback.')}</p>
             </div>
           </div>
           <Switch checked={settings.ttsEnabled} onCheckedChange={(v) => settings.update({ ttsEnabled: v })} />
         </div>
 
         {settings.ttsEnabled && (
-          <div className="space-y-4 rounded-xl border border-border/70 bg-background/45 p-4">
+          <div className="settings-subpanel">
             <div className="space-y-1.5">
               <Label htmlFor="tts-provider">Provider</Label>
               <select
@@ -659,6 +662,7 @@ export function TtsPanel() {
           </div>
         )}
       </section>
-    </div>
+      </div>
+    </section>
   )
 }

@@ -28,6 +28,9 @@ interface ResizeHandleProps {
   maxPx?: number
   collapseThreshold?: number
   onCollapse?: () => void
+  expandThreshold?: number
+  startWidthPx?: number
+  onExpand?: (width: number) => void
 }
 
 export function ResizeHandle({
@@ -38,6 +41,9 @@ export function ResizeHandle({
   maxPx = 600,
   collapseThreshold,
   onCollapse,
+  expandThreshold,
+  startWidthPx,
+  onExpand,
 }: ResizeHandleProps) {
   const [hovering, setHovering] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -73,7 +79,7 @@ export function ResizeHandle({
     e.stopPropagation()
     setDragging(true)
     startXRef.current = e.clientX
-    startWidthRef.current = getCurrentWidth()
+    startWidthRef.current = startWidthPx ?? getCurrentWidth()
     // Mark the document as "currently resizing" so CSS can disable
     // width transitions on panel wrappers. Without this, the 200ms
     // transition on the wrapper makes the panel lag behind the cursor
@@ -91,6 +97,10 @@ export function ResizeHandle({
       ? startWidthRef.current + delta
       : startWidthRef.current - delta
 
+    if (expandThreshold !== undefined && onExpand && newWidth >= expandThreshold) {
+      onExpand(Math.max(minPx, Math.min(maxPx, newWidth)))
+    }
+
     // Auto-collapse: if the user dragged the panel narrower than the
     // threshold, fire onCollapse and stop the drag. Also reset the CSS
     // variable to minPx so the panel reopens at a sensible width later.
@@ -106,7 +116,7 @@ export function ResizeHandle({
     }
 
     setWidth(newWidth)
-  }, [dragging, side, setWidth, collapseThreshold, onCollapse, cssVar, minPx])
+  }, [dragging, side, setWidth, collapseThreshold, onCollapse, cssVar, minPx, expandThreshold, onExpand, maxPx])
 
   const onPointerUp = useCallback(() => {
     // If the user released the drag below minPx (but above the collapse

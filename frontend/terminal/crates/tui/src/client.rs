@@ -1578,6 +1578,7 @@ fn provider_wire_format_for_config(
     let wire = config
         .and_then(|cfg| cfg.provider_config_for(catalog))
         .and_then(|entry| entry.wire.as_deref());
+    let prefers_responses = wire_config_prefers_responses(wire);
     let prefers_anthropic = matches!(
         api_provider,
         ApiProvider::DeepseekAnthropic
@@ -1585,6 +1586,10 @@ fn provider_wire_format_for_config(
             | ApiProvider::ModelstudioTokenPlanAnthropic
             | ApiProvider::ModelstudioCodingPlanAnthropic
     ) || wire_config_prefers_anthropic(wire);
+
+    if prefers_responses && api_provider == ApiProvider::Custom {
+        return WireFormat::Responses;
+    }
 
     if prefers_anthropic
         && matches!(
@@ -1616,6 +1621,14 @@ fn provider_wire_format_for_config(
                 WireFormat::ChatCompletions
             }
         })
+}
+
+fn wire_config_prefers_responses(wire: Option<&str>) -> bool {
+    let Some(raw) = wire.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let normalized = raw.to_ascii_lowercase().replace(['_', ' '], "-");
+    matches!(normalized.as_str(), "responses" | "openai-responses" | "responses-api")
 }
 
 fn wire_config_prefers_anthropic(wire: Option<&str>) -> bool {

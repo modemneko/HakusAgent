@@ -1045,6 +1045,11 @@ pub struct RuntimeThreadStore {
     /// the queue; this guard prevents concurrent replay/wake requests from
     /// starting more than one turn for the same message.
     mail_mutation: Arc<parking_lot::Mutex<()>>,
+    /// Thread ids removed while an engine could still be writing. Late writes
+    /// from a wedged or winding-down engine must not resurrect files for a
+    /// thread the user already deleted. Process-lifetime only: after a
+    /// restart no engine exists that could recreate the records.
+    deleted_tombstones: Arc<parking_lot::Mutex<HashSet<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1100,6 +1105,7 @@ impl RuntimeThreadStore {
             thread_mutation: Arc::new(parking_lot::Mutex::new(())),
             turn_mutation: Arc::new(parking_lot::Mutex::new(())),
             mail_mutation: Arc::new(parking_lot::Mutex::new(())),
+            deleted_tombstones: Arc::new(parking_lot::Mutex::new(HashSet::new())),
         };
         store.with_event_transaction(EVENT_TRANSACTION_LOCK_TIMEOUT, || {
             repair_torn_event_log_tails(&store.events_dir)?;
@@ -1274,11 +1280,30 @@ impl RuntimeThreadStore {
         Ok(true)
     }
 
+    /// Record a thread id as deleted so late engine writes become no-ops.
+    /// Tombstones live only for this process: after a restart no engine
+    /// exists that could resurrect the deleted records.
+    pub fn tombstone_thread(&self, thread_id: &str) {
+        self.deleted_tombstones
+            .lock()
+            .insert(thread_id.to_string());
+    }
+
+    fn is_thread_tombstoned(&self, thread_id: &str) -> bool {
+        self.deleted_tombstones.lock().contains(thread_id)
+    }
+
     pub fn save_thread(&self, thread: &ThreadRecord) -> Result<()> {
+        if self.is_thread_tombstoned(&thread.id) {
+            return Ok(());
+        }
         write_json_atomic(&self.thread_path(&thread.id)?, thread)
     }
 
     pub fn save_turn(&self, turn: &TurnRecord) -> Result<()> {
+        if self.is_thread_tombstoned(&turn.thread_id) {
+            return Ok(());
+        }
         validated_record_id(&turn.thread_id, "thread id")?;
         write_json_atomic(&self.turn_path(&turn.id)?, turn)
     }
@@ -5005,9 +5030,13 @@ impl RuntimeThreadManager {
 
     /// Permanently delete a thread and all of its durable projections.
     ///
-    /// Deletion is intentionally rejected while a turn is active. Removing
-    /// the files underneath a running engine would otherwise let late stream
-    /// checkpoints recreate part of the supposedly deleted conversation.
+    /// Deletion is rejected while a turn is active so files cannot be
+    /// recreated underneath a running engine — unless the caller already
+    /// interrupted that turn. A wedged engine (crashed worker, hung provider
+    /// call) would otherwise keep `interrupt_requested` set forever without
+    /// ever settling the turn, deadlocking deletion; in that case the delete
+    /// proceeds, the engine is dropped, and the store tombstone silences any
+    /// late writes that would otherwise resurrect the deleted files.
     pub async fn delete_thread(&self, id: &str) -> Result<()> {
         let engine = {
             let mut active = self.active.lock().await;
@@ -5015,17 +5044,19 @@ impl RuntimeThreadManager {
             self.store
                 .load_thread(id)
                 .with_context(|| format!("Thread not found: {id}"))?;
-            if active
+            if let Some(turn) = active
                 .engines
                 .get(id)
                 .and_then(|state| state.active_turn.as_ref())
-                .is_some()
             {
-                bail!("Thread {id} has an active turn; interrupt it before deleting");
+                if !turn.interrupt_requested {
+                    bail!("Thread {id} has an active turn; interrupt it before deleting");
+                }
             }
 
             let engine = active.engines.remove(id).map(|state| state.engine);
             active.lru.retain(|thread_id| thread_id != id);
+            self.store.tombstone_thread(id);
             self.store.delete_thread_cascade(id)?;
             engine
         };

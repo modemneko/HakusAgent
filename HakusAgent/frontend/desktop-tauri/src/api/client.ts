@@ -906,6 +906,22 @@ export class HakusAIClient {
     }
   }
 
+  /** Clear the primary key for a provider during first-run re-authentication. */
+  async clearProviderApiKey(providerId: string): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      const path = `/providers/${encodeURIComponent(providerId)}/key`
+      const res = await this.runtimeFetch(path, { method: 'DELETE' })
+      if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1${path}`, 'Clear Runtime provider key failed')
+      return
+    }
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/providers/${encodeURIComponent(providerId)}/key`,
+      { method: 'DELETE' },
+      10000,
+    )
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/providers/${providerId}/key`, 'Clear provider key failed')
+  }
+
   /** 获取某 provider 的自定义 HTTP Headers. */
   async getProviderHeaders(providerId: string): Promise<Record<string, string>> {
     if (this.usesEmbeddedRuntime) {
@@ -1314,6 +1330,20 @@ export class HakusAIClient {
     })
     if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config`, 'Set Runtime config failed')
     await this.reloadConfig()
+  }
+
+  /** Clear Rust-owned provider routes, models, credentials and TUI settings. */
+  async clearRuntimeCredentials(): Promise<void> {
+    if (!this.usesEmbeddedRuntime) this.runtimeUnsupported('清除 Rust Runtime 凭据')
+    const res = await this.runtimeFetch('/config/credentials', { method: 'DELETE' }, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config/credentials`, 'Clear Runtime credentials failed')
+  }
+
+  /** Clear Rust-owned provider routes, models, credentials and TUI settings. */
+  async clearRuntimeUserData(): Promise<void> {
+    if (!this.usesEmbeddedRuntime) this.runtimeUnsupported('清除 Rust Runtime 用户配置')
+    const res = await this.runtimeFetch('/config/user-data', { method: 'DELETE' }, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/config/user-data`, 'Clear Runtime user data failed')
   }
 
   async updateCustomProviderMetadata(providerId: string, body: { display_name?: string; group?: string }): Promise<ProviderMutationResponse> {
@@ -2421,18 +2451,78 @@ export class HakusAIClient {
     return res.json()
   }
 
+  /**
+   * Interrupt a Runtime thread's still-running turn so deletion can proceed.
+   *
+   * `DELETE /v1/threads/{id}` answers 409 "has an active turn" while an engine
+   * turn is in flight. A turn can outlive the UI that started it (reload,
+   * second device, crash), so the delete flow resolves the conflict itself:
+   * find the active turn in the thread's durable snapshot, fire the interrupt
+   * endpoint, poll until the turn lands in a terminal state, then let the
+   * caller retry the delete. Returns true when no active turn remains.
+   */
+  private async interruptActiveRuntimeTurn(threadId: string): Promise<boolean> {
+    const isActiveStatus = (status: unknown) => status === 'queued' || status === 'in_progress'
+    const listTurns = async () => {
+      const detailRes = await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}`)
+      // 404 here means the thread disappeared mid-flow — deletable by definition.
+      if (detailRes.status === 404) return null
+      if (!detailRes.ok) throw new HakusAIError(`Get Runtime thread failed: ${detailRes.status}`)
+      const detail = await detailRes.json()
+      return Array.isArray(detail?.turns) ? (detail.turns as Array<{ id?: string; status?: string }>) : []
+    }
+    try {
+      const turns = await listTurns()
+      if (turns === null) return true
+      const active = [...turns].reverse().find((turn) => isActiveStatus(turn?.status))
+      if (!active?.id) return true
+      // Best-effort: if the turn finished between the snapshot and this call,
+      // the Runtime answers 409 "No active turn" — the thread is deletable
+      // either way, so swallow the outcome.
+      await this.runtimeFetch(
+        `/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(active.id)}/interrupt`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      ).catch(() => undefined)
+      // The interrupt request returns before the engine settles its status;
+      // wait for the durable projection to leave queued/in_progress. Bounded
+      // so a wedged engine cannot hang the delete forever.
+      const deadline = Date.now() + 8000
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        const pollTurns = await listTurns()
+        if (pollTurns === null) return true
+        if (!pollTurns.some((turn) => isActiveStatus(turn?.status))) return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
   /** Delete a session + cascade its messages. */
   async deleteSession(sessionId: string): Promise<void> {
     if (this.usesEmbeddedRuntime) {
       const url = `${this.baseUrl}/v1/threads/${encodeURIComponent(sessionId)}`
-      const res = await this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`, {
+      const requestDelete = () => this.runtimeFetch(`/threads/${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
       })
+      let res = await requestDelete()
+      // Deletion is intentionally idempotent from the UI's perspective. A
+      // stale local row may outlive a Runtime thread after a restart or a
+      // second device removed it; that state is already the desired result.
+      if (res.status === 404) return
+      // The Runtime refuses to delete a thread whose turn is still running.
+      // Interrupt the turn, wait for it to settle, then retry once.
+      if (res.status === 409 && await this.interruptActiveRuntimeTurn(sessionId)) {
+        res = await requestDelete()
+        if (res.status === 404) return
+      }
       if (!res.ok) await this._throwForResponse(res, url, 'Delete Runtime thread failed')
       return
     }
     const url = `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`
     const res = await this.fetchWithHardTimeout(url, { method: 'DELETE' }, 10000)
+    if (res.status === 404) return
     if (!res.ok) await this._throwForResponse(res, url, 'Delete session failed')
   }
 

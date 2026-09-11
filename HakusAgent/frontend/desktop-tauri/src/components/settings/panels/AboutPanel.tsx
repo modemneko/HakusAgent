@@ -36,7 +36,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { apiClient } from '@/api/client'
@@ -255,10 +254,13 @@ export function AboutPanel() {
   const isDev = state?.isPackaged === false
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-
-      <Separator />
+    <section className="settings-section settings-about-section">
+      <div className="settings-section-heading">
+        <div>
+          <h2>{copy('关于与更新', 'About & updates')}</h2>
+          <p>{copy('查看应用版本、系统信息和可用更新。', 'View the app version, system information, and available updates.')}</p>
+        </div>
+      </div>
 
       {/* Section 1: Version info */}
       <div className="space-y-3">
@@ -267,23 +269,9 @@ export function AboutPanel() {
         </div>
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-card/40 p-4 text-xs">
           <VersionRow label={copy('客户端版本', 'Client version')} value={`v${currentVersion}`} />
-          <VersionRow
-            label={copy('API 版本', 'API version')}
-            value={backendVer ? `v${backendVer.backend_api_version}` : '—'}
-          />
-          <VersionRow label={copy('服务版本', 'Server version')} value={backendVer?.server_version || diag?.version || '—'} />
           <VersionRow label={copy('操作系统', 'Operating system')} value={platform || '—'} />
-          <VersionRow label={copy('桌面运行时', 'Desktop runtime')} value={versions?.electron || '—'} />
-          <VersionRow label="WebView" value={versions?.chrome || '—'} />
-          <VersionRow label="JavaScript" value={versions?.node || '—'} />
-          <VersionRow
-            label={copy('默认 Provider', 'Default provider')}
-            value={diag?.configured_provider || '—'}
-          />
         </div>
       </div>
-
-      <Separator />
 
       {/* Section 2: Auto-update */}
       <div className="space-y-3">
@@ -421,8 +409,6 @@ export function AboutPanel() {
         </div>
       </div>
 
-      <Separator />
-
       {/* Section 3: Auto-update behavior */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -453,7 +439,7 @@ export function AboutPanel() {
           {copy('手动下载。', 'to download manually.')}
         </p>
       </div>
-    </div>
+    </section>
   )
 }
 

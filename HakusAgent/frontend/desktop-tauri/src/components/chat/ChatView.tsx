@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2, Rocket, GitPullRequest, Compass, Bug } from 'lucide-react'
+import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2, Rocket, GitPullRequest, Compass, Bug, Check, ChevronDown, FolderOpen, FolderPlus, Send, MessageCircle } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
 import { apiClient, HakusAIError } from '@/api/client'
-import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal } from '@/api/types'
+import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal, Project } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
 import { Composer, type QueuedComposerMessage } from './Composer'
 import { ChatNavButtons } from './ChatNavButtons'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn, generateId } from '@/lib/utils'
 import { playVoiceNotification } from '@/lib/voiceNotifications'
 import { VoiceConversation, type ConversationState } from '@/lib/voiceConversation'
@@ -20,6 +27,9 @@ import { VoiceCallEngine, type VoiceCallState } from '@/lib/voiceCall'
 import { useToast } from '@/components/ui/toast'
 import type { ChatMessage } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
+import { isProviderConfigured } from '@/lib/providerState'
+import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
+import { assignSessionWorkspace } from '@/lib/sessionWorkspaces'
 
 interface TimelineMessageItem {
   kind: 'message'
@@ -186,14 +196,29 @@ export function ChatView() {
   const rewindToMessage = useSessionStore((s) => s.rewindToMessage)
 
   const settings = useSettingsStore()
-  const activeProvider = settings.providers.find((provider) => provider.is_default)
-    || settings.providers.find((provider) => provider.id === settings.defaultModel)
-  const activeModel = activeProvider?.model_name || undefined
+  const configuredProviders = settings.providers.filter(isProviderConfigured)
+  const activeProvider = configuredProviders.find((provider) => provider.is_default)
+    || configuredProviders.find((provider) => provider.id === settings.defaultModel)
+  // A provider catalog's `model_name` may be a built-in suggestion. Only a
+  // model explicitly saved by the user makes the composer usable.
+  const activeModel = activeProvider?.configured_models?.find((model) => Boolean(model?.trim()))
+  const modelConfigured = Boolean(
+    activeProvider
+      && activeProvider.enabled !== false
+      // `models` is the read-only provider catalog. It can be populated even
+      // on a fresh install, so it must not make the composer look usable.
+      // Only a selected model or an explicitly saved user model counts.
+      && Boolean(activeModel),
+  )
   const connState = useConnectionStore((s) => s.state)
   const agentMode = useAppStore((s) => s.agentMode)
   const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
   const connCheck = useConnectionStore((s) => s.check)
+  const projects = useProjectsStore((s) => s.projects)
+  const activeProjectId = useProjectsStore((s) => s.activeProjectId)
   const activeProject = useProjectsStore((s) => s.activeProject)
+  const setActiveProject = useProjectsStore((s) => s.setActive)
+  const createProject = useProjectsStore((s) => s.create)
 
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null)
   const [composerDraft, setComposerDraft] = useState<string | undefined>(undefined)
@@ -805,37 +830,53 @@ export function ChatView() {
     }
   }
 
-  // Empty state
+  const startWorkspaceSession = async (projectId: string) => {
+    setActiveProject(projectId)
+    try {
+      const id = await createSession('New Chat')
+      assignSessionWorkspace(id, projectId)
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? e.message : String(e)
+      toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
+    }
+  }
+
+  const handleCreateWorkspace = async () => {
+    try {
+      const selected = await pickProjectFolder()
+      if (!selected) return
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
+      const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
+      const project = await createProject({ name, path: selected.path, source_uri: selected.sourceUri })
+      await startWorkspaceSession(project.id)
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? e.message : String(e)
+      toast.error(locale.startsWith('zh') ? `新建工作区失败：${detail}` : `Could not create workspace: ${detail}`)
+    }
+  }
+
+  const handleDirectChat = async () => {
+    setActiveProject(null)
+    try {
+      await createSession('New Chat')
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? e.message : String(e)
+      toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
+    }
+  }
+
+  // Empty state: a new install starts with a workspace decision instead of
+  // silently creating a conversation in the application directory.
   if (!activeSession) {
     return (
-      <div className="empty-state-hero flex flex-1 items-center justify-center bg-background">
-        <div className="text-center">
-          <div className="empty-state-icon mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-            <Sparkles className="h-5 w-5" />
-          </div>
-          <h2 className="text-lg font-semibold tracking-tight">{t('welcomeTitle')}</h2>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {(() => {
-              const hint = t('welcomeHint')
-              const plusIndex = hint.indexOf('+')
-              if (plusIndex < 0) return hint
-              return <>{hint.slice(0, plusIndex)}<kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">+</kbd>{hint.slice(plusIndex + 1)}</>
-            })()}
-          </p>
-          <Button
-            type="button"
-            className="mt-5 rounded-full px-5"
-            onClick={() => {
-              createSession('New Chat').catch((e: unknown) => {
-                const detail = e instanceof Error ? e.message : String(e)
-                toast.error(locale.startsWith('zh') ? `新建会话失败：${detail}` : `Could not create chat: ${detail}`)
-              })
-            }}
-          >
-            {t('startChat')}
-          </Button>
-        </div>
-      </div>
+      <WorkspaceLaunchpad
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSelectWorkspace={(projectId) => void startWorkspaceSession(projectId)}
+        onCreateWorkspace={() => void handleCreateWorkspace()}
+        onDirectChat={() => void handleDirectChat()}
+      />
     )
   }
 
@@ -959,7 +1000,7 @@ export function ChatView() {
         onSend={handleSend}
         onStop={handleStop}
         isStreaming={isStreaming}
-        disabled={connState !== 'connected'}
+        disabled={connState !== 'connected' || !modelConfigured}
         draftValue={composerDraft}
         onDraftConsumed={() => setComposerDraft(undefined)}
         pendingQueue={activeQueuedMessages}
@@ -976,6 +1017,109 @@ export function ChatView() {
         onGoalAction={applyGoalAction}
       />
     </div>
+  )
+}
+
+interface WorkspaceLaunchpadProps {
+  projects: Project[]
+  activeProjectId: string | null
+  onSelectWorkspace: (projectId: string) => void
+  onCreateWorkspace: () => void
+  onDirectChat: () => void
+}
+
+function WorkspaceLaunchpad({
+  projects,
+  activeProjectId,
+  onSelectWorkspace,
+  onCreateWorkspace,
+  onDirectChat,
+}: WorkspaceLaunchpadProps) {
+  const { locale } = useI18n()
+  const activeProject = projects.find((project) => project.id === activeProjectId)
+
+  return (
+    <main className="workspace-launchpad flex min-h-0 flex-1 items-center justify-center bg-background px-5 py-8">
+      <div className="workspace-launchpad-inner w-full max-w-[46rem]">
+        <div className="workspace-launchpad-heading text-center">
+          <div className="workspace-launchpad-mark mx-auto flex h-11 w-11 items-center justify-center rounded-2xl">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <h1 className="mt-4 text-xl font-semibold tracking-tight">
+            {locale.startsWith('zh') ? '从一个工作区开始' : 'Start with a workspace'}
+          </h1>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            {locale.startsWith('zh')
+              ? '选择一个项目文件夹，HakusAI 会在这个范围内理解、编辑和运行你的工作。'
+              : 'Choose a project folder so HakusAI can understand, edit, and run work in the right context.'}
+          </p>
+        </div>
+
+        <div className="workspace-launchpad-context mt-7 flex flex-wrap items-center justify-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="workspace-launchpad-pill" aria-label={locale.startsWith('zh') ? '选择工作区' : 'Choose workspace'}>
+                <FolderOpen className="h-4 w-4 text-primary" />
+                <span className="max-w-[15rem] truncate">{activeProject?.name || (locale.startsWith('zh') ? '选择工作区' : 'Choose workspace')}</span>
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-[min(340px,calc(100vw-32px))] p-1.5">
+              {projects.length > 0 ? projects.map((project) => (
+                <DropdownMenuItem
+                  key={project.id}
+                  onSelect={() => onSelectWorkspace(project.id)}
+                  className="gap-2 rounded-xl px-2.5 py-2.5"
+                >
+                  <FolderOpen className={cn('h-4 w-4 shrink-0', project.id === activeProjectId ? 'text-primary' : 'text-muted-foreground')} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{project.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{project.path}</span>
+                  </span>
+                  {project.id === activeProjectId && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </DropdownMenuItem>
+              )) : (
+                <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                  {locale.startsWith('zh') ? '还没有已保存的工作区' : 'No saved workspaces yet'}
+                </div>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onCreateWorkspace} className="gap-2 rounded-xl px-2.5 py-2.5">
+                <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
+                <span className="font-medium">{locale.startsWith('zh') ? '新建工作区' : 'Create workspace'}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onDirectChat} className="gap-2 rounded-xl px-2.5 py-2.5">
+                <MessageCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{locale.startsWith('zh') ? '直接对话' : 'Direct chat'}</span>
+                  <span className="block text-[11px] text-muted-foreground">{locale.startsWith('zh') ? '不使用工作区，适合临时问答' : 'Chat without a workspace for quick questions'}</span>
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <button
+          type="button"
+          className="workspace-launchpad-composer mt-5"
+          onClick={onCreateWorkspace}
+          aria-label={locale.startsWith('zh') ? '选择工作区并开始' : 'Choose a workspace to begin'}
+        >
+          <span
+            className="workspace-launchpad-placeholder"
+            aria-hidden="true"
+          >
+            {activeProject ? (locale.startsWith('zh') ? `继续使用 ${activeProject.name}` : `Continue with ${activeProject.name}`) : (locale.startsWith('zh') ? '选择一个工作区开始' : 'Choose a workspace to begin')}
+          </span>
+          <span className="workspace-launchpad-composer-footer">
+            <span>{locale.startsWith('zh') ? '点击选择文件夹作为工作区' : 'Click to choose a folder as your workspace'}</span>
+            <span className="workspace-launchpad-send" aria-hidden="true">
+              <Send className="h-4 w-4" />
+            </span>
+          </span>
+        </button>
+      </div>
+    </main>
   )
 }
 

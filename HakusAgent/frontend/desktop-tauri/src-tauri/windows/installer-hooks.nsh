@@ -12,6 +12,11 @@ LangString HAKUS_UNINSTALL_DATA ${LANG_ENGLISH} "Delete all HakusAI user data? T
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; Stop both the packaged executable and the old development name before
+  ; removing WebView2/store files. Otherwise a tray-resident process can keep
+  ; the data file open and leave uninstall residue behind.
+  ExecWait '"$SYSDIR\taskkill.exe" /F /IM HakusAI.exe /T'
+  ExecWait '"$SYSDIR\taskkill.exe" /F /IM desktop-tauri.exe /T'
   MessageBox MB_YESNO|MB_ICONQUESTION "$(HAKUS_UNINSTALL_DATA)" IDNO hakus_keep_user_data
     ; Current Tauri data root (tauri-plugin-store settings, runtime data).
     RMDir /r "$APPDATA\com.hakusai.client"
@@ -20,7 +25,12 @@ LangString HAKUS_UNINSTALL_DATA ${LANG_ENGLISH} "Delete all HakusAI user data? T
     ; the "uninstall residue" that silently marked onboarding as done, so a
     ; fresh install never showed the initialization wizard.
     RMDir /r "$LOCALAPPDATA\com.hakusai.client"
-    ; Also remove the legacy root used by pre-Tauri builds when present.
-    RMDir /r "$PROFILE\.hakus"
+    ; The shared ~/.hakus root belongs to HakusCLI and may contain sessions,
+    ; config, and databases used by other clients. Never remove it as part of
+    ; the desktop GUI uninstall. Clean only legacy GUI-specific roots.
+    RMDir /r "$APPDATA\hakusai-client"
+    RMDir /r "$LOCALAPPDATA\hakusai-client"
+    RMDir /r "$APPDATA\HakusAI"
+    RMDir /r "$LOCALAPPDATA\HakusAI"
   hakus_keep_user_data:
 !macroend

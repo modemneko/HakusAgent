@@ -70,8 +70,10 @@ import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
+import { LongRunningTaskVisual } from './LongRunningTaskVisual'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
+import { isProviderConfigured } from '@/lib/providerState'
 import { useI18n } from '@/lib/i18n'
 
 interface Attachment {
@@ -456,11 +458,20 @@ export function Composer({
   const [goalActionLoading, setGoalActionLoading] = useState(false)
 
   const currentProvider = useMemo(
-    () => providers.find((p) => p.is_default) || providers.find((p) => p.id === defaultModel),
+    () => {
+      const configured = providers.filter(isProviderConfigured)
+      return configured.find((p) => p.is_default) || configured.find((p) => p.id === defaultModel)
+    },
     [defaultModel, providers],
   )
-  const modelText = model ? `${model.provider} ${model.model_name}` : currentProvider?.model_name
-  const canUseImages = isMultimodalProvider(currentProvider, modelText)
+  // The app store can briefly retain a model from a previous session while
+  // the Rust provider catalog is loading (or after the user cleared data).
+  // Never use that stale value to advertise capabilities when no configured
+  // provider exists. Explicitly configured models remain the source of truth.
+  const modelText = currentProvider
+    ? (currentProvider.configured_models?.find((entry) => Boolean(entry?.trim())) || undefined)
+    : undefined
+  const canUseImages = Boolean(modelText) && isMultimodalProvider(currentProvider, modelText)
   const storedReasoningEffort = getReasoningEffort(agentMode)
   const activeReasoningOptions = useMemo(() => {
     const modelId = currentProvider?.model_name || model?.model_name
@@ -497,16 +508,12 @@ export function Composer({
       : copy('长程任务', 'Long-running task')
   const currentProviderLabel = currentProvider
     ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
-    : defaultModel || "No model"
+    : copy('未配置模型', 'No model configured')
   // Only providers the user actually set up (key saved, models chosen, or
   // currently default) belong in the pickers — the raw vendor catalog with
   // its dozens of untouched entries is noise.
   const usableProviders = useMemo(() => {
-    const usable = providers.filter((provider) =>
-      provider.enabled !== false &&
-      (provider.is_default || provider.has_api_key || (provider.configured_models?.length ?? 0) > 0 || provider.is_custom),
-    )
-    return usable.length > 0 ? usable : providers.filter((provider) => provider.enabled !== false)
+    return providers.filter(isProviderConfigured)
   }, [providers])
 
   const orderedProviderGroups = useMemo(() => {
@@ -521,9 +528,8 @@ export function Composer({
       .filter((group, index, all) => all.indexOf(group) === index)
     return order.filter((group) => grouped.has(group)).map((group) => ({ group, items: grouped.get(group)! }))
   }, [usableProviders])
-  const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled !== false), [providers])
   const mobileModelProvider = mobileModelProviderId
-    ? enabledProviders.find((provider) => provider.id === mobileModelProviderId)
+    ? usableProviders.find((provider) => provider.id === mobileModelProviderId)
     : undefined
   const mobileModelOptions = mobileModelProviderId ? modelsCache[mobileModelProviderId] : undefined
   // Backend data (or a half-working mock) can yield a mode outside the
@@ -1097,10 +1103,10 @@ export function Composer({
     if (creatingProject) return
     setCreatingProject(true)
     try {
-      const allowed = await confirmProjectAccess()
-      if (!allowed) return
       const selected = await pickProjectFolder()
       if (!selected) return
+      const allowed = await confirmProjectAccess()
+      if (!allowed) return
       const name = selected.name || selected.path.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
       const created = await createProject({ name, path: selected.path, source_uri: selected.sourceUri })
       if (!projectLocked) {
@@ -1451,7 +1457,25 @@ export function Composer({
                     <MoreHorizontal className="h-5 w-5" />
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="mobile-settings-sheet md:hidden">
+                <DialogContent
+                  className="mobile-settings-sheet md:hidden"
+                  style={{
+                    // Keep this touch sheet viewport-anchored even when an
+                    // Android WebView reports a stale layout viewport or
+                    // Radix leaves its desktop centering styles inline.
+                    position: 'fixed',
+                    top: 'auto',
+                    right: 0,
+                    bottom: 0,
+                    left: 0,
+                    width: '100vw',
+                    maxWidth: '100vw',
+                    height: 'auto',
+                    maxHeight: '82vh',
+                    margin: 0,
+                    transform: 'none',
+                  }}
+                >
                   <DialogHeader className="mobile-settings-header">
                     {mobileSettingsSection !== 'root' && (
                       <button
@@ -1650,7 +1674,7 @@ export function Composer({
                     else onToggleLongRunning?.()
                   }}
                 >
-                  <LoaderCircle className={cn('h-3.5 w-3.5 shrink-0', goalHasControls || longRunningArmed ? 'text-primary' : 'text-muted-foreground')} />
+                  <LongRunningTaskVisual active={goalHasControls} armed={longRunningArmed} />
                   <span>{goalButtonLabel}</span>
                 </button>
                 <DialogContent className="w-[min(440px,calc(100vw-32px))]">
@@ -1854,7 +1878,7 @@ export function Composer({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    disabled={providersLoading || switchingProvider || isStreaming}
+                    disabled={providersLoading || switchingProvider || isStreaming || usableProviders.length === 0}
                     className={cn(
                       'composer-edge-trigger composer-model-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
@@ -1864,14 +1888,14 @@ export function Composer({
                     {providersLoading || switchingProvider ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                     ) : (
-                      <ProviderLogo providerId={currentProvider?.id || defaultModel || ''} size={14} />
+                      <ProviderLogo providerId={currentProvider?.id || ''} size={14} />
                     )}
                     <span className="truncate">{currentProviderLabel}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" mobileTitle={copy('选择模型', 'Choose model')} className="w-[280px]">
-                  {enabledProviders.length === 0 && (
+                  {usableProviders.length === 0 && (
                     <div className="px-2 py-3 text-center text-xs text-muted-foreground">
                       {providersLoading ? "加载中..." : "暂无 provider"}
                     </div>
