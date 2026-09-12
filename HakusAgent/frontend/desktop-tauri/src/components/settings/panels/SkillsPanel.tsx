@@ -7,7 +7,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
-  Sparkles,
+  Puzzle,
   Trash2,
   X,
 } from 'lucide-react'
@@ -247,7 +247,7 @@ export function SkillsPanel() {
 
         {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center py-10 text-center text-muted-foreground">
-            <Sparkles className="mb-2 h-6 w-6 opacity-60" />
+            <Puzzle className="mb-2 h-6 w-6 opacity-60" strokeWidth={1.75} />
             <p className="text-xs">{skills.length === 0 ? copy('尚未安装 Skill', 'No Skills installed') : copy('没有匹配结果', 'No matches')}</p>
           </div>
         )}
@@ -258,7 +258,7 @@ export function SkillsPanel() {
           return (
             <div key={`${skill.source}:${skill.name}`} className="rounded-lg border border-border/75 bg-card/35 px-3 py-2.5">
               <div className="flex items-start gap-3">
-                <Sparkles className={cn('mt-0.5 h-4 w-4 shrink-0', skill.enabled ? 'text-primary' : 'text-muted-foreground')} />
+                <Puzzle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-sm font-medium">{skill.name}</span>

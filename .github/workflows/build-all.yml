@@ -269,23 +269,29 @@ jobs:
         working-directory: HakusAgent/frontend/desktop-tauri
         shell: bash
         run: |
-          manifest=src-tauri/gen/android/app/src/main/AndroidManifest.xml
-          if grep -q 'android:usesCleartextTraffic=' "$manifest"; then
-            sed -i 's/android:usesCleartextTraffic="[^"]*"/android:usesCleartextTraffic="true"/' "$manifest"
-          else
-            sed -i 's#<application #<application android:usesCleartextTraffic="true" #' "$manifest"
-          fi
-          if ! grep -q 'android.permission.INTERNET' "$manifest"; then
-            sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET" />' "$manifest"
-          fi
-          # Do not let Android Auto Backup restore the settings store after
-          # uninstall/reinstall. A restored onboardingCompleted flag makes a
-          # fresh install skip the initialization wizard unexpectedly.
-          if grep -q 'android:allowBackup=' "$manifest"; then
-            sed -i 's/android:allowBackup="[^"]*"/android:allowBackup="false"/' "$manifest"
-          else
-            sed -i 's#<application #<application android:allowBackup="false" #' "$manifest"
-          fi
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("src-tauri/gen/android/app/src/main/AndroidManifest.xml")
+          m = p.read_text(encoding="utf-8")
+          # 1. cleartext: 替换现有值/占位符，或在 <application 上插入
+          if 'android:usesCleartextTraffic' in m:
+              m = re.sub(r'android:usesCleartextTraffic="[^"]*"', 'android:usesCleartextTraffic="true"', m)
+          else:
+              m = m.replace('<application', '<application
+        android:usesCleartextTraffic="true"', 1)
+          # 2. INTERNET 权限：插入到 application 开标签之后
+          if 'android.permission.INTERNET' not in m:
+              m = re.sub(r'(<application[^>]*>)', r'
+    <uses-permission android:name="android.permission.INTERNET" />', m, count=1)
+          # 3. 关闭 Auto Backup：恢复的 onboardingCompleted 会让全新安装跳过初始化向导
+          if 'android:allowBackup' in m:
+              m = re.sub(r'android:allowBackup="[^"]*"', 'android:allowBackup="false"', m)
+          else:
+              m = m.replace('<application', '<application
+        android:allowBackup="false"', 1)
+          p.write_text(m, encoding="utf-8")
+          print("manifest patched")
+          PY
           if grep -q 'android:fullBackupContent=' "$manifest"; then
             sed -i 's/android:fullBackupContent="[^"]*"/android:fullBackupContent="false"/' "$manifest"
           else

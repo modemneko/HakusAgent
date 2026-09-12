@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 node_modules/
 dist/
+
+# 更新签名私钥 — 绝不能提交
+src-tauri/updater.key
+

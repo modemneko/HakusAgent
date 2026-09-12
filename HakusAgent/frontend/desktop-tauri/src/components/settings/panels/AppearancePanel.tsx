@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
 import { cn } from '@/lib/utils'
+import { GlassSelect } from '@/components/ui/glass-select'
 import { LANGUAGE_OPTIONS, languageOptionLabel, localeForRuntime, resolveLocale, useI18n } from '@/lib/i18n'
 import { apiClient } from '@/api/client'
 
@@ -65,14 +66,12 @@ export function AppearancePanel() {
             <span className="text-xs text-muted-foreground">{t('followSystem')}</span>
           </div>
         ) : (
-          <select
+          <GlassSelect
             id="ui-language"
             value={settings.language}
-            onChange={(event) => void handleLanguageChange(event.target.value as typeof settings.language)}
-            className="flex h-10 w-full items-center justify-between rounded-xl border border-input bg-background px-3 py-2 text-sm"
-          >
-            {LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{languageOptionLabel(option, locale)}</option>)}
-          </select>
+            onChange={(value) => void handleLanguageChange(value as typeof settings.language)}
+            options={LANGUAGE_OPTIONS.map((option) => ({ value: option.value, label: languageOptionLabel(option, locale) }))}
+          />
         )}
         </div>
       </div>

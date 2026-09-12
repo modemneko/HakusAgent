@@ -6544,22 +6544,21 @@ impl RuntimeThreadManager {
                     .map(|turns| turns.is_empty())
                     .unwrap_or(true)
             };
-            if thread_turns_empty {
-                match self.provider_identity_for_thread(&cfg_snapshot, &thread) {
-                    Ok(pinned) => {
-                        // The GUI always sends its CURRENT settings model with
-                        // the first message of a fresh chat. That model belongs
-                        // to the settings' default provider route, not to the
-                        // route this empty thread was pinned to at creation
-                        // time — so an auto-created thread would otherwise
-                        // dispatch (or preflight-fail) against the stale
-                        // route. Zero-turn threads carry no content whose
-                        // provider provenance must be preserved: follow the
-                        // current default identity. Threads with any turn
-                        // history keep their pinned route.
-                        let explicit_model_requested = req.model.as_deref().is_some_and(|model| {
-                            !model.trim().is_empty() && !model.trim().eq_ignore_ascii_case("auto")
-                        });
+            let explicit_model_requested = req.model.as_deref().is_some_and(|model| {
+                !model.trim().is_empty() && !model.trim().eq_ignore_ascii_case("auto")
+            });
+            match self.provider_identity_for_thread(&cfg_snapshot, &thread) {
+                Ok(pinned) => {
+                    // The GUI always sends its CURRENT settings model with
+                    // every turn. Zero-turn threads follow the default for
+                    // their first explicit-model turn (nothing to preserve).
+                    // Threads with history keep their pinned route UNLESS the
+                    // turn explicitly names a model AND the current default
+                    // provider differs from the pinned one — that combination
+                    // is the user switching providers in Settings and then
+                    // continuing an older chat; silently dispatching against
+                    // the stale route surfaces as an opaque 400 instead.
+                    if thread_turns_empty {
                         if explicit_model_requested {
                             match cfg_snapshot
                                 .active_provider_identity(cfg_snapshot.api_provider())
@@ -6576,12 +6575,29 @@ impl RuntimeThreadManager {
                                 _ => {}
                             }
                         }
+                    } else if explicit_model_requested {
+                        match cfg_snapshot
+                            .active_provider_identity(cfg_snapshot.api_provider())
+                        {
+                            Ok(default) if default.key != pinned.key => {
+                                tracing::info!(
+                                    thread_id = %thread.id,
+                                    pinned = %pinned.key,
+                                    default = %default.key,
+                                    "Explicit-model turn on a history thread follows the current default provider"
+                                );
+                                repointed_identity = Some(default);
+                            }
+                            _ => {}
+                        }
                     }
-                    Err(pinned_error) => {
-                        // Unresolvable pinned identity (e.g. its custom
-                        // provider table was deleted). Empty threads heal to
-                        // the current default; threads with content keep
-                        // failing closed so nothing is silently re-routed.
+                }
+                Err(pinned_error) => {
+                    // Unresolvable pinned identity (e.g. its custom
+                    // provider table was deleted). Empty threads heal to
+                    // the current default; threads with content keep
+                    // failing closed so nothing is silently re-routed.
+                    if thread_turns_empty {
                         match cfg_snapshot
                             .active_provider_identity(cfg_snapshot.api_provider())
                         {
@@ -6602,7 +6618,8 @@ impl RuntimeThreadManager {
                         }
                     }
                 }
-                if let Some(ref identity) = repointed_identity {
+            }
+            if let Some(ref identity) = repointed_identity {
                     thread.model_provider = Some(identity.provider.as_str().to_string());
                     thread.model_provider_id = identity.exact_id.clone();
                     // Align the thread's model with the explicitly requested
@@ -6618,7 +6635,6 @@ impl RuntimeThreadManager {
                     }
                 }
             }
-        }
 
         let engine = self.ensure_engine_loaded(&thread).await?;
 

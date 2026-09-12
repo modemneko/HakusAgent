@@ -26,7 +26,6 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  Sparkles,
   AlertCircle,
   Info,
   Globe,

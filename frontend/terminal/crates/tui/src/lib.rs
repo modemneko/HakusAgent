@@ -1770,7 +1770,7 @@ fn run_async_main(
 ///
 /// This is behavior-identical to the old `#[tokio::main]` expansion apart from
 /// the stack size, and it makes the knob greppable.
-pub(crate) fn build_runtime() -> Result<tokio::runtime::Runtime> {
+pub fn build_runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(HAKUS_MAIN_STACK_BYTES)

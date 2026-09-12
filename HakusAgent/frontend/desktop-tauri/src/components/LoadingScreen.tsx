@@ -23,7 +23,7 @@ export function LoadingScreen({ status }: LoadingScreenProps) {
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-5 bg-background">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-2xl font-semibold tracking-[0.16em] text-primary">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border/70 bg-muted/20 text-2xl font-semibold tracking-[0.16em] text-foreground">
         H
       </div>
       <div className="text-center">
@@ -33,7 +33,7 @@ export function LoadingScreen({ status }: LoadingScreenProps) {
 
       {/* Status text */}
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         {status || statusMessages[messageIndex]}
       </p>
     </div>

@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { AppErrorBoundary, recordCrash } from "./components/ErrorBoundary";
 import "./index.css";
 import {
   backend as tauriBackend,
@@ -128,8 +129,21 @@ if (typeof __TAURI_INTERNALS__ !== "undefined") {
   console.log("[Tauri] window.electron bridge installed");
 }
 
+// ── Crash telemetry: uncaught errors leave a trace in localStorage so a
+// white-screen is never a dead end. The AppErrorBoundary renders recoverable
+// fallbacks for React render errors.
+window.addEventListener("error", (event) => {
+  recordCrash(`${event.message} (${event.filename?.split("/").pop() || "unknown"}:${event.lineno})`);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason as Error | undefined;
+  recordCrash(`unhandled rejection: ${reason?.message || String(event.reason)}`);
+});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </React.StrictMode>,
 );

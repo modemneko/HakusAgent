@@ -2116,10 +2116,10 @@ select:focus {
 }
 
 .empty-state-hero .empty-state-icon {
-  border: 1px solid hsl(var(--primary) / 0.34);
-  background: hsl(var(--primary) / 0.16) !important;
-  color: hsl(var(--primary)) !important;
-  box-shadow: 0 8px 24px hsl(var(--primary) / 0.16), inset 0 1px 0 hsl(var(--foreground) / 0.1);
+  border: 1px solid hsl(var(--border) / 0.8);
+  background: hsl(var(--muted) / 0.3) !important;
+  color: hsl(var(--muted-foreground)) !important;
+  box-shadow: none;
 }
 
 .empty-state-hero p:first-child {
@@ -2596,6 +2596,14 @@ a:focus-visible,
   outline: 1px solid hsl(var(--ring) / 0.48) !important;
   outline-offset: 1px !important;
   box-shadow: none !important;
+}
+
+/* Liquid-glass popover list — shared by GlassSelect and any custom
+ * expandable list. Rounded, translucent, blur-backed with a primary tint. */
+.glass-list {
+  background: color-mix(in srgb, hsl(var(--popover)) 72%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
 }
 
 /* Dialog close (X) is auto-focused by Radix when a dialog opens — the global
@@ -3137,10 +3145,10 @@ select:focus-visible {
 }
 
 .workspace-launchpad-mark {
-  border: 1px solid hsl(var(--primary) / 0.24);
-  background: hsl(var(--primary) / 0.11);
-  color: hsl(var(--primary));
-  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08), 0 10px 28px hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--border) / 0.8);
+  background: hsl(var(--muted) / 0.25);
+  color: hsl(var(--muted-foreground));
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08);
 }
 
 .workspace-launchpad-pill {
@@ -3244,16 +3252,16 @@ select:focus-visible {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: hsl(var(--primary) / 0.9);
-  color: hsl(var(--primary-foreground));
-  box-shadow: 0 4px 12px hsl(var(--primary) / 0.16);
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.14);
   transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
 .workspace-launchpad-composer:hover .workspace-launchpad-send {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  box-shadow: 0 5px 14px hsl(var(--primary) / 0.22);
+  background: hsl(var(--foreground) / 0.88);
+  color: hsl(var(--background));
+  box-shadow: 0 5px 14px hsl(var(--foreground) / 0.2);
 }
 
 .workspace-launchpad-composer:active .workspace-launchpad-send {
@@ -3511,7 +3519,7 @@ select:focus-visible {
 }
 
 @media (min-width: 768px) {
-  .sidebar-wrapper[data-sidebar-compact="true"] {
+  .sidebar-wrapper[data-sidebar-compact="true"][data-panel-open="true"] {
     width: var(--sidebar-compact-width) !important;
   }
 
@@ -3747,7 +3755,7 @@ select:focus-visible {
 }
 
 .empty-state-hero .empty-state-icon {
-  box-shadow: 0 6px 18px hsl(var(--primary) / 0.1), inset 0 1px 0 hsl(var(--foreground) / 0.1);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.1);
 }
 
 @media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {

@@ -119,20 +119,11 @@ function bridgeLocale(): 'zh-CN' | 'en-US' {
 
 /** Ask before a project folder is exposed to read/write/command tools. */
 export async function confirmProjectAccess(): Promise<boolean> {
+  // The extra "allow folder access" dialog after every folder pick was noise —
+  // the user just chose that folder deliberately, and the permission mode
+  // still gates what tools can do. Access is granted without a second prompt.
   if (typeof __TAURI_INTERNALS__ === "undefined") return false
-  try {
-    const { confirm } = await import("@tauri-apps/plugin-dialog")
-    const zh = bridgeLocale() === 'zh-CN'
-    return await confirm(
-      zh
-        ? "HakusAI 将读取所选项目文件夹，并允许项目内的写入和命令工具按权限模式工作。命令工具的工作目录会限制在该项目镜像内。"
-        : "HakusAI will read the selected project folder and may write files or run commands according to your permission mode. Command tools stay within the project mirror.",
-      { title: zh ? "允许访问项目文件夹" : "Allow project folder access", kind: "info" },
-    )
-  } catch (e) {
-    console.warn("[tauriBridge] project permission dialog failed:", e)
-    return false
-  }
+  return true
 }
 
 /** Open the desktop picker or Android's persistent SAF folder picker. */

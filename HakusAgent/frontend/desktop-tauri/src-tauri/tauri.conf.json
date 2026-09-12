@@ -47,19 +47,26 @@
     },
     "windows": {
       "nsis": {
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": true,
         "installMode": "currentUser",
-        "installerHooks": "windows/installer-hooks.nsh"
+        "installerHooks": "windows/installer-hooks.nsh",
+        "template": "windows/installer-template.nsi",
+        "sidebarImage": "windows/installer/welcome.bmp",
+        "headerImage": "windows/installer/header.bmp"
       }
-    }
+    },
+    "license": "windows/license.txt"
   },
   "plugins": {
     "updater": {
       "endpoints": [
         "https://github.com/modemneko/HakusAgent/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzMjc5REQ5RjA5OTlBQ0IKUldUTG1wbncyWjBuVXoxZnpDaWFvZUY3RjlyeitVNFFTOWIrM3ZRUmthTlNnOVQyZ1hZTTFVWjEK"
     },
     "shell": {}
   }

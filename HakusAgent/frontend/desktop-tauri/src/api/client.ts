@@ -1947,6 +1947,23 @@ export class HakusAIClient {
         await this._throwForResponse(workspaceResponse, workspaceUrl, 'Set Runtime project workspace failed')
       }
     }
+    // The GUI sends its CURRENT model with every turn. Re-point the thread's
+    // pinned model first, so route resolution follows the user's latest
+    // provider choice instead of failing with "model X is not served by
+    // direct provider Y" on threads that already have turn history.
+    if (provider) {
+      try {
+        await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: provider }),
+          signal,
+        })
+      } catch (error) {
+        // Best-effort on older runtimes without model PATCH support.
+        console.warn('[runtime] thread model re-point failed:', error)
+      }
+    }
     // The shared Runtime already treats `$skill-name` as an explicit Skill
     // invocation. Keep the desktop UI's @ mention syntax while translating
     // only the wire prompt on Android.
@@ -2066,6 +2083,15 @@ export class HakusAIClient {
       case 'item.completed':
       case 'item.failed': {
         const item = payload.item || payload
+        // A failed error item IS the turn's error surface — dropping it left
+        // the chat showing an empty assistant bubble on provider failures.
+        if (item.kind === 'error') {
+          return {
+            event_type: 'turn_failed',
+            code: 'RUNTIME_ERROR',
+            error: String(item.summary || item.detail || 'Turn failed'),
+          }
+        }
         if (item.kind !== 'tool_call' && item.kind !== 'command_execution' && item.kind !== 'file_change') return null
         return {
           event_type: 'tool_call_finished',
@@ -2092,6 +2118,14 @@ export class HakusAIClient {
       case 'user_input.answered':
         return { event_type: 'question_answered', question_id: String(payload.input_id || payload.id || ''), choice: String(payload.choice || '') }
       case 'turn.completed': {
+        const turnRecord = payload.turn || {}
+        if (turnRecord.status === 'failed' || turnRecord.error) {
+          return {
+            event_type: 'turn_failed',
+            code: 'RUNTIME_ERROR',
+            error: String(turnRecord.error || 'Turn failed'),
+          }
+        }
         const usage = payload.usage || payload.turn?.usage || {}
         return {
           event_type: 'turn_completed',

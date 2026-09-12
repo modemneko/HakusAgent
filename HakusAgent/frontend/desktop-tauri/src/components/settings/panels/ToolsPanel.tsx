@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast'
 import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { cn } from '@/lib/utils'
+import { GlassSelect } from '@/components/ui/glass-select'
 import type { ToolInfo, PermissionMode, RuntimeConfigSnapshot } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
 
@@ -199,18 +200,19 @@ export function ToolsPanel() {
                   <span className="block text-sm font-medium">{copy('文件访问范围', 'File access scope')}</span>
                   <span className="mt-0.5 block text-[11px] text-muted-foreground">{copy('限制写入与命令工具可触及的位置。', 'Limits where write and command tools can operate.')}</span>
                   </span>
-                  <select
+                  <GlassSelect
                     value={runtimeConfig.sandbox_mode}
-                    onChange={(event) => void handleRuntimeSetting('sandbox_mode', event.target.value)}
+                    onChange={(value) => void handleRuntimeSetting('sandbox_mode', value)}
                     disabled={updatingSetting === 'sandbox_mode'}
-                    className="h-8 min-w-[132px] rounded-lg border border-border/70 bg-background px-2 text-xs outline-none"
-                    aria-label={copy('文件访问范围', 'File access scope')}
-                  >
-                    <option value="read-only">{copy('只读', 'Read only')}</option>
-                    <option value="workspace-write">{copy('仅工作区', 'Workspace only')}</option>
-                    <option value="danger-full-access">{copy('全部文件', 'All files')}</option>
-                    <option value="opensandbox">{copy('外部沙箱', 'External sandbox')}</option>
-                  </select>
+                    className="w-44"
+                    ariaLabel={copy('文件访问范围', 'File access scope')}
+                    options={[
+                      { value: 'read-only', label: copy('只读', 'Read only') },
+                      { value: 'workspace-write', label: copy('仅工作区', 'Workspace only') },
+                      { value: 'danger-full-access', label: copy('全部文件', 'All files') },
+                      { value: 'opensandbox', label: copy('外部沙箱', 'External sandbox') },
+                    ]}
+                  />
                 </label>
               </div>
             ) : (

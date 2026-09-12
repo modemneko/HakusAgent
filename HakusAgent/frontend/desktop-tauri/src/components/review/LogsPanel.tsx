@@ -4,6 +4,7 @@ import { apiClient } from '@/api/client'
 import type { LogEntry, LogFileInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { GlassSelect } from '@/components/ui/glass-select'
 import { useToast } from '@/components/ui/toast'
 import { useI18n } from '@/lib/i18n'
 
@@ -153,18 +154,15 @@ export function LogsPanel() {
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2">
-        <select
+        <GlassSelect
           value={currentFile}
-          onChange={(e) => setCurrentFile(e.target.value)}
-          className="h-7 min-w-[140px] rounded-md border border-border/60 bg-background/60 px-2 text-[11px] outline-none focus:border-primary"
-        >
-          {files.length === 0 && <option value="">{copy('无日志文件', 'No log files')}</option>}
-          {files.map((f) => (
-            <option key={f.name} value={f.name}>
-              {f.name} ({(f.size / 1024).toFixed(1)} KB)
-            </option>
-          ))}
-        </select>
+          onChange={setCurrentFile}
+          className="w-56 [&>button]:h-7 [&>button]:rounded-lg [&>button]:px-2 [&>button]:text-[11px]"
+          ariaLabel={copy('日志文件', 'Log file')}
+          options={files.length === 0
+            ? [{ value: '', label: copy('无日志文件', 'No log files') }]
+            : files.map((f) => ({ value: f.name, label: `${f.name} (${(f.size / 1024).toFixed(1)} KB)` }))}
+        />
 
         <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
           {LEVELS.map((l) => (
@@ -181,17 +179,13 @@ export function LogsPanel() {
           ))}
         </div>
 
-        <select
-          value={lines}
-          onChange={(e) => setLines(Number(e.target.value))}
-          className="h-7 rounded-md border border-border/60 bg-background/60 px-2 text-[11px] outline-none focus:border-primary"
-        >
-          {[100, 200, 500, 1000, 2000, 5000].map((n) => (
-            <option key={n} value={n}>
-              {copy(`最近 ${n} 行`, `Last ${n} lines`)}
-            </option>
-          ))}
-        </select>
+        <GlassSelect
+          value={String(lines)}
+          onChange={(value) => setLines(Number(value))}
+          className="w-28 [&>button]:h-7 [&>button]:rounded-lg [&>button]:px-2 [&>button]:text-[11px]"
+          ariaLabel={copy('显示行数', 'Line count')}
+          options={[100, 200, 500, 1000, 2000, 5000].map((n) => ({ value: String(n), label: copy(`最近 ${n} 行`, `Last ${n} lines`) }))}
+        />
 
         <div className="ml-auto flex items-center gap-1">
           <Button

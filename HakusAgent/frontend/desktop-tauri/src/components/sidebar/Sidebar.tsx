@@ -214,7 +214,23 @@ export function Sidebar() {
   const setActiveProject = useProjectsStore((state) => state.setActive)
   const createProject = useProjectsStore((state) => state.create)
   const setSidebar = useAppStore((state) => state.setSidebar)
+  const setSidebarCompact = useAppStore((state) => state.setSidebarCompact)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    // 有新版本时在设置入口旁显示绿色小圆点；检查失败（无发布/离线）一律静默。
+    const check = async () => {
+      try {
+        const status = (await window.electron?.updater?.check()) as { status?: string } | undefined
+        if (!cancelled && status && ['update-available', 'downloaded', 'ready'].includes(status.status || '')) {
+          setUpdateAvailable(true)
+        }
+      } catch { /* 静默 */ }
+    }
+    const timer = setTimeout(check, 15000)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [])
   const toast = useToast()
 
   const [search, setSearch] = useState('')
@@ -418,8 +434,9 @@ export function Sidebar() {
   }
 
   const settingsButton = (
-    <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => setSettingsOpen(true)} title={t('settings')} aria-label={t('settings')}>
+    <Button size="icon" variant="ghost" className="sidebar-rail-button relative" onClick={() => setSettingsOpen(true)} title={t('settings')} aria-label={t('settings')}>
       <Settings2 className="h-[17px] w-[17px]" />
+      {updateAvailable && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-500" data-testid="update-available-dot" />}
     </Button>
   )
 
@@ -427,10 +444,9 @@ export function Sidebar() {
     <aside className="sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
       <div className="sidebar-compact-rail" aria-label={t('toggleSidebar')}>
         <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-[17px] w-[17px]" /></Button>
-        <div className="sidebar-rail-sessions" aria-label={t('newChat')}>
-          {sessions.slice(0, 5).map((session) => <button key={session.id} type="button" className={cn('sidebar-rail-session', session.id === activeId && 'is-active')} onClick={() => handleSelect(session.id)} title={session.title} aria-label={session.title}><MessageSquare className="h-4 w-4" /></button>)}
-        </div>
+        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => void handleNew()} title={t('newChat')} aria-label={t('newChat')}><Plus className="h-[17px] w-[17px]" /></Button>
         <div className="sidebar-rail-spacer" />
+        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => { setSidebarCompact(false); setSidebar(true) }} title={copy('展开会话列表', 'Expand sessions')} aria-label={copy('展开会话列表', 'Expand sessions')}><LayoutList className="h-[17px] w-[17px]" /></Button>
         {settingsButton}
       </div>
 

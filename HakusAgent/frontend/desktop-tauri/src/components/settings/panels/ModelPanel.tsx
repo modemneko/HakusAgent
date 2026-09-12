@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useState, useMemo, useRef } from 'react'
+import { GlassSelect } from '@/components/ui/glass-select'
 import {
   Check, Eye, EyeOff, Loader2,
   Activity, ListPlus, KeyRound, Settings2, Search, Trash2, Plus, RefreshCw,
@@ -29,6 +30,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
+import { isProviderConfigured, getHiddenProviders, hideProvider, unhideProvider } from '@/lib/providerState'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
@@ -117,6 +119,16 @@ export function ModelPanel() {
   const [newModel, setNewModel] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // ── 自动保存：模型相关配置改动后防抖落盘，无需手动点保存 ──
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
+  const savedSnapshotRef = useRef<{ providerId: string; modelName: string; baseUrl: string; apiFormat: string; models: string[] } | null>(null)
+
+  // ── 批量删除自定义模型商（内置确认弹窗，不用系统 confirm）──
+  const [deleteSelection, setDeleteSelection] = useState<string[]>([])
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   // 新增: provider 元数据 (分组)
   const [metaList, setMetaList] = useState<ProviderMeta[]>([])
   const [search, setSearch] = useState('')
@@ -141,6 +153,8 @@ export function ModelPanel() {
   const [headersDialogOpen, setHeadersDialogOpen] = useState(false)
   const [headerEntries, setHeaderEntries] = useState<{ k: string; v: string }[]>([])
   const [customSaving, setCustomSaving] = useState(false)
+  const [customModels, setCustomModels] = useState<string[]>([])
+  const [customNewModel, setCustomNewModel] = useState('')
   const [lastProviderRefresh, setLastProviderRefresh] = useState<Date | null>(null)
   const [customForm, setCustomForm] = useState({
     id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: '自定义模型商', wire: 'openai',
@@ -240,13 +254,24 @@ export function ModelPanel() {
       setProviderModels(Array.from(new Set(initialModels)))
       setNewModel('')
       setTestResult(null) // 切换 provider 时清空上次测试结果
+      savedSnapshotRef.current = {
+        providerId: selected.id,
+        modelName: selected.model_name || '',
+        baseUrl: selected.base_url || '',
+        apiFormat: selected.wire === 'anthropic' ? 'anthropic' : selected.wire === 'responses' ? 'responses' : 'openai',
+        models: Array.from(new Set(initialModels)),
+      }
+      setSaveState('idle')
     }
   }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 分组 + 搜索过滤
   const groupedProviders = useMemo(() => {
     const metaMap = new Map(metaList.map((m) => [m.id, m]))
+    const hidden = new Set(getHiddenProviders())
     const filtered = providers.filter((p) => {
+      // 已被用户"删除"的内置目录条目从概览隐藏；搜索是找回它们的通道。
+      if (!search.trim() && hidden.has(p.id)) return false
       // Dsh keeps the overview focused on routes the user has actually added
       // or enabled. Searching is the explicit escape hatch for the full
       // built-in catalog, so no provider becomes unreachable.
@@ -280,30 +305,63 @@ export function ModelPanel() {
       || providers.find((provider) => !provider.has_api_key && provider.id !== 'ollama')?.id
       || providers[0]?.id
     if (!nextId) return
+    if (getHiddenProviders().includes(nextId)) unhideProvider(nextId)
     setSelectedId(nextId)
     setEditorOpen(true)
   }
 
-  const handleSave = async () => {
-    if (!selected) return
+  const persistNow = async (overrides?: { apiKey?: string }) => {
+    if (!selected || saving) return
     setSaving(true)
+    setSaveState('saving')
     try {
       const body: Record<string, any> = { provider: selected.id }
       if (modelName.trim()) body.model_name = modelName.trim()
       if (selected.has_url) body.base_url = baseUrl.trim()
-      if (selected.id !== 'ollama') body.api_key = apiKey
+      const key = overrides?.apiKey ?? apiKey
+      if (selected.id !== 'ollama' && key.trim()) body.api_key = key.trim()
       body.models = providerModels
       body.enabled = selected.enabled !== false
       body.wire = apiFormat
       await apiClient.updateProvider(body as any)
-      toast.success(copy(`${selected.display_name} 配置已保存`, `${selected.display_name} configuration saved`))
+      savedSnapshotRef.current = {
+        providerId: selected.id,
+        modelName: modelName.trim(),
+        baseUrl: baseUrl.trim(),
+        apiFormat,
+        models: providerModels,
+      }
+      if (overrides?.apiKey) {
+        setApiKey('')
+        setShowKey(false)
+      }
+      setSaveState('saved')
+      setSavedAt(new Date())
       await loadProviders()
     } catch (e: any) {
+      setSaveState('error')
       toast.error(copy(`保存失败：${e?.message || e}`, `Save failed: ${e?.message || e}`))
     } finally {
       setSaving(false)
     }
   }
+
+  // Debounced auto-save: any change to the current model / base URL / API
+  // format / model list persists ~800ms after the last edit. No manual
+  // save button — the status pill next to the actions shows progress.
+  useEffect(() => {
+    if (!selected) return
+    const snapshot = savedSnapshotRef.current
+    if (!snapshot || snapshot.providerId !== selected.id) return
+    const changed =
+      snapshot.modelName !== modelName.trim() ||
+      snapshot.baseUrl !== baseUrl.trim() ||
+      snapshot.apiFormat !== apiFormat ||
+      JSON.stringify(snapshot.models) !== JSON.stringify(providerModels)
+    if (!changed) return
+    const timer = setTimeout(() => { void persistNow() }, 800)
+    return () => clearTimeout(timer)
+  }, [modelName, baseUrl, apiFormat, providerModels, selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUseModel = async () => {
     if (!selected) return
@@ -466,20 +524,35 @@ export function ModelPanel() {
         id,
         display_name: customForm.display_name.trim() || id,
         base_url: baseUrlValue,
-        model: customForm.model.trim() || undefined,
+        model: customModels[0] || undefined,
         api_key: customForm.api_key.trim() || undefined,
         api_key_env: customForm.api_key_env.trim() || undefined,
         group: customForm.group.trim() || copy('自定义模型商', 'Custom providers'),
-        models: customForm.model.trim() ? [customForm.model.trim()] : [],
+        models: customModels,
         enabled: true,
         wire: customForm.wire,
       })
-      await loadProviders()
-      setSelectedId(id)
-      setCustomEditorOpen(false)
-      setEditorOpen(true)
+      // The runtime persists asynchronously — the freshly created provider
+      // can be missing from the first refreshed list. Wait (briefly) for it
+      // to appear before opening the editor, otherwise `selected` resolves
+      // undefined and the editor renders an empty black pane.
+      let created = providers.find((provider) => provider.id === id)
+      for (let attempt = 0; attempt < 5 && !created; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        await loadProviders()
+        created = useSettingsStore.getState().providers.find((provider) => provider.id === id)
+      }
+      if (created) {
+        setSelectedId(id)
+        setCustomEditorOpen(false)
+        setEditorOpen(true)
+      } else {
+        setCustomEditorOpen(false)
+        setEditorOpen(false)
+        toast.success(copy('自定义模型商已添加，可在列表中打开', 'Custom provider added; open it from the list'))
+      }
       resetCustomProviderForm()
-      toast.success(copy('自定义模型商已添加', 'Custom provider added'))
+      if (created) toast.success(copy('自定义模型商已添加', 'Custom provider added'))
     } catch (error: any) {
       toast.error(copy(`添加失败：${error?.message || error}`, `Could not add: ${error?.message || error}`))
     } finally {
@@ -487,20 +560,64 @@ export function ModelPanel() {
     }
   }
 
-  const handleDeleteCustomProvider = async () => {
-    if (!selected?.is_custom) return
-    if (!window.confirm(copy(`确定删除「${selected.display_name}」吗？此操作会移除本地配置。`, `Delete ${selected.display_name}? This removes its local configuration.`))) return
-    setSaving(true)
+  const confirmDeleteIds = (ids: string[]) => {
+    setDeleteSelection(ids)
+    setConfirmDeleteOpen(true)
+  }
+
+  // 内置模型商"删除"：重置本地配置（停用、清空模型列表与密钥）并从列表隐藏。
+  // 目录条目本身无法从 Runtime 配置移除，重新添加会自动解除隐藏。
+  const handleDeleteBuiltinProvider = async (id: string) => {
     try {
-      await apiClient.deleteCustomProvider(selected.id)
+      await apiClient.updateProvider({ provider: id, enabled: false, models: [] })
+      hideProvider(id)
       await loadProviders()
-      setSelectedId('')
-      setEditorOpen(false)
-      toast.success(copy('自定义模型商已删除', 'Custom provider deleted'))
+      if (selectedId === id) {
+        setSelectedId('')
+        setEditorOpen(false)
+      }
+      return true
     } catch (error: any) {
       toast.error(copy(`删除失败：${error?.message || error}`, `Could not delete: ${error?.message || error}`))
-    } finally {
-      setSaving(false)
+      return false
+    }
+  }
+
+  const handleDeleteCustomProvider = async () => {
+    if (!selected?.is_custom) return
+    confirmDeleteIds([selected.id])
+  }
+
+  const runBatchDelete = async () => {
+    const ids = [...deleteSelection]
+    if (ids.length === 0) return
+    setDeleting(true)
+    const failed: string[] = []
+    for (const id of ids) {
+      try {
+        const provider = providers.find((p) => p.id === id)
+        if (provider?.is_custom) {
+          await apiClient.deleteCustomProvider(id)
+        } else {
+          const ok = await handleDeleteBuiltinProvider(id)
+          if (!ok) failed.push(id)
+        }
+      } catch (error: any) {
+        failed.push(`${id}: ${error?.message || error}`)
+      }
+    }
+    setDeleteSelection([])
+    setConfirmDeleteOpen(false)
+    await loadProviders()
+    if (selectedId && ids.includes(selectedId)) {
+      setSelectedId('')
+      setEditorOpen(false)
+    }
+    setDeleting(false)
+    if (failed.length === 0) {
+      toast.success(copy(`已删除 ${ids.length} 个自定义模型商`, `Deleted ${ids.length} custom provider(s)`))
+    } else {
+      toast.error(copy(`部分删除失败：${failed.join('；')}`, `Some deletions failed: ${failed.join('; ')}`))
     }
   }
 
@@ -515,6 +632,23 @@ export function ModelPanel() {
       group: copy('自定义模型商', 'Custom providers'),
       wire: 'openai',
     })
+    setCustomModels([])
+    setCustomNewModel('')
+  }
+
+  const handleAddCustomModel = () => {
+    const id = customNewModel.trim()
+    if (!id) return
+    if (customModels.some((m) => m.toLowerCase() === id.toLowerCase())) {
+      setCustomNewModel('')
+      return
+    }
+    setCustomModels((prev) => [...prev, id])
+    setCustomNewModel('')
+  }
+
+  const handleRemoveCustomModel = (model: string) => {
+    setCustomModels((prev) => prev.filter((m) => m !== model))
   }
 
   const handleToggleProvider = async (enabled: boolean, providerOverride?: ProviderInfo) => {
@@ -598,6 +732,15 @@ export function ModelPanel() {
     )
   }
 
+  // Editing a provider that is no longer in the list (deleted elsewhere, or
+  // a creation whose persistence is still settling) must not render an empty
+  // pane — bounce back to the overview once loading has settled.
+  useEffect(() => {
+    if (!editorOpen || customEditorOpen || selected || providersLoading) return
+    const timer = setTimeout(() => setEditorOpen(false), 1200)
+    return () => clearTimeout(timer)
+  }, [editorOpen, customEditorOpen, selected, providersLoading])
+
   // Keep the first screen focused on the provider catalog. Editing a route is
   // an intentional second step, matching the compact Dsh settings flow.
   if (!editorOpen) {
@@ -634,7 +777,7 @@ export function ModelPanel() {
           />
         </div>
 
-        <div className="space-y-5">
+          <div className="space-y-5">
           {groupedProviders.map(({ group, items }) => (
             <section key={group} aria-labelledby={`provider-group-${group}`} className="space-y-2">
               <h3 id={`provider-group-${group}`} className="px-1 text-xs font-medium text-muted-foreground">
@@ -648,7 +791,7 @@ export function ModelPanel() {
                     <div
                       key={provider.id}
                       className={cn(
-                        'model-provider-overview-row glass-card flex items-center gap-3 px-4 py-3',
+                        'model-provider-overview-row glass-card group flex items-center gap-3 px-4 py-3',
                         !enabled && 'opacity-65',
                       )}
                     >
@@ -673,6 +816,19 @@ export function ModelPanel() {
                         aria-label={`${provider.display_name} ${enabled ? copy('已启用', 'enabled') : copy('已停用', 'disabled')}`}
                         className="h-5 w-9 shrink-0"
                       />
+                      {!provider.is_default && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                          onClick={() => confirmDeleteIds([provider.id])}
+                          title={provider.is_custom ? copy('删除', 'Delete') : copy('删除（重置并隐藏）', 'Delete (reset & hide)')}
+                          aria-label={`${copy('删除', 'Delete')} ${provider.display_name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
@@ -696,6 +852,40 @@ export function ModelPanel() {
             </div>
           )}
         </div>
+
+        {/* 批量删除确认（内置弹窗） */}
+        <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{copy('删除自定义模型商', 'Delete custom providers')}</DialogTitle>
+              <DialogDescription>
+                {(() => {
+                  const names = deleteSelection.map((id) => providers.find((p) => p.id === id)?.display_name || id).join('、')
+                  const hasBuiltin = deleteSelection.some((id) => !providers.find((p) => p.id === id)?.is_custom)
+                  const prefix = copy(`即将删除 ${deleteSelection.length} 个模型商：${names}。`, `About to delete ${deleteSelection.length} provider(s): ${names}. `)
+                  return hasBuiltin
+                    ? prefix + copy(
+                        '内置模型商将被重置并从列表隐藏（之后可从「添加提供方」重新启用）。此操作不会删除已有会话记录，且无法撤销。',
+                        'Built-in providers are reset and hidden from the lists (re-enable them from "Add provider" later). Session history is kept. This cannot be undone.',
+                      )
+                    : prefix + copy(
+                        '此操作只移除本地配置，不会删除已有会话记录，且无法撤销。',
+                        'This removes local configuration only, keeps session history, and cannot be undone.',
+                      )
+                })()}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+                {copy('取消', 'Cancel')}
+              </Button>
+              <Button variant="destructive" onClick={() => void runBatchDelete()} disabled={deleting}>
+                {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                {copy('删除', 'Delete')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <button
@@ -764,41 +954,58 @@ export function ModelPanel() {
 
           <div className="space-y-2">
             <Label htmlFor="custom-provider-id">{copy('唯一 ID', 'Unique ID')}</Label>
-            <Input id="custom-provider-id" value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} placeholder="e.g. acme-ai" />
-            <p className="text-[11px] text-muted-foreground">{copy('用于保存配置和后续识别，建议使用小写短横线。', 'Used to store and identify this provider. Use lowercase kebab-case.')}</p>
+            <Input id="custom-provider-id" value={customForm.id} onChange={(e) => setCustomForm((v) => ({ ...v, id: e.target.value }))} />
+            <p className="text-[11px] text-muted-foreground">{copy('仅用于本地保存和识别，建议使用小写短横线。', 'Stored locally to identify this provider. Lowercase with dashes is recommended.')}</p>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="custom-provider-name">{copy('显示名称', 'Display name')}</Label>
-            <Input id="custom-provider-name" value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} placeholder="e.g. Acme AI" />
+            <Input id="custom-provider-name" value={customForm.display_name} onChange={(e) => setCustomForm((v) => ({ ...v, display_name: e.target.value }))} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="custom-provider-url">Base URL</Label>
-            <Input id="custom-provider-url" value={customForm.base_url} onChange={(e) => setCustomForm((v) => ({ ...v, base_url: e.target.value }))} placeholder="https://api.example.com/v1" />
+            <Input id="custom-provider-url" value={customForm.base_url} onChange={(e) => setCustomForm((v) => ({ ...v, base_url: e.target.value }))} />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="custom-provider-model">{copy('初始模型（可选）', 'Initial model (optional)')}</Label>
-              <Input id="custom-provider-model" value={customForm.model} onChange={(e) => setCustomForm((v) => ({ ...v, model: e.target.value }))} placeholder="e.g. acme-chat" />
+          <div className="space-y-2">
+            <Label htmlFor="custom-provider-group">{copy('分组', 'Group')}</Label>
+            <Input id="custom-provider-group" value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>{copy('模型列表', 'Models')}</Label>
+            <p className="text-[11px] text-muted-foreground">{copy('列表中的第一个模型将作为当前模型。', 'The first model in the list becomes the current model.')}</p>
+            <div className="space-y-1.5">
+              {customModels.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/70 px-3 py-3 text-center text-xs text-muted-foreground">{copy('尚未添加模型', 'No models added yet')}</div>
+              ) : customModels.map((model, index) => (
+                <div key={model} className="flex items-center gap-2 rounded-lg px-3 py-2 bg-muted/20">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{model}</span>
+                  {index === 0 && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveCustomModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                </div>
+              ))}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="custom-provider-group">{copy('分组', 'Group')}</Label>
-              <Input id="custom-provider-group" value={customForm.group} onChange={(e) => setCustomForm((v) => ({ ...v, group: e.target.value }))} placeholder={copy('自定义模型商', 'Custom providers')} />
+            <div className="flex gap-2">
+              <Input value={customNewModel} onChange={(e) => setCustomNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomModel() } }} className="font-mono text-xs" />
+              <Button type="button" variant="outline" size="sm" onClick={handleAddCustomModel} disabled={!customNewModel.trim()}><Plus className="mr-1 h-3.5 w-3.5" />{copy('添加', 'Add')}</Button>
             </div>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="custom-provider-wire">{copy('接口格式', 'API format')}</Label>
-            <div className="relative">
-              <select id="custom-provider-wire" value={customForm.wire} onChange={(e) => setCustomForm((v) => ({ ...v, wire: e.target.value }))} className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm">
-                <option value="openai">OpenAI Chat Completions</option>
-                <option value="responses">Responses（原生）</option>
-                <option value="anthropic">Anthropic Messages</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            </div>
+            <GlassSelect
+              id="custom-provider-wire"
+              value={customForm.wire}
+              onChange={(value) => setCustomForm((v) => ({ ...v, wire: value }))}
+              ariaLabel={copy('接口格式', 'API format')}
+              options={[
+                { value: 'openai', label: 'OpenAI Chat Completions' },
+                { value: 'responses', label: copy('Responses（原生）', 'Responses (native)') },
+                { value: 'anthropic', label: 'Anthropic Messages' },
+              ]}
+            />
           </div>
 
           <div className="space-y-2">
@@ -808,7 +1015,7 @@ export function ModelPanel() {
 
           <div className="space-y-2">
             <Label htmlFor="custom-provider-env">{copy('环境变量名（可选）', 'Environment variable (optional)')}</Label>
-            <Input id="custom-provider-env" value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))} placeholder="e.g. ACME_API_KEY" />
+            <Input id="custom-provider-env" value={customForm.api_key_env} onChange={(e) => setCustomForm((v) => ({ ...v, api_key_env: e.target.value }))}  />
           </div>
 
           <div className="flex items-center gap-2 pt-1">
@@ -937,6 +1144,11 @@ export function ModelPanel() {
 
       {/* Right: edit form */}
       <div ref={providerFormRef} className="model-provider-form mx-auto w-full max-w-3xl space-y-5">
+        {!selected && (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {copy('未找到该模型商，正在返回列表…', 'Provider not found — returning to the list…')}
+          </div>
+        )}
         {selected && (
           <>
           <div className="flex items-center gap-2">
@@ -976,21 +1188,13 @@ export function ModelPanel() {
 
             <div className="space-y-2">
               <Label htmlFor="provider-route">{copy('提供方', 'Provider')}</Label>
-              <div className="relative">
-                <select
-                  id="provider-route"
-                  value={selectedId}
-                  onChange={(event) => setSelectedId(event.target.value)}
-                  className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm"
-                >
-                  {providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.display_name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              </div>
+              <GlassSelect
+                id="provider-route"
+                value={selectedId}
+                onChange={setSelectedId}
+                ariaLabel={copy('提供方', 'Provider')}
+                options={providers.map((provider) => ({ value: provider.id, label: provider.display_name }))}
+              />
               <p className="text-[11px] text-muted-foreground">{providerRouteHint(selected, locale)}</p>
             </div>
 
@@ -1062,20 +1266,23 @@ export function ModelPanel() {
               </div>
             )}
 
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/10 px-3 py-2.5">
+              <div>
+                <Label>{copy('启用此模型商', 'Enable this provider')}</Label>
+                <p className="text-[11px] text-muted-foreground">{copy('关闭后新对话不再使用它。', 'New chats stop using it while off.')}</p>
+              </div>
+              <Switch
+                checked={selected.enabled !== false}
+                disabled={saving}
+                onCheckedChange={(value) => void handleToggleProvider(value)}
+                aria-label={`${selected.display_name}启用状态`}
+              />
+            </div>
+
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <Label>{copy('模型列表', 'Models')}</Label>
-                  <p className="text-[11px] text-muted-foreground">{copy('一个模型商可以保存多个模型，当前模型用于新对话。', 'Save multiple models per provider; the current model is used for new chats.')}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
-                  <Switch
-                    checked={selected.enabled !== false}
-                    disabled={saving}
-                    onCheckedChange={(value) => void handleToggleProvider(value)}
-                    aria-label={`${selected.display_name}启用状态`}
-                  />
-                </div>
+              <div>
+                <Label>{copy('模型列表', 'Models')}</Label>
+                <p className="text-[11px] text-muted-foreground">{copy('一个模型商可以保存多个模型，当前模型用于新对话。', 'Save multiple models per provider; the current model is used for new chats.')}</p>
               </div>
               <div className="space-y-1.5">
                 {providerModels.length === 0 ? (
@@ -1092,7 +1299,7 @@ export function ModelPanel() {
                 })}
               </div>
               <div className="flex gap-2">
-                <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddModel() } }} placeholder={DEFAULT_MODEL_HINTS[selected.id] || copy('输入模型 ID', 'Enter model ID')} className="font-mono text-xs" />
+                <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddModel() } }}  className="font-mono text-xs" />
                 <Button type="button" variant="outline" size="sm" onClick={handleAddModel} disabled={!newModel.trim()}><Plus className="mr-1 h-3.5 w-3.5" />{copy('添加', 'Add')}</Button>
               </div>
             </div>
@@ -1104,7 +1311,7 @@ export function ModelPanel() {
                   id="base-url"
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder={DEFAULT_BASE_URL_HINTS[selected.id] || 'https://api.example.com/v1'}
+
                 />
                 <p className="text-[11px] text-muted-foreground">
                   {copy('留空使用默认地址。Ollama 用户通常填', 'Leave blank to use the default. Ollama users often use')} <code className="font-mono">http://localhost:11434/v1</code>
@@ -1114,20 +1321,18 @@ export function ModelPanel() {
 
             <div className="space-y-2">
               <Label htmlFor="api-format">{copy('API 格式', 'API format')}</Label>
-              <div className="relative">
-                <select
-                  id="api-format"
-                  value={apiFormat}
-                  onChange={(event) => setApiFormat(event.target.value as 'openai' | 'responses' | 'anthropic')}
-                  className="flex h-10 w-full appearance-none items-center rounded-xl border border-input bg-background px-3 py-2 pr-10 text-sm"
-                >
-                  <option value="openai">OpenAI Chat Completions</option>
-                  <option value="responses">Responses（原生）</option>
-                  <option value="anthropic">Anthropic Messages</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              </div>
-              <p className="text-[11px] text-muted-foreground">{copy('按当前模型商支持的接口选择，保存后立即应用。', 'Choose the interface supported by this provider; changes apply after saving.')}</p>
+              <GlassSelect
+                id="api-format"
+                value={apiFormat}
+                onChange={(value) => setApiFormat(value as 'openai' | 'responses' | 'anthropic')}
+                ariaLabel={copy('API 格式', 'API format')}
+                options={[
+                  { value: 'openai', label: 'OpenAI Chat Completions' },
+                  { value: 'responses', label: copy('Responses（原生）', 'Responses (native)') },
+                  { value: 'anthropic', label: 'Anthropic Messages' },
+                ]}
+              />
+              <p className="text-[11px] text-muted-foreground">{copy('按当前模型商支持的接口选择，更改后自动应用。', 'Choose the interface supported by this provider; changes apply automatically.')}</p>
             </div>
 
             {selected.id !== 'ollama' && (
@@ -1139,6 +1344,8 @@ export function ModelPanel() {
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
+                    onBlur={() => { if (apiKey.trim()) void persistNow({ apiKey: apiKey.trim() }) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && apiKey.trim()) { e.preventDefault(); void persistNow({ apiKey: apiKey.trim() }) } }}
                     placeholder={
                       selected.has_api_key
                         ? copy(`已配置 (${selected.masked_api_key})，留空不变`, `Configured (${selected.masked_api_key}); leave blank to keep it`)
@@ -1169,17 +1376,30 @@ export function ModelPanel() {
             )}
 
             <div className="flex items-center gap-2 pt-1">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('保存中...', 'Saving...')}
-                  </>
-                ) : (
-                  <>
-                    <Check className="mr-2 h-4 w-4" /> {copy('保存配置', 'Save configuration')}
-                  </>
+              {/* 自动保存状态：改动后自动落盘，无需手动保存 */}
+              <span
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-xl border px-3 text-xs transition-colors',
+                  saveState === 'error'
+                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                    : saveState === 'saving'
+                      ? 'border-border/60 bg-muted/30 text-muted-foreground'
+                      : saveState === 'saved'
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-transparent text-muted-foreground',
                 )}
-              </Button>
+                title={saveState === 'error' ? copy('点击重试保存', 'Click to retry') : undefined}
+              >
+                {saveState === 'saving' ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> {copy('保存中…', 'Saving…')}</>
+                ) : saveState === 'error' ? (
+                  <button type="button" onClick={() => void persistNow()} className="font-medium">{copy('保存失败，点击重试', 'Save failed — retry')}</button>
+                ) : saveState === 'saved' && savedAt ? (
+                  <>{copy('已保存', 'Saved')} {savedAt.toLocaleTimeString()}</>
+                ) : (
+                  copy('更改将自动保存', 'Changes save automatically')
+                )}
+              </span>
               <Button variant="ghost" size="sm" onClick={() => loadProviders()} disabled={saving}>{copy('刷新列表', 'Refresh')}</Button>
               {lastProviderRefresh && <span className="text-[10px] text-muted-foreground">{copy('已更新', 'Updated')} {lastProviderRefresh.toLocaleTimeString()}</span>}
             </div>

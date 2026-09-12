@@ -362,11 +362,24 @@ pub(crate) fn persist_provider_model_key(
 }
 
 fn provider_config_table_key_for_identity(
+    doc: &toml_edit::DocumentMut,
     provider: ApiProvider,
     provider_identity: &str,
 ) -> anyhow::Result<String> {
     if provider == ApiProvider::Custom {
-        return normalize_custom_provider_id(provider_identity);
+        let wanted = normalize_custom_provider_id(provider_identity)?;
+        // Bind to the EXISTING table when its key differs only in case.
+        // Writing a second, differently-cased table would split one provider
+        // into a working half and a junk half (observed: [providers.Sencenova]
+        // vs a synthesized [providers.sencenova] holding only `enabled`).
+        if let Some(providers) = doc.get("providers").and_then(|item| item.as_table_like()) {
+            for key in providers.iter().map(|(k, _)| k.to_string()) {
+                if key.to_ascii_lowercase() == wanted.to_ascii_lowercase() {
+                    return Ok(key);
+                }
+            }
+        }
+        return Ok(wanted);
     }
     Ok(provider
         .metadata()
@@ -383,8 +396,8 @@ pub(crate) fn persist_provider_enabled_for_identity(
     enabled: bool,
 ) -> anyhow::Result<PathBuf> {
     let path = config_toml_path(config_path)?;
-    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
     mutate_config_document(&path, |doc| {
+        let key = provider_config_table_key_for_identity(doc, provider, provider_identity)?;
         set_document_value(doc, &["providers", key.as_str(), "enabled"], enabled)
     })?;
     Ok(path)
@@ -400,9 +413,9 @@ pub(crate) fn persist_provider_wire_for_identity(
     wire: Option<&str>,
 ) -> anyhow::Result<PathBuf> {
     let path = config_toml_path(config_path)?;
-    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
     let normalized = wire.map(str::trim).filter(|value| !value.is_empty());
     mutate_config_document(&path, |doc| {
+        let key = provider_config_table_key_for_identity(doc, provider, provider_identity)?;
         let segments = ["providers", key.as_str(), "wire"];
         match normalized {
             Some(value) => set_document_value(doc, &segments, value),
@@ -421,7 +434,6 @@ pub(crate) fn persist_provider_models_for_identity(
     models: &[String],
 ) -> anyhow::Result<PathBuf> {
     let path = config_toml_path(config_path)?;
-    let key = provider_config_table_key_for_identity(provider, provider_identity)?;
     let mut array = toml_edit::Array::new();
     for model in models.iter().map(String::as_str).map(str::trim).filter(|m| !m.is_empty()) {
         if !array.iter().any(|existing| existing.as_str() == Some(model)) {
@@ -429,6 +441,7 @@ pub(crate) fn persist_provider_models_for_identity(
         }
     }
     mutate_config_document(&path, |doc| {
+        let key = provider_config_table_key_for_identity(doc, provider, provider_identity)?;
         let segments = ["providers", key.as_str(), "models"];
         if array.is_empty() {
             unset_document_value(doc, &segments).map(|_| ())

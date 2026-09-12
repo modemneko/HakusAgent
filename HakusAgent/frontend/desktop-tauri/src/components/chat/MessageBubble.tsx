@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Check, Copy, PanelRight, RefreshCw, User, Sparkles, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { Bot, Check, Copy, PanelRight, RefreshCw, User, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -111,7 +111,7 @@ export const MessageBubble = memo(function MessageBubble({
               : 'bg-primary text-primary-foreground shadow-sm',
           )}
         >
-          {isUser ? <User className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" strokeWidth={1.75} />}
         </div>
       ) : (
         <div className="h-7 w-7 shrink-0" aria-hidden />

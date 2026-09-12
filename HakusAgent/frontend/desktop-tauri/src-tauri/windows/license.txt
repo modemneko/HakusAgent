@@ -1,0 +1,19 @@
+﻿HakusAI 最终用户许可协议 / End-User License Agreement
+
+1. 授权范围 / License Grant
+   在遵守本协议的前提下，授予你安装和使用 HakusAI 的非独占、不可转让的许可。
+   You are granted a non-exclusive, non-transferable license to install and use HakusAI.
+
+2. 限制 / Restrictions
+   不得对本软件进行反向工程、反编译，或移除任何版权声明。
+   You may not reverse engineer, decompile, or remove any copyright notices.
+
+3. 免责声明 / Disclaimer
+   本软件按"现状"提供，不附带任何明示或默示的担保。
+   The software is provided "as is", without warranty of any kind.
+
+4. 数据说明 / Data
+   所有配置、会话与密钥均保存在本机。卸载时可选择是否移除这些数据。
+   All configuration, sessions and keys stay on your machine. Uninstall optionally removes them.
+
+© 2026 HakusAI. 保留所有权利 / All rights reserved.

@@ -53,10 +53,14 @@ function App() {
       return
     }
 
-    // The sidebar toggle controls visibility only. The compact preference is
-    // a user setting and must not be changed as a side effect of opening or
-    // closing the navigation rail.
-    setSidebar(!state.sidebarOpen)
+    // Desktop: the button cycles hidden -> full -> compact rail -> full.
+    // The compact rail is the resting state; clicking expands to the full
+    // sidebar, clicking again shrinks back to the rail.
+    if (!state.sidebarOpen) {
+      setSidebar(true)
+      return
+    }
+    setSidebarCompact(!state.sidebarCompact)
   }
 
   const toggleRightPanel = () => {
@@ -382,10 +386,6 @@ function App() {
           <TopBar
             onToggleSidebar={toggleSidebar}
             onToggleRightPanel={toggleRightPanel}
-            // Keep a way back into a hidden compact rail. When the rail is
-            // already visible it stays out of the titlebar, avoiding the
-            // duplicate toggle that made compact mode feel like two sidebars.
-            showSidebarToggle={!compactSidebarActive || !sidebarOpen}
           />
 
           <div className="app-main relative flex min-h-0 flex-1">
@@ -431,7 +431,12 @@ function App() {
                   document.documentElement.style.setProperty('--sidebar-width', `${width}px`)
                 } : undefined}
                 collapseThreshold={compactSidebarActive ? undefined : 120}
-                onCollapse={() => useAppStore.getState().setSidebar(false)}
+                // Dragging the expanded sidebar narrow shrinks it into the
+                // compact rail (same resting state as the toggle cycle).
+                onCollapse={() => {
+                  setSidebarCompact(true)
+                  setSidebar(true)
+                }}
               />
             )}
 

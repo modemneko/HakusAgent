@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import {
+  ArrowUp,
+  Puzzle,
   AtSign,
   ArrowLeft,
   Bot,
@@ -31,12 +33,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
-  Sparkles,
   Square,
   Terminal,
   Trash2,
   Volume2,
-  WandSparkles,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -73,7 +73,7 @@ import { useSettingsStore } from '@/store/settings'
 import { LongRunningTaskVisual } from './LongRunningTaskVisual'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
-import { isProviderConfigured } from '@/lib/providerState'
+import { isProviderConfigured, getHiddenProviders } from '@/lib/providerState'
 import { useI18n } from '@/lib/i18n'
 
 interface Attachment {
@@ -513,7 +513,8 @@ export function Composer({
   // currently default) belong in the pickers — the raw vendor catalog with
   // its dozens of untouched entries is noise.
   const usableProviders = useMemo(() => {
-    return providers.filter(isProviderConfigured)
+    const hidden = new Set(getHiddenProviders())
+    return providers.filter((provider) => !hidden.has(provider.id) && isProviderConfigured(provider))
   }, [providers])
 
   const orderedProviderGroups = useMemo(() => {
@@ -687,7 +688,7 @@ export function Composer({
           label: skill.name,
           insert: `@skill:${skill.name}`,
           hint: `Skill · ${skill.description}`,
-          icon: WandSparkles,
+          icon: Puzzle,
         }))
       const items = [...BASE_MENTION_ITEMS, ...skillItems, ...fileItems]
       mentionCacheRef.current = { projectId: activeProjectId, loadedAt: Date.now(), items }
@@ -1293,7 +1294,7 @@ export function Composer({
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="flex min-w-0 items-center gap-1.5 font-medium">
-                      <ListChecks className="h-3.5 w-3.5 text-primary" />
+                      <ListChecks className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.75} />
                       <span className="truncate">{taskProgress.current_task || "Task running"}</span>
                     </span>
                     {taskProgress.total > 0 && (
@@ -1505,12 +1506,12 @@ export function Composer({
                     {mobileSettingsSection === 'root' && (
                       <div className="mobile-settings-list">
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('project')}>
-                          <FolderOpen className="mobile-settings-row-icon text-primary" />
+                          <FolderOpen className="mobile-settings-row-icon text-muted-foreground" strokeWidth={1.75} />
                           <span className="mobile-settings-row-copy"><strong>{t('projects')}</strong><small>{activeProject?.name || t('currentDirectory')}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => { setMobileSettingsSection('model'); setMobileModelProviderId(null) }}>
-                          <Bot className="mobile-settings-row-icon text-primary" />
+                          <Bot className="mobile-settings-row-icon text-muted-foreground" strokeWidth={1.75} />
                           <span className="mobile-settings-row-copy"><strong>{copy('模型', 'Model')}</strong><small>{currentProviderLabel}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
@@ -1525,12 +1526,12 @@ export function Composer({
                             }, 0)
                           }}
                         >
-                          <LoaderCircle className={cn('mobile-settings-row-icon', goalHasControls || longRunningArmed ? 'text-primary' : 'text-muted-foreground')} />
+                          <LoaderCircle className={cn('mobile-settings-row-icon', goalHasControls || longRunningArmed ? 'text-foreground' : 'text-muted-foreground')} />
                           <span className="mobile-settings-row-copy"><strong>{copy('长程任务', 'Long-running task')}</strong><small>{goalHasControls ? goalStatusLabel : longRunningArmed ? copy('发送一句话开始', 'Send one message to start') : goal?.status === 'complete' ? copy('已完成，可重新启用', 'Complete, ready to re-enable') : copy('点击后发送一句话开始', 'Click, then send one message to start')}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
                         <button type="button" className="mobile-settings-row" onClick={() => setMobileSettingsSection('reasoning')}>
-                          <Brain className="mobile-settings-row-icon text-primary" />
+                          <Brain className="mobile-settings-row-icon text-muted-foreground" strokeWidth={1.75} />
                           <span className="mobile-settings-row-copy"><strong>{copy('思考强度', 'Reasoning')}</strong><small>{reasoningLabel(activeReasoningEffort)}</small></span>
                           <ChevronRight className="mobile-settings-row-chevron" />
                         </button>
@@ -1686,7 +1687,7 @@ export function Composer({
                     <div className="rounded-xl bg-foreground/[0.04] px-3 py-2 text-xs text-muted-foreground">
                       <div className="flex items-center justify-between gap-3"><span>状态</span><strong className="font-medium text-foreground">{goalStatusLabel}</strong></div>
                       <div className="flex items-center justify-between gap-3"><span>连续回合</span><strong className="font-medium text-foreground">{goal.continuation_count}</strong></div>
-                      <div className="mt-1 flex items-center justify-between gap-3"><span>已用 token</span><strong className="font-medium text-foreground">{goal.tokens_used.toLocaleString()}</strong></div>
+                      <div className="mt-1 flex items-center justify-between gap-3"><span>已用 token</span><strong className="font-medium text-foreground">{(goal.tokens_used ?? 0).toLocaleString()}</strong></div>
                     </div>
                   )}
                   <div className="flex flex-wrap justify-end gap-2">
@@ -2114,12 +2115,17 @@ export function Composer({
               )}
               <Button
                 size="icon"
-                className="h-8 w-8 rounded-xl"
+                className={cn(
+                  'h-8 w-8 rounded-full border border-border/40 transition-colors',
+                  (!value.trim() && attachments.length === 0) || disabled || uploading
+                    ? 'border-transparent bg-muted/40 text-muted-foreground/60'
+                    : 'bg-foreground text-background hover:bg-foreground/85',
+                )}
                 onClick={() => void submit()}
                 disabled={(!value.trim() && attachments.length === 0) || disabled || uploading}
                 title={isStreaming ? copy('加入发送队列', 'Add to send queue') : copy('发送', 'Send')}
               >
-                {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.5} />}
               </Button>
               {isStreaming && (
                 <Button
@@ -2138,7 +2144,6 @@ export function Composer({
 
         <div className="composer-tip mt-1.5 flex items-center justify-between px-2 text-[10px] text-muted-foreground/65">
           <span className="flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3" />
             {canUseImages ? copy('可粘贴图片', 'Images can be pasted') : copy('当前模型仅文本', 'Current model accepts text only')}
           </span>
           <span>{value.length} chars</span>

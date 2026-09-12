@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { GlassSelect } from '@/components/ui/glass-select'
 import { Bell, Loader2, Phone, Play, Square, Upload, Volume2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -254,17 +255,15 @@ export function TtsPanel() {
           <div className="settings-subpanel">
             <div className="space-y-1.5">
               <Label htmlFor="voice-call-backend">{copy('通话引擎', 'Call engine')}</Label>
-              <select
+              <GlassSelect
                 id="voice-call-backend"
                 value={settings.voiceCallBackend}
-                onChange={(e) =>
-                  settings.update({ voiceCallBackend: e.target.value as 'celia' | 'builtin' })
-                }
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="builtin">{copy('HakusAI VoiceAgent 引擎', 'HakusAI VoiceAgent')}</option>
-                <option value="celia">{copy('Celia 外部进程', 'External Celia process')}</option>
-              </select>
+                onChange={(value) => settings.update({ voiceCallBackend: value as 'celia' | 'builtin' })}
+                options={[
+                  { value: 'builtin', label: copy('HakusAI VoiceAgent 引擎', 'HakusAI VoiceAgent') },
+                  { value: 'celia', label: copy('Celia 外部进程', 'External Celia process') },
+                ]}
+              />
             </div>
 
             {settings.voiceCallBackend === 'celia' && (
@@ -359,30 +358,28 @@ export function TtsPanel() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="asr-provider">{copy('ASR 引擎', 'ASR engine')}</Label>
-                    <select
+                    <GlassSelect
                       id="asr-provider"
                       value={settings.asrProvider}
-                      onChange={(e) =>
-                        settings.update({ asrProvider: e.target.value as AppSettings['asrProvider'] })
-                      }
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="funasr">FunASR (SenseVoiceSmall)</option>
-                      <option value="whisper">Whisper {copy('（API / 本地）', '(API / local)')}</option>
-                    </select>
+                      onChange={(value) => settings.update({ asrProvider: value as AppSettings['asrProvider'] })}
+                      options={[
+                        { value: 'funasr', label: 'FunASR (SenseVoiceSmall)' },
+                        { value: 'whisper', label: `Whisper ${copy('（API / 本地）', '(API / local)')}` },
+                      ]}
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="asr-language">{copy('识别语言', 'Recognition language')}</Label>
-                    <select
+                    <GlassSelect
                       id="asr-language"
                       value={settings.asrLanguage}
-                      onChange={(e) => settings.update({ asrLanguage: e.target.value })}
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="zh">{copy('中文', 'Chinese')}</option>
-                      <option value="en">English</option>
-                      <option value="auto">{copy('自动', 'Auto')}</option>
-                    </select>
+                      onChange={(value) => settings.update({ asrLanguage: value })}
+                      options={[
+                        { value: 'zh', label: copy('中文', 'Chinese') },
+                        { value: 'en', label: 'English' },
+                        { value: 'auto', label: copy('自动', 'Auto') },
+                      ]}
+                    />
                   </div>
                 </div>
 
@@ -512,27 +509,27 @@ export function TtsPanel() {
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="broadcast-mode">{copy('提醒方式', 'Notification style')}</Label>
-                <select
+                <GlassSelect
                   id="broadcast-mode"
                   value={settings.voiceBroadcastMode}
-                  onChange={(e) => settings.update({ voiceBroadcastMode: e.target.value as 'tts' | 'chime' })}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="chime">{copy('咚咚提示音', 'Chime')}</option>
-                  <option value="tts">{copy('TTS 语音播报', 'TTS voice')}</option>
-                </select>
+                  onChange={(value) => settings.update({ voiceBroadcastMode: value as 'tts' | 'chime' })}
+                  options={[
+                    { value: 'chime', label: copy('咚咚提示音', 'Chime') },
+                    { value: 'tts', label: copy('TTS 语音播报', 'TTS voice') },
+                  ]}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="broadcast-chime">{copy('提示音', 'Chime')}</Label>
-                <select
+                <GlassSelect
                   id="broadcast-chime"
                   value={settings.voiceBroadcastChime}
-                  onChange={(e) => settings.update({ voiceBroadcastChime: e.target.value as 'dingdong' | 'soft' })}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="dingdong">{copy('咚咚，像手机铃声', 'Ding-dong')}</option>
-                  <option value="soft">{copy('轻提示', 'Soft')}</option>
-                </select>
+                  onChange={(value) => settings.update({ voiceBroadcastChime: value as 'dingdong' | 'soft' })}
+                  options={[
+                    { value: 'dingdong', label: copy('咚咚，像手机铃声', 'Ding-dong') },
+                    { value: 'soft', label: copy('轻提示', 'Soft') },
+                  ]}
+                />
               </div>
             </div>
             <Button
@@ -565,18 +562,16 @@ export function TtsPanel() {
           <div className="settings-subpanel">
             <div className="space-y-1.5">
               <Label htmlFor="tts-provider">Provider</Label>
-              <select
+              <GlassSelect
                 id="tts-provider"
                 value={settings.ttsProvider}
-                onChange={(e) =>
-                  settings.update({ ttsProvider: e.target.value as AppSettings['ttsProvider'] })
-                }
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="cosyvoice">CosyVoice {copy('（百炼 API）', '(Bailian API)')}</option>
-                <option value="gpt_sovits">GPT-SoVITS {copy('（本地）', '(local)')}</option>
-                <option value="elevenlabs">ElevenLabs (API)</option>
-              </select>
+                onChange={(value) => settings.update({ ttsProvider: value as AppSettings['ttsProvider'] })}
+                options={[
+                  { value: 'cosyvoice', label: `CosyVoice ${copy('（百炼 API）', '(Bailian API)')}` },
+                  { value: 'gpt_sovits', label: `GPT-SoVITS ${copy('（本地）', '(local)')}` },
+                  { value: 'elevenlabs', label: 'ElevenLabs (API)' },
+                ]}
+              />
               <p className="text-[11px] text-muted-foreground">
                 {copy('CosyVoice 需要在上方配置 DashScope API Key。', 'CosyVoice requires a DashScope API key above.')}
               </p>
@@ -584,20 +579,16 @@ export function TtsPanel() {
 
             <div className="space-y-1.5">
               <Label htmlFor="voice-mode">{copy('语音场景模式', 'Voice scene')}</Label>
-              <select
+              <GlassSelect
                 id="voice-mode"
                 value={settings.voiceMode}
-                onChange={(e) =>
-                  settings.update({
-                    voiceMode: e.target.value as 'companion' | 'assistant' | 'balanced',
-                  })
-                }
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="balanced">{copy('均衡模式（推荐）', 'Balanced (recommended)')}</option>
-                <option value="companion">{copy('陪伴模式（温暖耐心）', 'Companion (warm and patient)')}</option>
-                <option value="assistant">{copy('助手模式（简洁高效）', 'Assistant (concise and efficient)')}</option>
-              </select>
+                onChange={(value) => settings.update({ voiceMode: value as 'companion' | 'assistant' | 'balanced' })}
+                options={[
+                  { value: 'balanced', label: copy('均衡模式（推荐）', 'Balanced (recommended)') },
+                  { value: 'companion', label: copy('陪伴模式（温暖耐心）', 'Companion (warm and patient)') },
+                  { value: 'assistant', label: copy('助手模式（简洁高效）', 'Assistant (concise and efficient)') },
+                ]}
+              />
               <p className="text-[11px] text-muted-foreground">
                 {settings.voiceMode === 'companion' && copy('更长静音等待、温暖语气、较慢语速', 'Longer silence wait, warm tone, slower speech')}
                 {settings.voiceMode === 'assistant' && copy('快速响应、简洁回答、较快语速', 'Fast responses, concise answers, quicker speech')}
@@ -607,21 +598,16 @@ export function TtsPanel() {
 
             <div className="space-y-1.5">
               <Label htmlFor="tts-voice">Voice</Label>
-              <select
+              <GlassSelect
                 id="tts-voice"
                 value={settings.ttsVoice}
-                onChange={(e) => settings.update({ ttsVoice: e.target.value })}
+                onChange={(value) => settings.update({ ttsVoice: value })}
                 disabled={voicesLoading}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {voicesLoading && <option>{copy('加载中...', 'Loading...')}</option>}
-                {!voicesLoading && filteredVoices.length === 0 && (
-                  <option value={settings.ttsVoice}>{settings.ttsVoice}</option>
-                )}
-                {filteredVoices.map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
+                ariaLabel="Voice"
+                options={voicesLoading
+                  ? [{ value: settings.ttsVoice, label: copy('加载中...', 'Loading...') }]
+                  : (filteredVoices.length > 0 ? filteredVoices : [settings.ttsVoice]).map((v) => ({ value: v, label: v }))}
+              />
             </div>
 
             <div className="space-y-1.5">

@@ -2,7 +2,7 @@
  * WeChat ClawBot 面板 — 扫码登录 / 连接状态 / 配置
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { QrCode, Unplug, RefreshCw, Loader2, CheckCircle2, XCircle, MessageSquare, Send } from 'lucide-react'
+import { ArrowUp, QrCode, Unplug, RefreshCw, Loader2, CheckCircle2, XCircle, MessageSquare, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -214,8 +214,20 @@ export function WeChatPanel() {
                 className="text-xs"
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
-              <Button size="sm" onClick={handleSend} disabled={sending || !testUserId || !testText} title={copy('发送测试消息', 'Send test message')} aria-label={copy('发送测试消息', 'Send test message')}>
-                {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              <Button
+                size="icon"
+                className={cn(
+                  'h-8 w-8 shrink-0 rounded-full border border-border/40',
+                  sending || !testUserId || !testText
+                    ? 'border-transparent bg-muted/40 text-muted-foreground/60'
+                    : 'bg-foreground text-background hover:bg-foreground/85',
+                )}
+                onClick={handleSend}
+                disabled={sending || !testUserId || !testText}
+                title={copy('发送测试消息', 'Send test message')}
+                aria-label={copy('发送测试消息', 'Send test message')}
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.5} />}
               </Button>
             </div>
           </div>

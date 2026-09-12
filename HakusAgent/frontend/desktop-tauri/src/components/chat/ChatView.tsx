@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Sparkles, AlertCircle, WifiOff, Mic, Volume2, Loader2, Rocket, GitPullRequest, Compass, Bug, Check, ChevronDown, FolderOpen, FolderPlus, Send, MessageCircle } from 'lucide-react'
+import { ArrowUp, LayoutGrid, AlertCircle, WifiOff, Mic, Volume2, Loader2, Rocket, GitPullRequest, Compass, Bug, Check, ChevronDown, FolderOpen, FolderPlus, Send, MessageCircle } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
@@ -204,7 +204,9 @@ export function ChatView() {
   const activeModel = activeProvider?.configured_models?.find((model) => Boolean(model?.trim()))
   const modelConfigured = Boolean(
     activeProvider
-      && activeProvider.enabled !== false
+      // No `enabled !== false` gate here: the runtime reports enabled=false
+      // even for the active provider when its key lives in the credential
+      // store. isProviderConfigured already covers setup signals.
       // `models` is the read-only provider catalog. It can be populated even
       // on a fresh install, so it must not make the composer look usable.
       // Only a selected model or an explicitly saved user model counts.
@@ -1043,7 +1045,7 @@ function WorkspaceLaunchpad({
       <div className="workspace-launchpad-inner w-full max-w-[46rem]">
         <div className="workspace-launchpad-heading text-center">
           <div className="workspace-launchpad-mark mx-auto flex h-11 w-11 items-center justify-center rounded-2xl">
-            <Sparkles className="h-5 w-5" />
+            <LayoutGrid className="h-5 w-5" />
           </div>
           <h1 className="mt-4 text-xl font-semibold tracking-tight">
             {locale.startsWith('zh') ? '从一个工作区开始' : 'Start with a workspace'}
@@ -1114,7 +1116,7 @@ function WorkspaceLaunchpad({
           <span className="workspace-launchpad-composer-footer">
             <span>{locale.startsWith('zh') ? '点击选择文件夹作为工作区' : 'Click to choose a folder as your workspace'}</span>
             <span className="workspace-launchpad-send" aria-hidden="true">
-              <Send className="h-4 w-4" />
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </span>
           </span>
         </button>
@@ -1149,8 +1151,8 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
   const { t } = useI18n()
   return (
     <div className="empty-state-hero flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-      <div className="empty-state-icon flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-        <Sparkles className="h-5 w-5" />
+      <div className="empty-state-icon flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-muted/40 text-muted-foreground">
+        <MessageCircle className="h-5 w-5" strokeWidth={1.75} />
       </div>
       <div>
         <p className="text-base font-semibold">{t('helloHakus')}</p>
@@ -1170,8 +1172,8 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
                 title={t(card.promptKey)}
                 className="group flex w-32 aspect-square flex-col items-start gap-2 rounded-xl border border-border/60 bg-card/60 p-3 text-left backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
-                  <Icon className="h-4 w-4" />
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/50 bg-muted/30 text-muted-foreground transition-colors group-hover:text-foreground">
+                  <Icon className="h-4 w-4" strokeWidth={1.75} />
                 </span>
                 <span className="text-xs font-medium leading-tight text-foreground/90">
                   {t(card.labelKey)}

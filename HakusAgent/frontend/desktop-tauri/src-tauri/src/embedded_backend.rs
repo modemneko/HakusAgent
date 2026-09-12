@@ -75,17 +75,51 @@ fn spawn_runtime(
 
     let task_workspace: PathBuf = workspace;
     running.store(true, Ordering::Release);
+
+    // The agent dispatch pipeline measures a 2.25-2.5 MiB stack high-water
+    // mark in debug builds. Tauri's shared async runtime uses tokio's 2 MiB
+    // worker default, so the first message dispatch overflowed the guard
+    // page and killed the whole process (STATUS_STACK_OVERFLOW). hakus-tui's
+    // own binary runs its workers on 16 MiB stacks for exactly this reason
+    // (hakus_tui::build_runtime); the embedded runtime gets the same
+    // treatment on a dedicated owner thread.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::Builder::new()
+        .name("hakus-runtime".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = match hakus_tui::build_runtime() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("[rust-backend] Failed to build runtime: {error:#}");
+                    let _ = done_tx.send(());
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                if let Err(error) = hakus_tui::run_embedded_runtime_api(
+                    task_workspace,
+                    "127.0.0.1".to_string(),
+                    EMBEDDED_BACKEND_PORT,
+                    cfg!(target_os = "android"),
+                )
+                .await
+                {
+                    eprintln!("[rust-backend] Runtime API stopped: {error:#}");
+                }
+            });
+            let _ = done_tx.send(());
+        })
+        .map_err(|error| format!("spawn runtime thread: {error}"))?;
+
+    // Supervisor on the Tauri runtime so EmbeddedBackendState keeps its
+    // existing JoinHandle/status semantics; the worker thread itself is
+    // detached (a stack overflow aborts the process regardless).
     Ok(tauri::async_runtime::spawn(async move {
-        if let Err(error) = hakus_tui::run_embedded_runtime_api(
-            task_workspace,
-            "127.0.0.1".to_string(),
-            EMBEDDED_BACKEND_PORT,
-            cfg!(target_os = "android"),
-        )
-        .await
-        {
-            eprintln!("[rust-backend] Runtime API stopped: {error:#}");
-        }
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = done_rx.recv();
+        })
+        .await;
         running.store(false, Ordering::Release);
     }))
 }

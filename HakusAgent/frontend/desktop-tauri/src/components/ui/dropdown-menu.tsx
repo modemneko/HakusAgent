@@ -82,7 +82,7 @@ const DropdownMenuItem = React.forwardRef<
       // macOS-style hover: translucent gray instead of blue accent.
       // rounded-lg (not rounded-sm) for softer, more iOS-like items.
       'relative flex cursor-pointer select-none items-center gap-2 rounded-xl px-2.5 py-2 text-sm outline-none transition-colors',
-      'hover:bg-foreground/[0.06] focus:bg-foreground/[0.06] data-[highlighted]:bg-foreground/[0.06]',
+      'hover:bg-primary/10 focus:bg-primary/10 data-[highlighted]:bg-primary/10',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       inset && 'pl-8',
       className,

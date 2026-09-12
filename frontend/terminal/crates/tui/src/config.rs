@@ -3826,10 +3826,27 @@ pub struct ProvidersConfig {
 
 impl ProvidersConfig {
     /// Look up a user-defined custom provider table by its `[providers.<name>]`
-    /// key (#1519). Returns `None` when no entry with that exact name exists.
+    /// key (#1519). The key is user-typed, so the lookup falls back to a
+    /// case-insensitive match — an id spelled `sencenova` must still bind to
+    /// its own `[providers.Sencenova]` table instead of failing with
+    /// "Unknown provider id". Returns `None` when no entry exists.
     #[must_use]
     pub fn custom_provider_config(&self, name: &str) -> Option<&ProviderConfig> {
-        self.custom.get(name)
+        if let Some(entry) = self.custom.get(name) {
+            return Some(entry);
+        }
+        let lowered = name.to_ascii_lowercase();
+        let matches: Vec<_> = self
+            .custom
+            .iter()
+            .filter(|(key, _)| key.to_ascii_lowercase() == lowered)
+            .collect();
+        // Exactly one case-variant resolves to it; two or more distinct
+        // spellings are ambiguous and fail closed rather than picking one.
+        if matches.len() == 1 {
+            return matches.into_iter().next().map(|(_, entry)| entry);
+        }
+        None
     }
 
     fn validate(&self) -> Result<()> {

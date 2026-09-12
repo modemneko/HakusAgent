@@ -9,6 +9,8 @@
 
 import { useEffect, useState } from 'react'
 import {
+  Puzzle,
+  Info,
   Bot,
   User,
   MessageSquare,
@@ -17,9 +19,7 @@ import {
   Palette,
   LayoutGrid,
   Plug,
-  Sparkles,
   FolderOpen,
-  WandSparkles,
   ArrowLeft,
 } from 'lucide-react'
 import { WeChatPanel } from './panels/WeChatPanel'
@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { GlassSelect } from '@/components/ui/glass-select'
 import { useI18n, type MessageKey } from '@/lib/i18n'
 import { ModelPanel } from './panels/ModelPanel'
 import { CharacterPanel } from './panels/CharacterPanel'
@@ -64,12 +65,12 @@ const CATEGORIES: Category[] = [
   { id: 'models', labelKey: 'settingsModels', descKey: 'modelDesc', icon: Bot },
   { id: 'workspace-data', labelKey: 'settingsWorkspaceData', descKey: 'projectsDesc', icon: FolderOpen },
   { id: 'tools', labelKey: 'tools', descKey: 'toolsDesc', icon: Shield },
-  { id: 'skills', labelKey: 'skills', descKey: 'skillsDesc', icon: WandSparkles },
+  { id: 'skills', labelKey: 'skills', descKey: 'skillsDesc', icon: Puzzle },
   { id: 'mcp', labelKey: 'mcp', descKey: 'mcpDesc', icon: Plug },
   { id: 'wechat', labelKey: 'wechat', descKey: 'wechatDesc', icon: MessageSquare },
   { id: 'appearance', labelKey: 'appearance', descKey: 'appearanceDesc', icon: Palette },
   { id: 'tray', labelKey: 'tray', descKey: 'trayDesc', icon: LayoutGrid },
-  { id: 'about', labelKey: 'about', descKey: 'aboutDesc', icon: Sparkles },
+  { id: 'about', labelKey: 'about', descKey: 'aboutDesc', icon: Info },
 ]
 
 interface SettingsDialogProps {
@@ -120,17 +121,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
         <label className="settings-dialog-mobile-picker">
           <span>{t('settingsCategory')}</span>
-          <select
+          <GlassSelect
             value={active}
-            onChange={(event) => setActive(event.target.value as CategoryId)}
-            aria-label={t('settingsCategory')}
-          >
-            {CATEGORIES.map((category) => (
-              <option key={category.id} value={category.id}>
-                {t(category.labelKey)}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setActive(value as CategoryId)}
+            ariaLabel={t('settingsCategory')}
+            options={CATEGORIES.map((category) => ({ value: category.id, label: t(category.labelKey) }))}
+          />
         </label>
 
         {/* Main area: left nav + right panel, flex-1 so it fills available
