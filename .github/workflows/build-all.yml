@@ -269,24 +269,23 @@ jobs:
         working-directory: HakusAgent/frontend/desktop-tauri
         shell: bash
         run: |
-          python3 -c "import sys; print(sys.version)" >/dev/null
-          python3 - manifest.py <<PYEOF2
+          python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path("src-tauri/gen/android/app/src/main/AndroidManifest.xml")
           m = p.read_text(encoding="utf-8")
           if 'android:usesCleartextTraffic' in m:
               m = re.sub(r'android:usesCleartextTraffic="[^"]*"', 'android:usesCleartextTraffic="true"', m)
           else:
-              m = m.replace("<application", "<application\n        android:usesCleartextTraffic="true"", 1)
+              m = m.replace('<application', '<application\n        android:usesCleartextTraffic="true"', 1)
           if 'android.permission.INTERNET' not in m:
-              m = re.sub(r"(<application\b[^>]*>)", r"\1\n    <uses-permission android:name="android.permission.INTERNET" />", m, count=1)
+              m = re.sub(r'(<application\b[^>]*>)', r'\1\n    <uses-permission android:name="android.permission.INTERNET" />', m, count=1)
           if 'android:allowBackup' in m:
               m = re.sub(r'android:allowBackup="[^"]*"', 'android:allowBackup="false"', m)
           else:
-              m = m.replace("<application", "<application\n        android:allowBackup="false"", 1)
+              m = m.replace('<application', '<application\n        android:allowBackup="false"', 1)
           p.write_text(m, encoding="utf-8")
           print("manifest patched")
-          PYEOF2
+          PY
           grep -q 'android:usesCleartextTraffic="true"' src-tauri/gen/android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.INTERNET' src-tauri/gen/android/app/src/main/AndroidManifest.xml
           grep -q 'android:allowBackup="false"' src-tauri/gen/android/app/src/main/AndroidManifest.xml
