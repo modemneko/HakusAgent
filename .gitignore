@@ -112,3 +112,7 @@ scripts/test_p5_guardian_e2e.py
 .workspace_state.json
 .orchestrator-checkpoint.json
 .long_task_context.json
+
+# Rust / Tauri build outputs (installer + desktop)
+**/src-tauri/target/
+**/src-tauri/gen/

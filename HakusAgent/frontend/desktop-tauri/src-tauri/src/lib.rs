@@ -167,17 +167,17 @@ fn show_native_splash(app: &tauri::AppHandle) {
 
     let _ = SPLASH_CREATED_AT.set(Instant::now());
 
+    // Fullscreen branded boot curtain: covers the whole display so the
+    // loading gap never reveals a half-built main window underneath.
     let build = WebviewWindowBuilder::new(
         app,
         "splash",
         WebviewUrl::App("splash.html".into()),
     )
     .title("HakusAI")
-    .inner_size(560.0, 360.0)
-    .center()
+    .fullscreen(true)
     .decorations(false)
     .shadow(false)
-    .transparent(true)
     .resizable(false)
     .maximizable(false)
     .minimizable(false)

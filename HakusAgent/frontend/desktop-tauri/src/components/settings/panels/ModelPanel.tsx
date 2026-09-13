@@ -363,6 +363,16 @@ export function ModelPanel() {
     return () => clearTimeout(timer)
   }, [modelName, baseUrl, apiFormat, providerModels, selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Editing a provider that is no longer in the list (deleted elsewhere, or
+  // a creation whose persistence is still settling) must not render an empty
+  // pane — bounce back to the overview once loading has settled.
+  // Must stay above every early return so hook order never changes (React #300).
+  useEffect(() => {
+    if (!editorOpen || customEditorOpen || selected || providersLoading) return
+    const timer = setTimeout(() => setEditorOpen(false), 1200)
+    return () => clearTimeout(timer)
+  }, [editorOpen, customEditorOpen, selected, providersLoading])
+
   const handleUseModel = async () => {
     if (!selected) return
     const model = modelName.trim() || providerModels[0]
@@ -731,15 +741,6 @@ export function ModelPanel() {
       </div>
     )
   }
-
-  // Editing a provider that is no longer in the list (deleted elsewhere, or
-  // a creation whose persistence is still settling) must not render an empty
-  // pane — bounce back to the overview once loading has settled.
-  useEffect(() => {
-    if (!editorOpen || customEditorOpen || selected || providersLoading) return
-    const timer = setTimeout(() => setEditorOpen(false), 1200)
-    return () => clearTimeout(timer)
-  }, [editorOpen, customEditorOpen, selected, providersLoading])
 
   // Keep the first screen focused on the provider catalog. Editing a route is
   // an intentional second step, matching the compact Dsh settings flow.
