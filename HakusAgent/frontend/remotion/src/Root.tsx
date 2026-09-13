@@ -1,7 +1,12 @@
 import { Composition } from 'remotion'
+import { HakusAwakening, type HakusAwakeningProps } from './compositions/HakusAwakening'
 import { HakusFirstRun, type FirstRunProps } from './compositions/HakusFirstRun'
 import { HakusLongRunning, type LongRunningProps } from './compositions/HakusLongRunning'
 import { HakusStartup } from './compositions/HakusStartup'
+
+const AwakeningComposition = (props: Record<string, unknown>) => (
+  <HakusAwakening {...(props as unknown as HakusAwakeningProps)} />
+)
 
 const FirstRunComposition = (props: Record<string, unknown>) => (
   <HakusFirstRun {...(props as unknown as FirstRunProps)} />
@@ -13,6 +18,24 @@ const LongRunningComposition = (props: Record<string, unknown>) => (
 
 export const Root = () => (
   <>
+    <Composition
+      id="HakusAwakening"
+      component={AwakeningComposition}
+      durationInFrames={110}
+      fps={30}
+      width={1200}
+      height={800}
+      defaultProps={{ theme: 'dark' } satisfies HakusAwakeningProps}
+    />
+    <Composition
+      id="HakusAwakeningLight"
+      component={AwakeningComposition}
+      durationInFrames={110}
+      fps={30}
+      width={1200}
+      height={800}
+      defaultProps={{ theme: 'light' } satisfies HakusAwakeningProps}
+    />
     <Composition
       id="HakusStartup"
       component={HakusStartup}

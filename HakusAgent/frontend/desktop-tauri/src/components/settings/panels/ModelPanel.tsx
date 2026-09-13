@@ -127,6 +127,9 @@ export function ModelPanel() {
   // ── 批量删除自定义模型商（内置确认弹窗，不用系统 confirm）──
   const [deleteSelection, setDeleteSelection] = useState<string[]>([])
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  /** Inline confirm popover target — shows a small chip next to the provider row. */
+  const [inlineDeleteId, setInlineDeleteId] = useState<string | null>(null)
+  const inlineDeleteRef = useRef<HTMLDivElement | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   // 新增: provider 元数据 (分组)
@@ -571,9 +574,32 @@ export function ModelPanel() {
   }
 
   const confirmDeleteIds = (ids: string[]) => {
+    if (ids.length === 1) {
+      setInlineDeleteId(ids[0])
+      setConfirmDeleteOpen(false)
+      return
+    }
     setDeleteSelection(ids)
     setConfirmDeleteOpen(true)
   }
+
+  // Dismiss the inline delete chip when clicking outside.
+  useEffect(() => {
+    if (!inlineDeleteId) return
+    const onPointerDown = (event: PointerEvent) => {
+      const root = inlineDeleteRef.current
+      if (root && !root.contains(event.target as Node)) setInlineDeleteId(null)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setInlineDeleteId(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [inlineDeleteId])
 
   // 内置模型商"删除"：重置本地配置（停用、清空模型列表与密钥）并从列表隐藏。
   // 目录条目本身无法从 Runtime 配置移除，重新添加会自动解除隐藏。
@@ -599,7 +625,7 @@ export function ModelPanel() {
   }
 
   const runBatchDelete = async () => {
-    const ids = [...deleteSelection]
+    const ids = inlineDeleteId ? [inlineDeleteId] : [...deleteSelection]
     if (ids.length === 0) return
     setDeleting(true)
     const failed: string[] = []
@@ -618,6 +644,7 @@ export function ModelPanel() {
     }
     setDeleteSelection([])
     setConfirmDeleteOpen(false)
+    setInlineDeleteId(null)
     await loadProviders()
     if (selectedId && ids.includes(selectedId)) {
       setSelectedId('')
@@ -625,7 +652,12 @@ export function ModelPanel() {
     }
     setDeleting(false)
     if (failed.length === 0) {
-      toast.success(copy(`已删除 ${ids.length} 个自定义模型商`, `Deleted ${ids.length} custom provider(s)`))
+      if (ids.length === 1) {
+        const name = providers.find((p) => p.id === ids[0])?.display_name || ids[0]
+        toast.success(copy(`已删除 ${name}`, `Deleted ${name}`))
+      } else {
+        toast.success(copy(`已删除 ${ids.length} 个模型商`, `Deleted ${ids.length} provider(s)`))
+      }
     } else {
       toast.error(copy(`部分删除失败：${failed.join('；')}`, `Some deletions failed: ${failed.join('; ')}`))
     }
@@ -788,11 +820,13 @@ export function ModelPanel() {
                 {items.map((provider) => {
                   const enabled = provider.enabled !== false
                   const configured = provider.has_api_key || provider.auth_mode === 'none' || provider.id === 'ollama'
+                  const inlineOpen = inlineDeleteId === provider.id
+                  const inlineProvider = inlineOpen ? provider : null
                   return (
                     <div
                       key={provider.id}
                       className={cn(
-                        'model-provider-overview-row glass-card group flex items-center gap-3 px-4 py-3',
+                        'model-provider-overview-row glass-card group relative flex items-center gap-3 px-4 py-3',
                         !enabled && 'opacity-65',
                       )}
                     >
@@ -822,8 +856,11 @@ export function ModelPanel() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-                          onClick={() => confirmDeleteIds([provider.id])}
+                          className={cn(
+                            'h-8 w-8 shrink-0 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100',
+                            inlineOpen ? 'opacity-100 text-destructive' : 'opacity-0',
+                          )}
+                          onClick={() => setInlineDeleteId(inlineOpen ? null : provider.id)}
                           title={provider.is_custom ? copy('删除', 'Delete') : copy('删除（重置并隐藏）', 'Delete (reset & hide)')}
                           aria-label={`${copy('删除', 'Delete')} ${provider.display_name}`}
                         >
@@ -839,6 +876,47 @@ export function ModelPanel() {
                       >
                         {copy('编辑', 'Edit')}
                       </Button>
+
+                      {inlineOpen && inlineProvider && (
+                        <div
+                          ref={inlineDeleteRef}
+                          role="dialog"
+                          aria-label={copy('确认删除', 'Confirm delete')}
+                          className="absolute right-3 top-1/2 z-20 w-[min(320px,calc(100%-1.5rem))] -translate-y-1/2 rounded-xl border border-destructive/35 bg-popover/95 p-3 shadow-xl shadow-black/20 backdrop-blur-md"
+                        >
+                          <div className="text-[13px] font-medium text-foreground">
+                            {copy(`删除 ${inlineProvider.display_name}？`, `Delete ${inlineProvider.display_name}?`)}
+                          </div>
+                          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                            {inlineProvider.is_custom
+                              ? copy('将移除本地自定义配置，不会删除会话记录。', 'Removes local custom config. Session history is kept.')
+                              : copy('将重置并从列表隐藏（可稍后重新启用），不会删除会话记录。', 'Resets and hides from the list (can re-enable later). Session history is kept.')}
+                          </p>
+                          <div className="mt-2.5 flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => setInlineDeleteId(null)}
+                              disabled={deleting}
+                            >
+                              {copy('取消', 'Cancel')}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => void runBatchDelete()}
+                              disabled={deleting}
+                            >
+                              {deleting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1 h-3 w-3" />}
+                              {copy('删除', 'Delete')}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

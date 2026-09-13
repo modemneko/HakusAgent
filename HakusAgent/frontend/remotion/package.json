@@ -6,6 +6,8 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render:startup": "remotion render src/index.ts HakusStartup out/hakus-startup.mp4",
+    "render:awakening": "remotion render src/index.ts HakusAwakening out/hakus-awakening.mp4",
+    "render:awakening-light": "remotion render src/index.ts HakusAwakeningLight out/hakus-awakening-light.mp4",
     "render:first-run": "remotion render src/index.ts HakusFirstRun out/hakus-first-run.mp4",
     "render:long-run": "remotion render src/index.ts HakusLongRunning out/hakus-long-running.mp4",
     "typecheck": "tsc --noEmit"

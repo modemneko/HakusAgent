@@ -137,6 +137,21 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
     setStep(SETUP_STEPS[Math.min(stepIndex + 1, SETUP_STEPS.length - 1)])
   }
 
+  /** Skip everything except language — jump straight to ready. */
+  const skipRest = async () => {
+    setError(null)
+    if (step === 'language') {
+      try {
+        await settings.update({ language })
+        await apiClient.setRuntimeConfig('locale', localeForRuntime(resolveLocale(language)))
+      } catch { /* best effort */ }
+    }
+    setStep('ready')
+  }
+
+  const canSkip = step !== 'language' && step !== 'ready'
+  const skipLabel = locale === 'zh-CN' ? '跳过' : 'Skip'
+
   const finish = async () => { setSaving(true); try { await settings.update({ onboardingCompleted: true }); onComplete() } finally { setSaving(false) } }
 
   return (
@@ -160,7 +175,30 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
         {step === 'ready' && <section className="first-run-step first-run-ready" aria-labelledby="first-run-ready-title"><div className="first-run-step-icon"><Check className="h-5 w-5" /></div><h2 id="first-run-ready-title">{t('readyTitle')}</h2><p>{t('readyDescription')}</p><p className="first-run-selection">{selectedProvider ? `${selectedProvider.display_name}${model ? ` / ${model}` : ''}` : (locale === 'zh-CN' ? '尚未配置模型' : 'No model configured')}</p></section>}
 
         {error && <p className="first-run-error" role="alert">{error}</p>}
-        <div className="first-run-actions"><Button type="button" variant="ghost" onClick={() => setStep(SETUP_STEPS[Math.max(0, stepIndex - 1)])} disabled={stepIndex === 0 || saving}><ChevronLeft className="mr-1 h-4 w-4" />{locale === 'zh-CN' ? '上一步' : 'Back'}</Button>{step === 'ready' ? <Button type="button" onClick={() => void finish()} disabled={saving}>{saving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}{t('finish')}</Button> : <Button type="button" onClick={() => void next()} disabled={saving}>{locale === 'zh-CN' ? '确认并继续' : 'Confirm and continue'}<ChevronRight className="ml-1 h-4 w-4" /></Button>}</div>
+        <div className="first-run-actions">
+          <Button type="button" variant="ghost" onClick={() => setStep(SETUP_STEPS[Math.max(0, stepIndex - 1)])} disabled={stepIndex === 0 || saving}>
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            {locale === 'zh-CN' ? '上一步' : 'Back'}
+          </Button>
+          <div className="flex items-center gap-2">
+            {canSkip && (
+              <Button type="button" variant="ghost" onClick={() => void skipRest()} disabled={saving}>
+                {skipLabel}
+              </Button>
+            )}
+            {step === 'ready' ? (
+              <Button type="button" onClick={() => void finish()} disabled={saving}>
+                {saving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {t('finish')}
+              </Button>
+            ) : (
+              <Button type="button" onClick={() => void next()} disabled={saving}>
+                {locale === 'zh-CN' ? '确认并继续' : 'Confirm and continue'}
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
