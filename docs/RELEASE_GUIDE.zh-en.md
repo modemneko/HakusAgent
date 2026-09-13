@@ -1,6 +1,6 @@
 # HakusAI 使用教程 / User Guide
 
-> 本说明随 **Beta（测试版）** Release 发布。构建信息见下方「构建信息 / Build info」。
+> 本说明随 **Nightly（滚动测试版）** Release 发布。构建信息见下方「构建信息 / Build info」。
 
 ---
 
@@ -8,13 +8,13 @@
 
 | 项目 / Item | 说明 / Value |
 | --- | --- |
-| 版本 / Version | 见 Release 标题与资产文件名 |
-| 渠道 / Channel | **Beta（预发布 / prerelease）** |
-| 基于 / Based on | 仓库默认分支提交（commit SHA 见 Release Notes 顶部） |
-| 构建来源 / Built from | GitHub Actions `build-all` / `release-beta` |
-| 平台 / Platforms | Windows x64（安装器 + 应用）、macOS、Linux（视资产而定） |
+| 版本 / Version | `nightly`（滚动预发布，无数字版本号） |
+| 渠道 / Channel | **Nightly（滚动测试版 / prerelease）** |
+| 基于 / Based on | 触发构建时的 master 提交（SHA 见 Release Notes） |
+| 构建来源 / Built from | GitHub Actions `build-all`（仅手动 workflow_dispatch） |
+| 平台 / Platforms | Windows / macOS / Linux / Android / CLI |
 
-> 正式版更新通道不会自动安装 Beta。测试请手动下载对应资产。
+> 正式版自动更新**不会**安装 Nightly。请从 Releases 的 `nightly` 手动下载。
 
 ---
 
@@ -22,11 +22,11 @@
 
 ### 1. 下载
 
-1. 打开 GitHub Releases 页面，选择 **最新 Beta**。
+1. 打开 GitHub Releases 页面，打开 **HakusAI Nightly**。
 2. Windows 用户优先下载：
-   - `HakusAI-Installer-*-windows-x64.exe`（推荐，品牌安装向导）
-   - 或 `HakusAI-*-windows-x64-setup.exe`（传统 NSIS，适合静默/企业安装）
-3. macOS / Linux 用户下载对应 `.dmg` / `.AppImage` / `.deb`。
+   - `HakusAI-Installer-nightly-windows-x64.exe`（推荐，品牌安装向导）
+   - 或 `HakusAI-nightly-windows-x64-setup.exe`（传统 NSIS，适合静默/企业安装）
+3. macOS / Linux 用户下载 `HakusAI-nightly-macos-*.dmg` / `HakusAI-nightly-amd64.AppImage` / `.deb`。
 
 ### 2. 安装（Windows 独立安装器）
 
@@ -44,7 +44,7 @@
 静默安装（NSIS 包）：
 
 ```powershell
-.\HakusAI-0.3.0-windows-x64-setup.exe /S
+.\HakusAI-nightly-windows-x64-setup.exe /S
 ```
 
 ### 3. 首次启动
@@ -73,10 +73,10 @@
 
 | 现象 | 处理 |
 | --- | --- |
-| 打开设置崩溃 / React #300 | 升级到本 Beta 或之后版本（已修复 Model 面板 hooks） |
-| 找不到 `app-payload.zip` | 使用完整安装器资产；勿单独改名/拆包 |
+| 打开设置崩溃 / React #300 | 升级到最新 Nightly（已修复 Model 面板 hooks） |
+| 找不到 `app-payload.zip` | 使用完整品牌安装器；勿单独改名/拆包 |
 | 启动黑屏 | 等待启动动画结束；仍异常则删除本地配置后重装 |
-| 更新失败 | Beta 不走自动更新，请手动下载最新 Release |
+| 更新失败 | Nightly 不走自动更新，请手动下载最新 `nightly` |
 
 ---
 
@@ -84,11 +84,11 @@
 
 ### 1. Download
 
-1. Open GitHub Releases and pick the **latest Beta**.
+1. Open GitHub Releases → **HakusAI Nightly**.
 2. On Windows prefer:
-   - `HakusAI-Installer-*-windows-x64.exe` (branded wizard — recommended)
-   - or `HakusAI-*-windows-x64-setup.exe` (classic NSIS, good for silent/enterprise)
-3. On macOS / Linux grab the matching `.dmg` / `.AppImage` / `.deb`.
+   - `HakusAI-Installer-nightly-windows-x64.exe` (branded wizard — recommended)
+   - or `HakusAI-nightly-windows-x64-setup.exe` (classic NSIS, good for silent/enterprise)
+3. On macOS / Linux grab `HakusAI-nightly-macos-*.dmg` / `HakusAI-nightly-amd64.AppImage` / `.deb`.
 
 ### 2. Install (Windows branded installer)
 
@@ -102,7 +102,7 @@
 Silent install (NSIS package):
 
 ```powershell
-.\HakusAI-0.3.0-windows-x64-setup.exe /S
+.\HakusAI-nightly-windows-x64-setup.exe /S
 ```
 
 ### 3. First run
@@ -130,10 +130,10 @@ Silent install (NSIS package):
 
 | Symptom | Fix |
 | --- | --- |
-| Settings crash / React #300 | Upgrade to this Beta or later |
-| `app-payload.zip` missing | Use the full installer asset; do not repack by hand |
+| Settings crash / React #300 | Upgrade to the latest Nightly |
+| `app-payload.zip` missing | Use the full branded installer; do not repack by hand |
 | Black window at start | Wait for splash; if stuck, reset local config and reinstall |
-| Update failed | Betas are not auto-installed — download manually |
+| Update failed | Nightly is not auto-installed — download the latest `nightly` manually |
 
 ---
 
