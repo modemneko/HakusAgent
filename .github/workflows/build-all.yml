@@ -174,7 +174,12 @@ jobs:
       - name: Stage installer payload (windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
-        run: ./scripts/package-installer-payload.ps1
+        run: |
+          Write-Host "repo=$(Get-Location)"
+          ./scripts/package-installer-payload.ps1
+          if (-not (Test-Path "HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip")) {
+            throw "app-payload.zip was not produced"
+          }
 
       - name: Build branded installer (windows)
         if: matrix.platform == 'windows-latest'

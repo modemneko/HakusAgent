@@ -73,7 +73,11 @@ jobs:
       - name: Stage portable payload
         shell: pwsh
         run: |
+          Write-Host "repo=$(Get-Location)"
           ./scripts/package-installer-payload.ps1
+          if (-not (Test-Path "HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip")) {
+            throw "app-payload.zip was not produced"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -104,7 +108,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path HakusAgent/frontend/installer/src-tauri/payload | Out-Null
-          Copy-Item _artifacts/app-payload.zip HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip -Force
+          $src = Get-ChildItem -Path _artifacts -Recurse -Filter app-payload.zip | Select-Object -First 1
+          if (-not $src) {
+            Write-Host "artifact tree:"
+            Get-ChildItem -Path _artifacts -Recurse | Select-Object -First 50 FullName
+            throw "app-payload.zip missing from downloaded artifacts"
+          }
+          Copy-Item $src.FullName HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip -Force
+          Write-Host "restored from $($src.FullName)"
 
       - name: Install installer frontend deps
         working-directory: HakusAgent/frontend/installer
