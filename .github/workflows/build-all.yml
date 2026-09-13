@@ -175,6 +175,12 @@ jobs:
           if (-not (Test-Path "HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip")) {
             throw "app-payload.zip was not produced"
           }
+          $zip = Get-Item "HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip"
+          $zipMb = [math]::Round($zip.Length/1MB,1)
+          Write-Host "app-payload.zip = $zipMb MB"
+          if ($zip.Length -gt 150MB) {
+            throw "app-payload.zip is too large ($zipMb MB) — packaging likely included build caches"
+          }
 
       - name: Build branded installer (windows)
         if: matrix.platform == 'windows-latest'
