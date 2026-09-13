@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HakusAI</title>
     <!--
-      Fullscreen native splash. Rendered by the desktop shell before the
-      React webview finishes booting. Rust triggers the fade via
+      In-window full-bleed native splash (same size as the main window,
+      not OS fullscreen). Rendered by the desktop shell before the React
+      webview finishes booting. Rust triggers the fade via
       `document.documentElement.classList.add('is-fading')`.
     -->
     <style>
