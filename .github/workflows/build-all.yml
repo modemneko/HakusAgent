@@ -1,28 +1,27 @@
-# HakusAgent 全端构建 — 只出 Actions Artifacts，不发 Release。
+# HakusAgent 全端构建 + 自动发布 nightly Release。
 #
-# 内容：
-#   - hakuscli 四端（Linux x64/arm64、macOS arm64/x64、Windows x64/arm64、
-#     Android arm64）— 源码 frontend/terminal
-#   - 桌面端三平台（Windows NSIS、macOS dmg(app)、Linux deb/AppImage）
-#     — 源码 HakusAgent/frontend/desktop-tauri（Tauri 2）
+# 触发：仅 workflow_dispatch（手动）。普通 push / 普通 tag 不会触发。
+# 产物：
+#   - hakuscli 四端
+#   - 桌面端 Windows / macOS / Linux
+#   - Windows 品牌安装器（内嵌 app payload）
+#   - Android APK
 #
-# 触发：手动 workflow_dispatch / v* tag。发布 Release 是显式后续动作，
-# 本工作流永远只上传 artifacts。
+# 发布：更新/创建固定 tag `nightly` 与同名 prerelease，不带数字版本号。
+
 name: build-all
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  NIGHTLY_TAG: nightly
 
 jobs:
-  # ── HakusCLI（Rust，四端七 target）────────────────────────────
   hakuscli:
     name: hakuscli-${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
@@ -77,9 +76,6 @@ jobs:
       - run: cargo install cargo-ndk --locked
         if: matrix.android
 
-      # `libdbus-1` is needed by the opt-in OS keyring backend (keyring ->
-      # secret-service -> dbus -> libdbus-sys). It is only compiled on Linux
-      # targets, so install the dev package before a native build.
       - name: Install system deps (linux native)
         if: matrix.os == 'ubuntu-22.04' && matrix.cross == false && matrix.android != true
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
@@ -126,7 +122,6 @@ jobs:
           path: frontend/terminal/hakuscli-*
           if-no-files-found: error
 
-  # ── 桌面端（Tauri 2，三平台）──────────────────────────────────
   desktop:
     name: desktop-${{ matrix.artifact }}
     runs-on: ${{ matrix.platform }}
@@ -137,10 +132,10 @@ jobs:
           - platform: windows-latest
             artifact: windows
             args: ""
-          - platform: macos-latest # arm64 (M 系列)
+          - platform: macos-latest
             artifact: macos-arm64
             args: "--target aarch64-apple-darwin"
-          - platform: macos-14 # x64 (Intel)
+          - platform: macos-14
             artifact: macos-x64
             args: "--target x86_64-apple-darwin"
           - platform: ubuntu-22.04
@@ -188,42 +183,58 @@ jobs:
           npm ci || npm install
           npx tauri build
 
-      - name: Upload bundles (windows)
+      - name: Collect Windows release assets
         if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        shell: pwsh
+        run: |
+          $out = "release-assets"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Get-ChildItem "HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName (Join-Path $out "HakusAI-nightly-windows-x64-setup.exe") -Force }
+          Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName (Join-Path $out "HakusAI-Installer-nightly-windows-x64.exe") -Force }
+          Get-ChildItem $out | Format-Table Name, Length
+          if (-not (Get-ChildItem $out -Filter *.exe)) { throw "No Windows release assets collected" }
+
+      - name: Collect macOS release assets
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          if [ "${{ matrix.artifact }}" = "macos-arm64" ]; then suffix="aarch64"; else suffix="x64"; fi
+          find HakusAgent/frontend/desktop-tauri/src-tauri/target -path "*/bundle/dmg/*.dmg" -print0 |
+            while IFS= read -r -d '' f; do
+              cp "$f" "release-assets/HakusAI-nightly-macos-${suffix}.dmg"
+            done
+          ls -la release-assets || true
+
+      - name: Collect Linux release assets
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/deb -name '*.deb' -print0 2>/dev/null |
+            while IFS= read -r -d '' f; do cp "$f" "release-assets/HakusAI-nightly-amd64.deb"; done
+          find HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0 2>/dev/null |
+            while IFS= read -r -d '' f; do cp "$f" "release-assets/HakusAI-nightly-amd64.AppImage"; done
+          ls -la release-assets || true
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows
+          name: desktop-${{ matrix.artifact }}-assets
+          path: release-assets/*
+          if-no-files-found: warn
+
+      # Keep raw job artifacts for debugging; do not publish payload zip.
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows-latest'
+        with:
+          name: desktop-windows-raw
           path: |
             HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe
-            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/msi/*.msi
             HakusAgent/frontend/installer/src-tauri/target/release/bundle/nsis/*.exe
-            HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip
           if-no-files-found: warn
 
-      - name: Upload bundles (macOS)
-        if: startsWith(matrix.platform, 'macos')
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.artifact }}
-          path: |
-            HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/dmg/*.dmg
-            HakusAgent/frontend/desktop-tauri/src-tauri/target/*/release/bundle/macos/*.app
-          if-no-files-found: warn
-
-      - name: Upload bundles (linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux
-          path: |
-            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
-            HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: warn
-
-  # ── Android client (Tauri 2, split ABI APKs) ─────────────────────
-  # Android packages the same React UI and in-process Rust Runtime as the
-  # desktop targets. The LAN/cleartext settings below remain enabled for the
-  # optional remote Runtime connection configured by the user.
   android:
     name: android-apk-${{ matrix.asset }}
     runs-on: ubuntu-22.04
@@ -308,6 +319,7 @@ jobs:
           grep -q 'android:usesCleartextTraffic="true"' src-tauri/gen/android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.INTERNET' src-tauri/gen/android/app/src/main/AndroidManifest.xml
           grep -q 'android:allowBackup="false"' src-tauri/gen/android/app/src/main/AndroidManifest.xml
+
       - name: Build Android APK
         working-directory: HakusAgent/frontend/desktop-tauri
         env:
@@ -319,9 +331,6 @@ jobs:
             --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
             --target=aarch64-linux-android26
           BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android: >-
-            --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-            --target=x86_64-linux-android26
-          BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_android: >-
             --sysroot=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot
             --target=x86_64-linux-android26
         run: npx tauri android build --ci --apk --split-per-abi --target ${{ matrix.tauri-target }}
@@ -346,7 +355,7 @@ jobs:
             key_alias="$ANDROID_KEY_ALIAS"
             key_password="$ANDROID_KEY_PASSWORD"
           else
-            echo "::warning::Android signing secrets are not configured; using a temporary CI signing key. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD for upgradeable release APKs."
+            echo "::warning::Android signing secrets are not configured; using a temporary CI signing key."
             key_alias="hakusai-ci"
             signing_password="android"
             key_password="android"
@@ -402,8 +411,90 @@ jobs:
             "$build_tools/apksigner" verify --verbose "$signed_apk"
           done
 
+      - name: Collect Android release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find HakusAgent/frontend/desktop-tauri/src-tauri/gen/android/app/build/outputs/apk/signed -name '*-signed.apk' -print0 |
+            while IFS= read -r -d '' f; do
+              cp "$f" "release-assets/HakusAI-nightly-android-${{ matrix.asset }}.apk"
+            done
+          ls -la release-assets
+
       - uses: actions/upload-artifact@v4
         with:
-          name: hakusai-android-${{ matrix.asset }}-apk
-          path: HakusAgent/frontend/desktop-tauri/src-tauri/gen/android/app/build/outputs/apk/signed/*.apk
+          name: android-${{ matrix.asset }}-assets
+          path: release-assets/*
           if-no-files-found: error
+
+  publish-nightly:
+    needs: [hakuscli, desktop, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: _nightly
+          merge-multiple: true
+
+      - name: Prepare nightly assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Desktop / installer / android collected assets
+          find _nightly -type f \( \
+            -name 'HakusAI-nightly-*' -o \
+            -name 'HakusAI-Installer-nightly-*' \
+          \) -exec cp -v {} dist/ \;
+          # CLI binaries
+          find _nightly -type f -name 'hakuscli-*' -exec cp -v {} dist/ \;
+          # Never publish raw payload zip
+          rm -f dist/app-payload.zip
+          ls -lah dist
+          count=$(ls dist | wc -l)
+          if [ "$count" -lt 5 ]; then
+            echo "Expected more nightly assets, got only $count"
+            ls -laR _nightly | head -100
+            exit 1
+          fi
+
+      - name: Compose nightly notes
+        shell: bash
+        run: |
+          SHORT="${GITHUB_SHA::7}"
+          DATE_UTC="$(date -u +'%Y-%m-%d %H:%M UTC')"
+          cat > notes.md <<EOF
+          ## HakusAI Nightly
+
+          > Rolling prerelease — always the latest successful \`build-all\` run.
+          > Built from commit \`${GITHUB_SHA}\` (${SHORT})
+          > Date: ${DATE_UTC}
+
+          ### Downloads / 下载
+          | Asset | Platform |
+          | --- | --- |
+          | \`HakusAI-Installer-nightly-windows-x64.exe\` | Windows 品牌安装器（推荐） |
+          | \`HakusAI-nightly-windows-x64-setup.exe\` | Windows NSIS 静默友好包 |
+          | \`HakusAI-nightly-macos-aarch64.dmg\` | macOS Apple Silicon |
+          | \`HakusAI-nightly-macos-x64.dmg\` | macOS Intel |
+          | \`HakusAI-nightly-amd64.AppImage\` / \`.deb\` | Linux x64 |
+          | \`HakusAI-nightly-android-*.apk\` | Android |
+          | \`hakuscli-*\` | CLI |
+
+          ### Notes / 说明
+          - 中英文教程：[\`docs/RELEASE_GUIDE.zh-en.md\`](https://github.com/${{ github.repository }}/blob/${GITHUB_SHA}/docs/RELEASE_GUIDE.zh-en.md)
+          - Nightly **不会**被正式版自动更新安装，需手动下载。
+          - Workflow: \`build-all\` run \`${{ github.run_id }}\`
+          EOF
+
+      - name: Publish rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: HakusAI Nightly
+          body_path: notes.md
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          files: dist/*
