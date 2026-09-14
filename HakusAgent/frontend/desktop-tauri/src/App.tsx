@@ -8,6 +8,7 @@ import { ResizeHandle } from '@/components/layout/ResizeHandle'
 import { RightPanel } from '@/components/review/RightPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { FirstRunSetup } from '@/components/FirstRunSetup'
+import { AwakeningSplash } from '@/components/AwakeningSplash'
 
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
@@ -32,6 +33,7 @@ function App() {
   const mountedAt = useRef(Date.now())
   const splashFinishedRef = useRef(false)
   const [appReady, setAppReady] = useState(!IS_TAURI || IS_ANDROID)
+  const [awakeningDone, setAwakeningDone] = useState(!IS_TAURI || IS_ANDROID)
   const [showFirstRun, setShowFirstRun] = useState(false)
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
@@ -172,6 +174,8 @@ function App() {
     const elapsed = Date.now() - mountedAt.current
     const remaining = Math.max(0, MIN_SPLASH_MS - elapsed)
     setTimeout(() => {
+      // Reveal main shell under the in-window AWAKENING overlay; overlay
+      // itself fades out via AwakeningSplash leaving prop / timer.
       setAppReady(true)
       notifySplashFinish()
     }, remaining)
@@ -366,8 +370,16 @@ function App() {
 
   return (
     <>
-      {/* Main UI — invisible until appReady, then fades in while the native
-          splash window (public/splash.html) fades out above it. */}
+      {/* In-window AWAKENING boot curtain (not a separate OS window). */}
+      {!awakeningDone && (
+        <AwakeningSplash
+          leaving={appReady}
+          onExit={() => setAwakeningDone(true)}
+          minMs={3200}
+        />
+      )}
+
+      {/* Main UI — invisible until appReady, then fades in under the overlay. */}
       <TooltipProvider delayDuration={300}>
         <div
           data-testid="app-shell"

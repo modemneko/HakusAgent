@@ -4188,6 +4188,338 @@ body > [data-radix-popper-content-wrapper] {
   border-radius: 0;
 }
 
+/* ── In-window AWAKENING splash (Detroit HUD) ─────────────────────── */
+.awakening-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  overflow: hidden;
+  background: #05070c;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    "Microsoft YaHei", sans-serif;
+  opacity: 1;
+  transition: opacity 0.48s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+}
+.awakening-splash.is-light {
+  background: #f3f6f9;
+}
+.awakening-splash.is-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.awakening-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(120, 210, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 210, 255, 0.07) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, #000 10%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, #000 10%, transparent 75%);
+  opacity: 0.55;
+}
+.awakening-splash.is-light .awakening-grid {
+  background-image:
+    linear-gradient(rgba(40, 130, 180, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(40, 130, 180, 0.1) 1px, transparent 1px);
+}
+
+.awakening-bloom {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 55% 45% at 50% 50%,
+    rgba(90, 180, 255, 0.12) 0%,
+    transparent 70%
+  );
+}
+.awakening-splash.is-light .awakening-bloom {
+  background: radial-gradient(
+    ellipse 55% 45% at 50% 50%,
+    rgba(80, 170, 220, 0.1) 0%,
+    transparent 70%
+  );
+}
+
+.awakening-particle {
+  position: absolute;
+  border-radius: 999px;
+  background: rgba(120, 210, 255, 0.85);
+  animation: awakening-twinkle 2.4s ease-in-out infinite;
+}
+.awakening-splash.is-light .awakening-particle {
+  background: rgba(30, 120, 170, 0.75);
+}
+@keyframes awakening-twinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.awakening-bracket {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-top: 1px solid rgba(120, 210, 255, 0.55);
+  border-left: 1px solid rgba(120, 210, 255, 0.55);
+  opacity: 0.55;
+  animation: awakening-fade-in 0.5s ease-out 0.15s both;
+}
+.awakening-splash.is-light .awakening-bracket {
+  border-color: rgba(40, 130, 180, 0.5);
+}
+.awakening-bracket.tl {
+  left: 72px;
+  top: 72px;
+}
+.awakening-bracket.tr {
+  right: 72px;
+  top: 72px;
+  transform: rotate(90deg);
+}
+.awakening-bracket.br {
+  right: 72px;
+  bottom: 72px;
+  transform: rotate(180deg);
+}
+.awakening-bracket.bl {
+  left: 72px;
+  bottom: 72px;
+  transform: rotate(270deg);
+}
+
+.awakening-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 296px;
+  height: 296px;
+  margin: -148px 0 0 -148px;
+  animation: awakening-ring-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+}
+.awakening-ring-outer,
+.awakening-ring-mid,
+.awakening-ring-arc {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 210, 255, 0.18);
+}
+.awakening-ring-outer {
+  inset: 0;
+  animation: awakening-spin 14s linear infinite;
+}
+.awakening-ring-mid {
+  inset: 30px;
+  opacity: 0.7;
+}
+.awakening-ring-arc {
+  inset: 0;
+  border-color: transparent;
+  border-top-color: rgba(120, 210, 255, 0.55);
+  border-right-color: rgba(120, 210, 255, 0.55);
+  animation: awakening-spin 9s linear infinite reverse;
+}
+.awakening-cross-v,
+.awakening-cross-h {
+  position: absolute;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(120, 210, 255, 0.18),
+    transparent
+  );
+}
+.awakening-cross-v {
+  left: 50%;
+  top: 18px;
+  bottom: 18px;
+  width: 1px;
+  margin-left: -0.5px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(120, 210, 255, 0.18),
+    transparent
+  );
+}
+.awakening-cross-h {
+  top: 50%;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
+.awakening-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+  pointer-events: none;
+}
+.awakening-eyebrow {
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.55em;
+  text-indent: 0.55em;
+  text-transform: uppercase;
+  color: rgba(170, 190, 210, 0.38);
+  animation: awakening-fade-in 0.4s ease-out 0.18s both;
+}
+.awakening-splash.is-light .awakening-eyebrow {
+  color: rgba(40, 60, 80, 0.4);
+}
+.awakening-word {
+  font-size: 22px;
+  font-weight: 300;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+  color: rgba(230, 238, 248, 0.9);
+  line-height: 1.25;
+  white-space: nowrap;
+  text-shadow: 0 0 28px rgba(90, 180, 255, 0.12);
+}
+.awakening-splash.is-light .awakening-word {
+  color: rgba(16, 24, 36, 0.9);
+  text-shadow: none;
+}
+.awakening-word span {
+  display: inline-block;
+  animation: awakening-char 0.45s ease-out both;
+}
+@keyframes awakening-char {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+.awakening-rule {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 200px;
+  animation: awakening-fade-in 0.4s ease-out 0.55s both;
+}
+.awakening-rule span {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(120, 210, 255, 0.55));
+}
+.awakening-rule span:last-child {
+  background: linear-gradient(90deg, rgba(120, 210, 255, 0.55), transparent);
+}
+.awakening-rule i {
+  width: 3px;
+  height: 3px;
+  background: rgba(120, 210, 255, 0.85);
+  transform: rotate(45deg);
+}
+.awakening-sub {
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.48em;
+  text-indent: 0.48em;
+  text-transform: uppercase;
+  color: rgba(170, 190, 210, 0.38);
+  animation: awakening-fade-in 0.4s ease-out 0.62s both;
+}
+.awakening-splash.is-light .awakening-sub {
+  color: rgba(40, 60, 80, 0.4);
+}
+
+.awakening-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 90px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(120, 210, 255, 0.07),
+    transparent
+  );
+  border-bottom: 1px solid rgba(120, 210, 255, 0.12);
+  animation: awakening-scan 3.6s linear infinite;
+  pointer-events: none;
+}
+@keyframes awakening-scan {
+  from {
+    top: -90px;
+  }
+  to {
+    top: 100%;
+  }
+}
+@keyframes awakening-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes awakening-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes awakening-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.awakening-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 100% at 50% 50%,
+    transparent 0%,
+    rgba(5, 7, 12, 0.35) 62%,
+    rgba(5, 7, 12, 0.88) 100%
+  );
+  pointer-events: none;
+}
+.awakening-splash.is-light .awakening-vignette {
+  background: radial-gradient(
+    120% 100% at 50% 50%,
+    transparent 0%,
+    rgba(243, 246, 249, 0.3) 62%,
+    rgba(243, 246, 249, 0.8) 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .awakening-splash,
+  .awakening-splash * {
+    animation-duration: 0.01s !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+}
+
 /* ── Phone composition (:root.is-phone — set from JS with the exact same
  * condition the app uses for its phone layout, so a legacy wide WebView
  * viewport can never opt a phone out of its overlay geometry) ──────── */

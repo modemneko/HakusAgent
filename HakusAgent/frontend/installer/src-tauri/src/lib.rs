@@ -519,6 +519,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .on_window_event(|window, event| {
+            // Transparent frameless windows can leave a ghost border if we only
+            // hide — force process exit when the installer window closes.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let app = window.app_handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                    app.exit(0);
+                });
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             default_install_path,
             detect_previous_install,

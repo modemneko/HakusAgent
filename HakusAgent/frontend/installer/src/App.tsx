@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { exit } from "@tauri-apps/plugin-process";
 import {
   ArrowLeft,
   ArrowRight,
@@ -285,8 +286,19 @@ export default function App() {
   };
 
   const pickFolder = async () => {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") setInstallDir(selected);
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: t.pathTitle,
+        defaultPath: installDir || undefined,
+      });
+      if (typeof selected === "string" && selected.trim()) {
+        setInstallDir(selected.trim());
+      }
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const runInstall = async () => {
@@ -320,6 +332,11 @@ export default function App() {
   const closeApp = async () => {
     try {
       await getCurrentWindow().close();
+    } catch {
+      /* fall through */
+    }
+    try {
+      await exit(0);
     } catch {
       window.close();
     }

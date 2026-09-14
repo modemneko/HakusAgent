@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Command, Download, FolderOpen, Globe2, KeyRound, Plus, RefreshCw, Server, Trash2 } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Command, Download, FolderOpen, Globe2, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, Server, Sun, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -10,8 +10,9 @@ import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
 import { LANGUAGE_OPTIONS, languageOptionLabel, localeForRuntime, resolveLocale, useI18n, type AppLanguage } from '@/lib/i18n'
 import type { ProviderInfo, ProviderModel } from '@/api/types'
 
-type SetupStep = 'language' | 'provider' | 'key' | 'model' | 'workspace' | 'ready'
-const SETUP_STEPS: SetupStep[] = ['language', 'provider', 'key', 'model', 'workspace', 'ready']
+type SetupStep = 'language' | 'provider' | 'key' | 'model' | 'workspace' | 'appearance' | 'ready'
+const SETUP_STEPS: SetupStep[] = ['language', 'provider', 'key', 'model', 'workspace', 'appearance', 'ready']
+type ThemeChoice = 'light' | 'dark' | 'system'
 const DEFAULT_MODEL_HINTS: Record<string, string> = { deepseek: 'deepseek-chat', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-20250514', qwen: 'qwen-plus', gemini: 'gemini-2.5-flash', ollama: 'qwen2.5:7b' }
 
 interface FirstRunSetupProps { onComplete: () => void }
@@ -33,6 +34,7 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
   const [models, setModels] = useState<ProviderModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [workspace, setWorkspace] = useState<string | null>(null)
+  const [theme, setTheme] = useState<ThemeChoice>(settings.theme ?? 'system')
   const [customOpen, setCustomOpen] = useState(false)
   const [customId, setCustomId] = useState('')
   const [customName, setCustomName] = useState('')
@@ -134,6 +136,9 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
     if (step === 'language') {
       try { await settings.update({ language }); await apiClient.setRuntimeConfig('locale', localeForRuntime(resolveLocale(language))) } catch { /* best effort */ }
     }
+    if (step === 'appearance') {
+      try { await settings.setTheme(theme) } catch { /* best effort */ }
+    }
     setStep(SETUP_STEPS[Math.min(stepIndex + 1, SETUP_STEPS.length - 1)])
   }
 
@@ -152,7 +157,7 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
   const canSkip = step !== 'language' && step !== 'ready'
   const skipLabel = locale === 'zh-CN' ? '跳过' : 'Skip'
 
-  const finish = async () => { setSaving(true); try { await settings.update({ onboardingCompleted: true }); onComplete() } finally { setSaving(false) } }
+  const finish = async () => { setSaving(true); try { await settings.setTheme(theme); await settings.update({ onboardingCompleted: true }); onComplete() } finally { setSaving(false) } }
 
   return (
     <div className="first-run-overlay" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
@@ -171,6 +176,38 @@ export function FirstRunSetup({ onComplete }: FirstRunSetupProps) {
         {step === 'model' && <section className="first-run-step" aria-labelledby="first-run-model-title"><div className="first-run-step-icon"><Download className="h-5 w-5" /></div><h2 id="first-run-model-title">{locale === 'zh-CN' ? '选择默认模型' : 'Choose a default model'}</h2><p>{locale === 'zh-CN' ? '一个模型商可以保存多个模型。没有模型也可以完成初始化，但发送会保持禁用。' : 'A provider can keep multiple models. You can finish without one, but sending stays disabled until a model is configured.'}</p><div className="flex gap-2"><Input value={model} onChange={(event) => setModel(event.target.value)}  /><Button type="button" variant="outline" size="icon" onClick={() => void fetchModels()} disabled={modelsLoading || !selectedProvider} title={locale === 'zh-CN' ? '获取模型列表' : 'Fetch models'} aria-label={locale === 'zh-CN' ? '获取模型列表' : 'Fetch models'}>{modelsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button></div>{selectedProvider?.has_url && <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="Base URL" />}{models.length > 0 && <div className="first-run-model-list">{models.slice(0, 30).map((item) => <button type="button" key={item.id} className={cn('first-run-model-option', model === item.id && 'is-selected')} onClick={() => setModel(item.id)}><span>{item.name || item.id}</span>{model === item.id && <Check className="h-4 w-4" />}</button>)}</div>}</section>}
 
         {step === 'workspace' && <section className="first-run-step" aria-labelledby="first-run-workspace-title"><div className="first-run-step-icon"><FolderOpen className="h-5 w-5" /></div><h2 id="first-run-workspace-title">{t('firstRunWorkspaceTitle')}</h2><p>{t('firstRunWorkspaceDescription')}</p><Button type="button" variant="outline" className="first-run-folder-button" onClick={() => void chooseWorkspace()}><FolderOpen className="h-4 w-4" />{workspace ? t('changeFolder') : t('chooseFolder')}</Button><p className="first-run-selection">{workspace || t('workspaceNotSelected')}</p></section>}
+
+        {step === 'appearance' && (
+          <section className="first-run-step" aria-labelledby="first-run-appearance-title">
+            <div className="first-run-step-icon"><Palette className="h-5 w-5" /></div>
+            <h2 id="first-run-appearance-title">{locale === 'zh-CN' ? '外观' : 'Appearance'}</h2>
+            <p>{locale === 'zh-CN' ? '选择界面主题，之后可在设置中修改。' : 'Pick a theme. You can change it later in Settings.'}</p>
+            <div className="first-run-language-options">
+              {([
+                { value: 'light' as const, label: locale === 'zh-CN' ? '浅色' : 'Light', icon: Sun },
+                { value: 'dark' as const, label: locale === 'zh-CN' ? '深色' : 'Dark', icon: Moon },
+                { value: 'system' as const, label: locale === 'zh-CN' ? '跟随系统' : 'System', icon: Monitor },
+              ]).map((option) => {
+                const Icon = option.icon
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={cn('first-run-language-option', theme === option.value && 'is-selected')}
+                    onClick={() => {
+                      setTheme(option.value)
+                      void settings.setTheme(option.value).catch(() => undefined)
+                    }}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden />
+                    <span>{option.label}</span>
+                    {theme === option.value && <Check className="h-4 w-4" aria-hidden />}
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         {step === 'ready' && <section className="first-run-step first-run-ready" aria-labelledby="first-run-ready-title"><div className="first-run-step-icon"><Check className="h-5 w-5" /></div><h2 id="first-run-ready-title">{t('readyTitle')}</h2><p>{t('readyDescription')}</p><p className="first-run-selection">{selectedProvider ? `${selectedProvider.display_name}${model ? ` / ${model}` : ''}` : (locale === 'zh-CN' ? '尚未配置模型' : 'No model configured')}</p></section>}
 

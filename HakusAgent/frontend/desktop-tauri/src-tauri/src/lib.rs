@@ -323,9 +323,14 @@ pub fn run() {
                     Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
                 }
 
-                // Native splash: visible immediately, hides the boot gap
-                // while the main webview loads in the background.
-                show_native_splash(app.handle());
+                // In-window AWAKENING overlay is rendered by the React app.
+                // Still reveal the main window immediately so the user never
+                // sees a blank OS frame while the webview boots.
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                let _ = SPLASH_CREATED_AT.set(Instant::now());
 
                 // Windows 11: restore rounded corners on the undecorated
                 // window (they default to square without OS decorations).

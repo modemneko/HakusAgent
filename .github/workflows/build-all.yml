@@ -187,7 +187,7 @@ jobs:
         working-directory: HakusAgent/frontend/installer
         run: |
           npm ci || npm install
-          npx tauri build
+          npx tauri build --no-bundle
 
       - name: Collect Windows release assets
         if: matrix.platform == 'windows-latest'
@@ -195,10 +195,25 @@ jobs:
         run: |
           $out = "release-assets"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # Traditional NSIS app installer (optional / enterprise)
           Get-ChildItem "HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName (Join-Path $out "HakusAI-nightly-windows-x64-setup.exe") -Force }
-          Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
-            ForEach-Object { Copy-Item $_.FullName (Join-Path $out "HakusAI-Installer-nightly-windows-x64.exe") -Force }
+
+          # Branded installer is a portable exe — double-click opens the wizard
+          # directly (no second NSIS install step).
+          $instExe = Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release/*.exe" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'build-script' } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+          if (-not $instExe) {
+            Write-Host "release dir:"
+            Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release" -ErrorAction SilentlyContinue | Select-Object Name,Length
+            throw "Installer exe not found"
+          }
+          Copy-Item $instExe.FullName (Join-Path $out "HakusAI-Installer-nightly-windows-x64.exe") -Force
+          Write-Host "Installer source: $($instExe.FullName) ($([math]::Round($instExe.Length/1MB,1)) MB)"
+
           Get-ChildItem $out | Format-Table Name, Length
           if (-not (Get-ChildItem $out -Filter *.exe)) { throw "No Windows release assets collected" }
 
@@ -504,3 +519,6 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
           files: dist/*
+          # Portable installer needs its payload beside it at runtime when
+          # resources are not embedded; also ship payload for the branded exe.
+          # (payload zip is internal — not user-facing download page primary)
