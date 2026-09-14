@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use walkdir::WalkDir;
 
 const PRODUCT: &str = "HakusAI";
@@ -114,6 +115,29 @@ fn resolve_payload_zip(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 fn default_install_path() -> String {
     default_install_dir().to_string_lossy().to_string()
+}
+
+/// Native folder picker — more reliable than the JS dialog plugin in
+/// portable / frameless installer builds.
+#[tauri::command]
+async fn pick_install_folder(app: tauri::AppHandle, default_path: Option<String>) -> Result<Option<String>, String> {
+    let mut builder = app.dialog().file().set_title(if cfg!(windows) {
+        "选择安装目录"
+    } else {
+        "Choose install folder"
+    });
+    if let Some(path) = default_path.filter(|p| !p.trim().is_empty()) {
+        builder = builder.set_directory(path);
+    }
+    let picked = builder.blocking_pick_folder();
+    Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().to_string()))
+}
+
+/// Kill the installer process immediately. Transparent frameless windows can
+/// leave a ghost edge if we only hide/close the webview.
+#[tauri::command]
+fn force_exit() {
+    std::process::exit(0);
 }
 
 #[tauri::command]
@@ -521,18 +545,27 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             // Transparent frameless windows can leave a ghost border if we only
-            // hide — force process exit when the installer window closes.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let app = window.app_handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(80));
-                    app.exit(0);
-                });
+            // hide — force process exit on close/destroy.
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(40));
+                        app.exit(0);
+                        std::process::exit(0);
+                    });
+                }
+                tauri::WindowEvent::Destroyed => {
+                    std::process::exit(0);
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
             default_install_path,
+            pick_install_folder,
+            force_exit,
             detect_previous_install,
             payload_status,
             run_install,

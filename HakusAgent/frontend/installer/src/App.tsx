@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
-import { exit } from "@tauri-apps/plugin-process";
 import {
   ArrowLeft,
   ArrowRight,
@@ -287,14 +284,12 @@ export default function App() {
 
   const pickFolder = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: t.pathTitle,
-        defaultPath: installDir || undefined,
+      const selected = await invoke<string | null>("pick_install_folder", {
+        defaultPath: installDir || null,
       });
       if (typeof selected === "string" && selected.trim()) {
         setInstallDir(selected.trim());
+        setError(null);
       }
     } catch (e) {
       setError(String(e));
@@ -329,17 +324,10 @@ export default function App() {
     }
   };
 
-  const closeApp = async () => {
-    try {
-      await getCurrentWindow().close();
-    } catch {
-      /* fall through */
-    }
-    try {
-      await exit(0);
-    } catch {
+  const closeApp = () => {
+    void invoke("force_exit").catch(() => {
       window.close();
-    }
+    });
   };
 
   const renderBody = () => {
