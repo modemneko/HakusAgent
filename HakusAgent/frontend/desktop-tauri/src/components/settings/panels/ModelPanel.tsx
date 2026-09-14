@@ -851,22 +851,20 @@ export function ModelPanel() {
                         aria-label={`${provider.display_name} ${enabled ? copy('已启用', 'enabled') : copy('已停用', 'disabled')}`}
                         className="h-5 w-9 shrink-0"
                       />
-                      {!provider.is_default && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className={cn(
-                            'h-8 w-8 shrink-0 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100',
-                            inlineOpen ? 'opacity-100 text-destructive' : 'opacity-0',
-                          )}
-                          onClick={() => setInlineDeleteId(inlineOpen ? null : provider.id)}
-                          title={provider.is_custom ? copy('删除', 'Delete') : copy('删除（重置并隐藏）', 'Delete (reset & hide)')}
-                          aria-label={`${copy('删除', 'Delete')} ${provider.display_name}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          'h-8 w-8 shrink-0 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100',
+                          inlineOpen ? 'opacity-100 text-destructive' : 'opacity-0',
+                        )}
+                        onClick={() => setInlineDeleteId(inlineOpen ? null : provider.id)}
+                        title={provider.is_custom ? copy('删除', 'Delete') : copy('删除（重置并隐藏）', 'Delete (reset & hide)')}
+                        aria-label={`${copy('删除', 'Delete')} ${provider.display_name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"
@@ -888,9 +886,14 @@ export function ModelPanel() {
                             {copy(`删除 ${inlineProvider.display_name}？`, `Delete ${inlineProvider.display_name}?`)}
                           </div>
                           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                            {inlineProvider.is_custom
-                              ? copy('将移除本地自定义配置，不会删除会话记录。', 'Removes local custom config. Session history is kept.')
-                              : copy('将重置并从列表隐藏（可稍后重新启用），不会删除会话记录。', 'Resets and hides from the list (can re-enable later). Session history is kept.')}
+                            {inlineProvider.is_default
+                              ? copy(
+                                  '这是当前使用的模型商。删除后需要重新选择默认模型，会话记录仍会保留。',
+                                  'This is the provider currently in use. You will need to pick a default model again. Session history is kept.',
+                                )
+                              : inlineProvider.is_custom
+                                ? copy('将移除本地自定义配置，不会删除会话记录。', 'Removes local custom config. Session history is kept.')
+                                : copy('将重置并从列表隐藏（可稍后重新启用），不会删除会话记录。', 'Resets and hides from the list (can re-enable later). Session history is kept.')}
                           </p>
                           <div className="mt-2.5 flex justify-end gap-2">
                             <Button
