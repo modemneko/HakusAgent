@@ -64,7 +64,7 @@ import {
   getReasoningEffortMeta,
 } from '@/lib/agentModes'
 import { PHONE_VIEWPORT_QUERY } from '@/lib/responsive'
-import { cn, generateId } from '@/lib/utils'
+import { cn, displayPath, generateId } from '@/lib/utils'
 import type { ConversationState } from '@/lib/voiceConversation'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
@@ -1713,7 +1713,7 @@ export function Composer({
                       'composer-edge-trigger composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
-                    title={activeProject ? activeProject.path : copy('不在项目中工作', 'No project')}
+                    title={activeProject ? displayPath(activeProject.path) : copy('不在项目中工作', 'No project')}
                   >
                     <FolderOpen className={cn('h-3.5 w-3.5 shrink-0', activeProject ? 'text-primary' : 'text-muted-foreground')} />
                     <span className="truncate">{activeProject ? activeProject.name : copy('不在项目中工作', 'No project')}</span>
@@ -1777,7 +1777,7 @@ export function Composer({
                             <FolderOpen className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{p.name}</div>
-                              <div className="truncate text-[10px] text-muted-foreground">{p.path}</div>
+                              <div className="truncate text-[10px] text-muted-foreground">{displayPath(p.path)}</div>
                             </div>
                             {isActive && !isConfirming && (
                               <Check className="h-3.5 w-3.5 shrink-0 text-primary" />

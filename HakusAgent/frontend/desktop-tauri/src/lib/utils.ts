@@ -38,6 +38,22 @@ export function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s
 }
 
+/**
+ * Pretty-print a filesystem path for UI.
+ * Strips the Windows extended-length prefix (`\\?\`, `\\?\UNC\`) that Tauri
+ * dialogs often return, so users see `D:\项目\foo` instead of `\\?\D:\项目\foo`.
+ */
+export function displayPath(path: string): string {
+  if (!path) return path
+  let out = path
+  if (out.startsWith('\\\\?\\UNC\\')) {
+    out = `\\\\${out.slice(8)}`
+  } else if (out.startsWith('\\\\?\\')) {
+    out = out.slice(4)
+  }
+  return out
+}
+
 /** Copy text to clipboard with fallback for older browsers / Electron */
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {

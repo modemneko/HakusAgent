@@ -20,7 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { cn, generateId } from '@/lib/utils'
+import { cn, displayPath, generateId } from '@/lib/utils'
 import { playVoiceNotification } from '@/lib/voiceNotifications'
 import { VoiceConversation, type ConversationState } from '@/lib/voiceConversation'
 import { VoiceCallEngine, type VoiceCallState } from '@/lib/voiceCall'
@@ -878,6 +878,7 @@ export function ChatView() {
         onSelectWorkspace={(projectId) => void startWorkspaceSession(projectId)}
         onCreateWorkspace={() => void handleCreateWorkspace()}
         onDirectChat={() => void handleDirectChat()}
+        onContinueActive={(projectId) => void startWorkspaceSession(projectId)}
       />
     )
   }
@@ -1028,6 +1029,7 @@ interface WorkspaceLaunchpadProps {
   onSelectWorkspace: (projectId: string) => void
   onCreateWorkspace: () => void
   onDirectChat: () => void
+  onContinueActive: (projectId: string) => void
 }
 
 function WorkspaceLaunchpad({
@@ -1036,6 +1038,7 @@ function WorkspaceLaunchpad({
   onSelectWorkspace,
   onCreateWorkspace,
   onDirectChat,
+  onContinueActive,
 }: WorkspaceLaunchpadProps) {
   const { locale } = useI18n()
   const activeProject = projects.find((project) => project.id === activeProjectId)
@@ -1076,7 +1079,7 @@ function WorkspaceLaunchpad({
                   <FolderOpen className={cn('h-4 w-4 shrink-0', project.id === activeProjectId ? 'text-primary' : 'text-muted-foreground')} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{project.name}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{project.path}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{displayPath(project.path)}</span>
                   </span>
                   {project.id === activeProjectId && <Check className="h-4 w-4 shrink-0 text-primary" />}
                 </DropdownMenuItem>
@@ -1104,8 +1107,22 @@ function WorkspaceLaunchpad({
         <button
           type="button"
           className="workspace-launchpad-composer mt-5"
-          onClick={onCreateWorkspace}
-          aria-label={locale.startsWith('zh') ? '选择工作区并开始' : 'Choose a workspace to begin'}
+          onClick={() => {
+            if (activeProject) {
+              onContinueActive(activeProject.id)
+              return
+            }
+            onCreateWorkspace()
+          }}
+          aria-label={
+            activeProject
+              ? locale.startsWith('zh')
+                ? `在 ${activeProject.name} 中新建会话`
+                : `Start a new chat in ${activeProject.name}`
+              : locale.startsWith('zh')
+                ? '选择工作区并开始'
+                : 'Choose a workspace to begin'
+          }
         >
           <span
             className="workspace-launchpad-placeholder"
@@ -1114,7 +1131,15 @@ function WorkspaceLaunchpad({
             {activeProject ? (locale.startsWith('zh') ? `继续使用 ${activeProject.name}` : `Continue with ${activeProject.name}`) : (locale.startsWith('zh') ? '选择一个工作区开始' : 'Choose a workspace to begin')}
           </span>
           <span className="workspace-launchpad-composer-footer">
-            <span>{locale.startsWith('zh') ? '点击选择文件夹作为工作区' : 'Click to choose a folder as your workspace'}</span>
+            <span>
+              {activeProject
+                ? locale.startsWith('zh')
+                  ? '点击新建会话'
+                  : 'Click to start a new chat'
+                : locale.startsWith('zh')
+                  ? '点击选择文件夹作为工作区'
+                  : 'Click to choose a folder as your workspace'}
+            </span>
             <span className="workspace-launchpad-send" aria-hidden="true">
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </span>

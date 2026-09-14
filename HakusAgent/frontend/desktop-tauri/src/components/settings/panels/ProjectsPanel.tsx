@@ -32,7 +32,7 @@ import { useProjectsStore } from '@/store/projects'
 import { useSessionStore } from '@/store/session'
 import { useToast } from '@/components/ui/toast'
 import { confirmProjectAccess, pickProjectFolder } from '@/api/tauriBridge'
-import { cn } from '@/lib/utils'
+import { cn, displayPath } from '@/lib/utils'
 import type { Project } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
 
@@ -270,7 +270,7 @@ export function ProjectsPanel() {
                     </div>
                   )}
                   <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
-                    {p.path}
+                    {displayPath(p.path)}
                   </div>
                 </div>
 

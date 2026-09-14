@@ -2645,11 +2645,21 @@ select:focus-visible {
   box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04) !important;
 }
 
+.project-picker-search,
 .project-picker-search:focus,
 .project-picker-search:focus-visible {
   outline: none !important;
   box-shadow: none !important;
+  border: none !important;
   border-color: transparent !important;
+  background: transparent !important;
+}
+
+/* Keep the search chrome quiet — no glow ring on the wrapper either. */
+.project-picker-search:is(:focus, :focus-visible),
+.project-picker-search:is(:focus, :focus-visible) * {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 @media (min-width: 768px) {
