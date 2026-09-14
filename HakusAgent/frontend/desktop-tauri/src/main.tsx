@@ -140,6 +140,28 @@ window.addEventListener("unhandledrejection", (event) => {
   recordCrash(`unhandled rejection: ${reason?.message || String(event.reason)}`);
 });
 
+// ── Disable the Chromium WebView context menu (Refresh / Back / Inspect) ──
+// Desktop shells should not show a browser menu. Keep native text editing
+// affordances in inputs/textareas/contenteditable (copy / paste / select).
+if (typeof __TAURI_INTERNALS__ !== "undefined" && !isAndroidRuntime) {
+  window.addEventListener(
+    "contextmenu",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      const editable =
+        !!target &&
+        (target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target.isContentEditable ||
+          !!target.closest("input, textarea, [contenteditable='true']"));
+      if (!editable) {
+        event.preventDefault();
+      }
+    },
+    true,
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <AppErrorBoundary>
