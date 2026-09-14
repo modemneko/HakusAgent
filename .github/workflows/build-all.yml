@@ -200,7 +200,8 @@ jobs:
           Get-ChildItem "HakusAgent/frontend/desktop-tauri/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName (Join-Path $out "HakusAI-nightly-windows-x64-setup.exe") -Force }
 
-          # Branded installer is a portable exe — double-click opens the wizard
+          # Branded installer is a portable folder (exe + payload) shipped as
+          # one zip — double-click the extracted exe to open the wizard
           # directly (no second NSIS install step).
           $instExe = Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release/*.exe" -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notmatch 'build-script' } |
@@ -211,8 +212,17 @@ jobs:
             Get-ChildItem "HakusAgent/frontend/installer/src-tauri/target/release" -ErrorAction SilentlyContinue | Select-Object Name,Length
             throw "Installer exe not found"
           }
-          Copy-Item $instExe.FullName (Join-Path $out "HakusAI-Installer-nightly-windows-x64.exe") -Force
-          Write-Host "Installer source: $($instExe.FullName) ($([math]::Round($instExe.Length/1MB,1)) MB)"
+          $stageInst = Join-Path $env:TEMP "hakus-installer-stage"
+          if (Test-Path $stageInst) { Remove-Item $stageInst -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $stageInst | Out-Null
+          Copy-Item $instExe.FullName (Join-Path $stageInst "HakusAI-Installer.exe") -Force
+          $payloadSrc = "HakusAgent/frontend/installer/src-tauri/payload/app-payload.zip"
+          if (-not (Test-Path $payloadSrc)) { throw "payload zip missing: $payloadSrc" }
+          New-Item -ItemType Directory -Force -Path (Join-Path $stageInst "payload") | Out-Null
+          Copy-Item $payloadSrc (Join-Path $stageInst "payload\app-payload.zip") -Force
+          $instZip = Join-Path $out "HakusAI-Installer-nightly-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $stageInst "*") -DestinationPath $instZip -Force
+          Write-Host "Installer zip: $instZip ($([math]::Round((Get-Item $instZip).Length/1MB,1)) MB) from $($instExe.Name)"
 
           Get-ChildItem $out | Format-Table Name, Length
           if (-not (Get-ChildItem $out -Filter *.exe)) { throw "No Windows release assets collected" }
@@ -495,7 +505,7 @@ jobs:
           ### Downloads / 下载
           | Asset | Platform |
           | --- | --- |
-          | \`HakusAI-Installer-nightly-windows-x64.exe\` | Windows 品牌安装器（推荐） |
+          | \`HakusAI-Installer-nightly-windows-x64.zip\` | Windows 品牌安装向导（解压后运行 exe） |
           | \`HakusAI-nightly-windows-x64-setup.exe\` | Windows NSIS 静默友好包 |
           | \`HakusAI-nightly-macos-aarch64.dmg\` | macOS Apple Silicon |
           | \`HakusAI-nightly-macos-x64.dmg\` | macOS Intel |
