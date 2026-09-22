@@ -98,6 +98,54 @@ export const voice = {
   stopCelia: () => invoke("voice_stop_celia"),
 };
 
+// ── Git review / worktree / doctor ─────────────────────────────────
+export interface TauriWorktree {
+  path: string
+  branch: string | null
+  head: string
+  bare: boolean
+  locked: boolean
+}
+
+export interface TauriDoctorCheck {
+  id: string
+  name: string
+  required: boolean
+  found: boolean
+  version?: string
+  path?: string
+  status: 'ok' | 'missing' | 'outdated' | 'error'
+  hint?: string
+}
+
+export interface TauriDoctorReport {
+  checks: TauriDoctorCheck[]
+  healthy: boolean
+  backend_version?: string
+}
+
+export const gitOs = {
+  applyPatch: (workdir: string, patch: string, reverse = false, cached = false) =>
+    invoke<void>("git_apply_patch", { workdir, patch, reverse, cached }),
+  branchList: (workdir: string) => invoke<string[]>("git_branch_list", { workdir }),
+  worktreeList: (workdir: string) => invoke<TauriWorktree[]>("git_worktree_list", { workdir }),
+  worktreeAdd: (workdir: string, path: string, branch?: string, newBranch?: string) =>
+    invoke<void>("git_worktree_add", { workdir, path, branch, newBranch }),
+  prList: (workdir: string) =>
+    invoke<Array<Record<string, unknown>>>("git_pr_list", { workdir }),
+  /** CI checks for a PR via `gh pr checks <n>` (empty if gh unavailable). */
+  prChecks: (workdir: string, number: number) =>
+    invoke<Array<Record<string, unknown>>>("git_pr_checks", { workdir, number }),
+}
+
+export const doctor = {
+  checkDependencies: (backendHealthy: boolean, backendVersion?: string) =>
+    invoke<TauriDoctorReport>("doctor_check_dependencies", {
+      backendHealthy,
+      backendVersion,
+    }),
+}
+
 // ── Project folder access ─────────────────────────────────────────
 export interface ProjectFolderSelection {
   /** Real local workspace path used by the runtime. */

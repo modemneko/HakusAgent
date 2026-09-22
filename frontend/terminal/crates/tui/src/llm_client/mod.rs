@@ -1226,10 +1226,15 @@ where
                 }
 
                 // Calculate delay
-                // Use server's Retry-After if available and configured
+                // Use server's Retry-After if available and configured.
+                // Clamp the server hint to `max_delay` so an aggressive
+                // Retry-After (e.g. 600s from a tight RPM gateway) cannot
+                // stall the turn silently for many minutes.
                 let base_delay = config.delay_for_attempt(attempt);
                 let delay = if config.respect_retry_after {
-                    err.suggested_retry_delay().unwrap_or(base_delay)
+                    err.suggested_retry_delay()
+                        .map(|ra| ra.min(Duration::from_secs_f64(config.max_delay)))
+                        .unwrap_or(base_delay)
                 } else {
                     base_delay
                 };

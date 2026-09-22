@@ -28,6 +28,41 @@ import { generateId } from '@/lib/utils'
 import { apiClient } from '@/api/client'
 import { removeSessionWorkspace } from '@/lib/sessionWorkspaces'
 
+const EPHEMERAL_KEY = 'hakusai:ephemeral-sessions'
+
+function readEphemeralSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EPHEMERAL_KEY)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function markEphemeralSession(id: string) {
+  try {
+    const set = readEphemeralSet()
+    set.add(id)
+    localStorage.setItem(EPHEMERAL_KEY, JSON.stringify([...set]))
+  } catch {
+    /* ignore */
+  }
+}
+
+function unmarkEphemeralSession(id: string) {
+  try {
+    const set = readEphemeralSet()
+    set.delete(id)
+    localStorage.setItem(EPHEMERAL_KEY, JSON.stringify([...set]))
+  } catch {
+    /* ignore */
+  }
+}
+
+function isEphemeralSession(id: string): boolean {
+  return readEphemeralSet().has(id)
+}
+
 interface SessionStore {
   sessions: ChatSession[]
   activeSessionId: string | null
@@ -58,7 +93,7 @@ interface SessionStore {
   pendingStartedToolCalls: Map<string, ToolCall>
 
   // Session CRUD
-  createSession: (title?: string) => Promise<string>
+  createSession: (title?: string, options?: { ephemeral?: boolean }) => Promise<string>
   deleteSession: (id: string) => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   setActiveSession: (id: string) => void
@@ -72,6 +107,13 @@ interface SessionStore {
    * composer input.
    */
   rewindToMessage: (sessionId: string, messageId: string) => Promise<string | null>
+  /**
+   * Bind a runtime item id (`item_…`) to a locally-created message id
+   * (`m_…`). Messages created during streaming only exist locally; the
+   * Runtime's rewind endpoint addresses durable items by id, so before a
+   * rewind can target this turn's user message we remap its id.
+   */
+  bindRemoteMessageId: (sessionId: string, localId: string, remoteId: string) => void
 
   // Message operations — all in-memory during stream; persisted on stream end
   addMessage: (sessionId: string, msg: Omit<ChatMessage, 'id' | 'session_id' | 'created_at' | 'updated_at'>) => string
@@ -177,14 +219,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   // Session CRUD
   // ===========================================================================
 
-  createSession: async (title) => {
+  createSession: async (title, options) => {
     const id = generateId('s_')
     const now = Date.now()
+    const ephemeral = Boolean(options?.ephemeral)
     const session: ChatSession = {
       id,
-      title: title || 'New Chat',
+      title: title || (ephemeral ? 'Temporary chat' : 'New Chat'),
       created_at: now,
       updated_at: now,
+      ephemeral,
     }
     // Optimistic in-memory update
     set({
@@ -192,6 +236,38 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       activeSessionId: id,
       messages: { ...get().messages, [id]: [] },
     })
+    // Temporary chats still need a Runtime thread to run turns, but must
+    // not appear in server history. Record the id locally and hide it.
+    if (ephemeral) {
+      try {
+        const persisted = await apiClient.createSession({
+          id,
+          title: session.title,
+          created_at: now,
+          updated_at: now,
+        })
+        const remoteId = persisted.remote_session_id
+        if (remoteId) {
+          set({
+            sessions: get().sessions.map((item) =>
+              item.id === id ? { ...item, remote_session_id: remoteId } : item,
+            ),
+          })
+        }
+        markEphemeralSession(id)
+        // Best-effort: turn memory off while a temporary chat is active.
+        try {
+          await (apiClient as any).setRuntimeConfig?.('memory_enabled', false)
+        } catch {
+          /* Runtime may not support this key */
+        }
+      } catch (e) {
+        console.error('[session] ephemeral createSession failed:', e)
+        // Keep the local-only session so the user can still chat if the
+        // Runtime is briefly unavailable.
+      }
+      return id
+    }
     // Persist to server
     try {
       const persisted = await apiClient.createSession({
@@ -222,6 +298,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   deleteSession: async (id) => {
+    unmarkEphemeralSession(id)
     // If this session's stream is still running locally, end it first. The
     // stream's abort hook also fires the Runtime turn interrupt, which lifts
     // the "has an active turn" guard the Runtime holds against deletion —
@@ -275,10 +352,26 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   setActiveSession: (id) => {
+    if (get().activeSessionId === id) {
+      if (!get().hydratedSessionIds.has(id)) {
+        void get().hydrateSession(id)
+      }
+      return
+    }
     set({ activeSessionId: id })
     // Lazy hydrate messages on first activation
     if (!get().hydratedSessionIds.has(id)) {
       void get().hydrateSession(id)
+    }
+    try {
+      void import('@/store/shell').then(({ useShellStore }) => {
+        const shell = useShellStore.getState()
+        shell.touchRecent(id)
+        const title = get().sessions.find((s) => s.id === id)?.title || 'Chat'
+        shell.ensureSessionTab(id, title, 'main')
+      })
+    } catch {
+      /* ignore */
     }
   },
 
@@ -339,6 +432,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
+  bindRemoteMessageId: (sessionId, localId, remoteId) => {
+    if (!remoteId || remoteId === localId) return
+    const list = get().messages[sessionId] || []
+    set({
+      messages: {
+        ...get().messages,
+        [sessionId]: list.map((m) => (m.id === localId ? { ...m, id: remoteId } : m)),
+      },
+    })
+  },
+
   rewindToMessage: async (sessionId, messageId) => {
     const list = get().messages[sessionId] || []
     const idx = list.findIndex((m) => m.id === messageId)
@@ -383,15 +487,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     // the JSONL log to the corresponding turn boundary. Falls back
     // to the old client-side delete-loop if the backend is older
     // (404 = endpoint doesn't exist yet) or returns a hard error.
+    // Route to the Runtime thread id when one exists — the UI session id
+    // is a client-generated `s_…` that the Runtime's /rewind cannot resolve.
+    const remoteSessionId = get().sessions.find((s) => s.id === sessionId)?.remote_session_id || sessionId
     try {
-      await apiClient.rewindSessionToMessage(sessionId, messageId)
+      await apiClient.rewindSessionToMessage(remoteSessionId, messageId)
     } catch (e: any) {
-      // 404 = old backend without the /rewind endpoint — fall back
-      // to the client-side delete-loop. Same for connection errors
-      // (the optimistic UI is already correct; we just don't get
-      // log truncation).
+      // 404 = old backend without the /rewind endpoint. "Item not found"
+      // (400/500) = the runtime never durably recorded this message (turn
+      // still running, or an older runtime). Either way fall back to the
+      // client-side delete-loop, which addresses messages individually.
       const status = e?.status ?? e?.statusCode
-      if (status === 404 || status === 405) {
+      const message = String(e?.message ?? '')
+      const itemMissing = message.toLowerCase().includes('not found')
+      if (status === 404 || status === 405 || ((status === 400 || status === 500) && itemMissing)) {
         const results = await Promise.allSettled(
           removed.map((m) => apiClient.deleteMessage(sessionId, m.id)),
         )
@@ -574,11 +683,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     pending.delete(key)
 
     // If the tool_call_started was somehow never sent (e.g. dropped event),
-    // use the finished event's arguments — still render a card.
+    // use the finished event's arguments — still render a card. An empty
+    // object from the finished event must not erase the started event's
+    // arguments (runtime item.completed carries input only on item.started).
+    const finishedArgs = args && Object.keys(args).length > 0 ? args : undefined
     const toolCall: ToolCall = {
       call_id: callId,
       name: name || cached?.name || 'tool',
-      arguments: args ?? cached?.arguments ?? {},
+      arguments: finishedArgs ?? cached?.arguments ?? {},
       result,
       success,
       duration,
@@ -730,18 +842,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   loadFromServer: async () => {
     try {
       const serverSessions = await apiClient.listSessions()
+      const ephemeralIds = readEphemeralSet()
       // Map ServerSession -> ChatSession (drop server-only fields)
-      const sessions: ChatSession[] = serverSessions.map((s) => ({
-        id: s.id,
-        title: s.title,
-        remote_session_id: s.remote_session_id || undefined,
-        provider: s.provider || undefined,
-        pinned: s.pinned,
-        created_at: s.created_at,
-        updated_at: s.updated_at,
-      }))
+      const sessions: ChatSession[] = serverSessions
+        .filter((s) => !ephemeralIds.has(s.id))
+        .map((s) => ({
+          id: s.id,
+          title: s.title,
+          remote_session_id: s.remote_session_id || undefined,
+          provider: s.provider || undefined,
+          pinned: s.pinned,
+          created_at: s.created_at,
+          updated_at: s.updated_at,
+        }))
+      // Keep any live in-memory ephemeral chats visible in this app session.
+      const liveEphemeral = get().sessions.filter((s) => s.ephemeral && ephemeralIds.has(s.id))
+      const merged = [...liveEphemeral, ...sessions]
       set({
-        sessions,
+        sessions: merged,
         // Loading history should not open a conversation automatically. The
         // user chooses a session from the sidebar or creates a new one.
         activeSessionId: null,

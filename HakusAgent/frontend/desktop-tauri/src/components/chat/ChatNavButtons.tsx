@@ -41,6 +41,9 @@ interface ChatNavButtonsProps {
    *  trigger a re-evaluation of button visibility without polling.
    *  Typically the message count or the last message id. */
   messagesKey: string | number
+  /** Optional Tailwind class overriding the cluster's vertical anchor
+   *  (e.g. pushed below the checkpoint/subagent floating buttons). */
+  offsetTop?: string
 }
 
 /** Small px threshold — if we're within this many pixels of the bottom,
@@ -51,7 +54,7 @@ const BOTTOM_THRESHOLD = 24
  *  we consider the chat "at top" so the ↑ button hides. */
 const TOP_THRESHOLD = 24
 
-export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) {
+export function ChatNavButtons({ scrollRef, messagesKey, offsetTop }: ChatNavButtonsProps) {
   const { locale } = useI18n()
   const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   // Three pieces of state drive the two buttons:
@@ -172,7 +175,10 @@ export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) 
 
   return (
     <div
-      className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-1.5"
+      className={cn(
+        'pointer-events-none absolute right-3 z-10 flex flex-col gap-1.5',
+        offsetTop || 'top-3',
+      )}
       aria-label={copy('聊天记录导航', 'Chat navigation')}
     >
       {showUp && (
@@ -183,7 +189,7 @@ export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) 
           aria-label={copy('上一条用户消息', 'Previous user message')}
           className={cn(
             'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground/80 shadow-sm backdrop-blur-md transition-colors',
-            'hover:bg-foreground/[0.06] hover:text-foreground',
+            'hover:bg-[var(--cx-ghost-hover)] hover:text-foreground',
             'active:scale-95',
           )}
         >
@@ -198,7 +204,7 @@ export function ChatNavButtons({ scrollRef, messagesKey }: ChatNavButtonsProps) 
           aria-label={copy('下一条用户消息', 'Next user message')}
           className={cn(
             'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground/80 shadow-sm backdrop-blur-md transition-colors',
-            'hover:bg-foreground/[0.06] hover:text-foreground',
+            'hover:bg-[var(--cx-ghost-hover)] hover:text-foreground',
             'active:scale-95',
           )}
         >

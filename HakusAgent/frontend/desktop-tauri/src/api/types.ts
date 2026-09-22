@@ -11,7 +11,7 @@
 // union so legacy session_log entries still type-check on load — the
 // UI hides it (no picker), and the store normalizes persisted values
 // to 'swift' on read.
-export type AgentMode = 'swift' | 'deep' | 'fleet'
+export type AgentMode = 'swift' | 'deep' | 'fleet' | 'flow'
 
 export interface ChatRequest {
   message: string
@@ -275,6 +275,8 @@ export interface ProviderModel {
   /** Raw model/provider metadata. Empty means no authoritative ladder. */
   reasoning_options?: Array<{ type?: string; values?: string[]; default?: string }>
   supports_reasoning?: boolean | null
+  /** Total context window in tokens, when the catalog declares one. */
+  context_window?: number | null
 }
 
 export type ThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'usage_limited' | 'budget_limited' | 'complete'
@@ -437,11 +439,38 @@ export interface SessionLogStats {
   current_turn: number
 }
 
-export type PermissionMode = 'auto' | 'ask' | 'bypass'
+export type PermissionMode =
+  | 'read_only'
+  | 'auto'
+  | 'granular'
+  | 'guardian'
+  | 'full_access'
+  // legacy three-mode values (embedded Rust runtime)
+  | 'ask'
+  | 'bypass'
+
+export interface GranularRules {
+  shell: 'none' | 'read_only' | 'all'
+  write_paths: string[]
+  network: boolean
+}
 
 export interface PermissionInfo {
   mode: PermissionMode
   available_modes: string[]
+  profile?: string
+  granular_rules?: GranularRules
+}
+
+export interface ApprovalRecord {
+  id: string
+  session_id: string
+  tool: string
+  action_key: string
+  reason: string
+  approver: string
+  status: 'pending' | 'approved' | 'denied' | 'timeout'
+  created_at?: number
 }
 
 // ========== 记忆系统 ==========
@@ -535,10 +564,27 @@ export type AgentEventType =
   | 'question_answered'
   | 'reflection_started'
   | 'reflection_completed'
+  | 'approval_required'
   | 'goal_updated'
 
 export interface BaseAgentEvent {
   event_type: AgentEventType
+}
+
+export interface ApprovalRequiredEvent extends BaseAgentEvent {
+  event_type: 'approval_required'
+  approval: {
+    id: string
+    session_id: string
+    tool: string
+    action_key: string
+    reason: string
+    approver: string
+    status: string
+    decision: string | null
+    created_at?: number
+    resolved_at?: number | null
+  }
 }
 
 export interface GoalUpdatedEvent extends BaseAgentEvent {
@@ -680,6 +726,7 @@ export type AgentEvent =
   | TaskProgressEvent
   | QuestionAskedEvent
   | QuestionAnsweredEvent
+  | ApprovalRequiredEvent
   | GoalUpdatedEvent
 
 // ========== WebSocket 消息 ==========
@@ -867,6 +914,8 @@ export interface ChatSession {
   created_at: number
   updated_at: number
   pinned?: boolean
+  /** Temporary chat: not persisted to server history, no memory writes. */
+  ephemeral?: boolean
 }
 
 /** Server-side session row (matches session_store._row_to_session). */
@@ -1204,4 +1253,131 @@ export interface ProjectCreateBody {
 export interface ProjectUpdateBody {
   name?: string
   pinned?: boolean
+}
+
+// =====================================================================
+// Codex-aligned feature extensions
+// =====================================================================
+
+/** Session flag: in-memory only — not listed in server history, no memory writes. */
+export interface ChatSessionEphemeralFlag {
+  ephemeral?: boolean
+}
+
+export type ReviewScope = 'unstaged' | 'staged' | 'last_turn' | 'head1' | 'pr'
+
+/** Per-1M-token USD pricing for a model. */
+export interface ModelPricing {
+  /** Substring match against provider/model name, e.g. "deepseek" or "gpt-4o". */
+  match: string
+  label: string
+  input_per_mtok: number
+  output_per_mtok: number
+  cache_hit_per_mtok?: number
+  cache_miss_per_mtok?: number
+}
+
+export interface UsageTurnRow {
+  index: number
+  timestamp: number
+  provider?: string
+  model?: string
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  cost_usd: number
+}
+
+export interface UsageModelShare {
+  key: string
+  label: string
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  cost_usd: number
+  share_pct: number
+}
+
+export interface UsageBreakdown {
+  turns: UsageTurnRow[]
+  totals: {
+    input_tokens: number
+    output_tokens: number
+    cache_hit_tokens: number
+    cache_miss_tokens: number
+    cost_usd: number
+    turn_count: number
+  }
+  by_model: UsageModelShare[]
+  /** Runtime usage payload when the backend provides one. */
+  runtime?: unknown
+}
+
+export interface GitWorktree {
+  path: string
+  branch: string | null
+  head: string
+  bare: boolean
+  locked: boolean
+  prunable?: boolean
+}
+
+export interface HandoffStatus {
+  id: string
+  session_id: string
+  tool: string
+  destination: string
+  status: 'pending' | 'working' | 'done' | 'failed'
+  summary?: string
+  created_at: number
+}
+
+export interface DependencyCheck {
+  id: string
+  name: string
+  required: boolean
+  found: boolean
+  version?: string
+  path?: string
+  status: 'ok' | 'missing' | 'outdated' | 'error'
+  hint?: string
+}
+
+export interface DoctorReport {
+  checks: DependencyCheck[]
+  backend: { healthy: boolean; version?: string; port?: number }
+  generated_at: number
+}
+
+export interface PullRequestInfo {
+  number: number
+  title: string
+  state: 'open' | 'closed' | 'draft' | 'merged'
+  branch: string
+  url?: string
+  author?: string
+}
+
+export interface WorkspaceFileEntry {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+  size?: number
+}
+
+export interface ApplyPatchBody {
+  patch: string
+  reverse?: boolean
+  cached?: boolean
+  workdir?: string
+}
+
+export interface HunkRef {
+  path: string
+  /** Zero-based hunk index within the file's parsed hunks. */
+  hunkIndex: number
+  oldStart: number
+  newStart: number
 }

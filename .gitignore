@@ -116,3 +116,10 @@ scripts/test_p5_guardian_e2e.py
 # Rust / Tauri build outputs (installer + desktop)
 **/src-tauri/target/
 **/src-tauri/gen/
+
+# Local tooling / counters / agent scratch (never commit)
+.VSCodeCounter/
+.trae/
+.workbuddy/
+.cdp.mjs
+.zcodeignore

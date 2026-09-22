@@ -2,6 +2,7 @@ import { useEffect, useRef, type MouseEvent, type PointerEvent } from 'react'
 import {
   Briefcase,
   Code2,
+  Workflow,
   Minus,
   PanelLeft,
   PanelRight,
@@ -9,14 +10,13 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { ProviderLogo } from '@/components/ui/provider-logo'
 import { useSessionStore } from '@/store/session'
 import { useConnectionStore } from '@/store/connection'
 import { useSettingsStore } from '@/store/settings'
 import { useAppStore } from '@/store/app'
+import { useFlowStore } from '@/store/flow'
 import type { AgentMode } from '@/api/types'
-import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { useI18n } from '@/lib/i18n'
 import { isProviderConfigured } from '@/lib/providerState'
@@ -25,6 +25,8 @@ interface TopBarProps {
   onToggleSidebar: () => void
   onToggleRightPanel: () => void
   showSidebarToggle?: boolean
+  /** Flow mode owns the whole window: no chat sidebar / review panel. */
+  flowMode?: boolean
 }
 
 // Mode segments — Work / Code. Binds to agentMode (not the legacy runMode).
@@ -32,6 +34,7 @@ interface TopBarProps {
 const MODE_SEGMENTS: { id: AgentMode; label: string; icon: typeof Briefcase }[] = [
   { id: 'swift', label: 'Work', icon: Briefcase },
   { id: 'deep', label: 'Code', icon: Code2 },
+  { id: 'flow', label: 'Flow', icon: Workflow },
 ]
 
 type WindowAction = 'minimize' | 'toggleMaximize' | 'close'
@@ -58,11 +61,9 @@ function WindowButtons() {
 
   return (
     <div className="app-region-no-drag flex items-center gap-0.5 pl-1.5">
-      <Button
+      <button
         type="button"
-        size="icon"
-        variant="ghost"
-        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        className="cx-tb-btn cx-win-btn"
         draggable={false}
         onPointerDown={(event) => {
           event.preventDefault()
@@ -74,13 +75,11 @@ function WindowButtons() {
         title={t('minimize')}
       >
         <Minus className="h-4 w-4" strokeWidth={2.5} />
-      </Button>
+      </button>
 
-      <Button
+      <button
         type="button"
-        size="icon"
-        variant="ghost"
-        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        className="cx-tb-btn cx-win-btn"
         draggable={false}
         onPointerDown={(event) => {
           event.preventDefault()
@@ -92,13 +91,11 @@ function WindowButtons() {
         title={t('maximize')}
       >
         <Square className="h-3.5 w-3.5" strokeWidth={2.2} />
-      </Button>
+      </button>
 
-      <Button
+      <button
         type="button"
-        size="icon"
-        variant="ghost"
-        className="app-region-no-drag h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        className="cx-tb-btn cx-win-btn cx-win-close"
         draggable={false}
         onPointerDown={(event) => {
           event.preventDefault()
@@ -110,18 +107,19 @@ function WindowButtons() {
         title={t('close')}
       >
         <X className="h-3.5 w-3.5" strokeWidth={2.4} />
-      </Button>
+      </button>
     </div>
   )
 }
 
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
-export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle = true }: TopBarProps) {
+export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle = true, flowMode = false }: TopBarProps) {
   const { t } = useI18n()
   const activeId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const clearMessages = useSessionStore((s) => s.clearMessages)
+  const flowGraphName = useFlowStore((s) => s.graph.name)
   const connState = useConnectionStore((s) => s.state)
   const serverUrl = useSettingsStore((s) => s.connection.serverUrl)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
@@ -177,37 +175,41 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle 
 
   return (
     <header
-      className="titlebar flex min-w-0 overflow-hidden"
+      className="titlebar cx-titlebar flex min-w-0 overflow-hidden"
       data-tauri-drag-region
     >
-      <div className={cn('topbar-leading app-region-no-drag relative z-10 flex w-[312px] shrink-0 items-center gap-2 pl-3', isMac && 'pl-[72px]')}>
+      {/* The leading strip drags the window too — only its buttons opt out.
+          This satisfies "the drag region covers the whole top bar" without
+          making the controls themselves grab windows. */}
+      <div className={cn('topbar-leading cx-leading relative z-10 flex w-[312px] shrink-0 items-center gap-1.5 pl-2', isMac && 'pl-[72px]')} data-tauri-drag-region>
         {showSidebarToggle && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="topbar-icon-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+          <button
+            type="button"
+            className="cx-tb-btn app-region-no-drag"
             onClick={onToggleSidebar}
             title={t('toggleSidebar')}
             aria-label={t('toggleSidebar')}
           >
             <PanelLeft className="h-4 w-4" />
-          </Button>
+          </button>
         )}
 
-        <div className="segment topbar-mode-segment">
+        <div className="cx-segment app-region-no-drag" role="group" aria-label={t('workMode')}>
           {MODE_SEGMENTS.map((mode) => {
             const Icon = mode.icon
             const active = agentMode === mode.id
             return (
               <button
                 key={mode.id}
-                className={cn('segment-btn', active && 'segment-btn-active')}
+                className={cn('cx-seg-btn', active && 'cx-seg-btn-active')}
                 onClick={() => setAgentMode(mode.id)}
-                aria-label={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
-                title={`${mode.id === 'swift' ? t('workMode') : t('codeMode')} mode`}
+                aria-label={`${mode.id === 'swift' ? t('workMode') : mode.id === 'deep' ? t('codeMode') : t('flowMode')} mode`}
+                aria-pressed={active}
+                title={`${mode.id === 'swift' ? t('workMode') : mode.id === 'deep' ? t('codeMode') : t('flowMode')} mode${mode.id === 'flow' ? (t('experimentalSuffix') || '') : ''}`}
               >
                 <Icon className="h-3 w-3" />
-                <span className="hidden md:inline">{mode.id === 'swift' ? t('workMode') : t('codeMode')}</span>
+                <span className="hidden md:inline">{mode.id === 'swift' ? t('workMode') : mode.id === 'deep' ? t('codeMode') : t('flowMode')}</span>
+                {mode.id === 'flow' && <span className="cx-seg-badge">{t('experimental')}</span>}
               </button>
             )
           })}
@@ -218,38 +220,39 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle 
         className="topbar-session app-region-drag relative z-0 flex min-w-0 flex-1 flex-col items-center justify-center px-2"
         data-tauri-drag-region
       >
-        <span className="max-w-full truncate text-[13px] font-semibold leading-tight tracking-tight" data-tauri-drag-region>
-          {activeSession?.title || characterName}
+        <span className="cx-title-main max-w-full truncate" data-tauri-drag-region>
+          {flowMode ? flowGraphName : activeSession?.title || characterName}
         </span>
-        <span className="flex max-w-full items-center gap-1 truncate text-[10px] text-muted-foreground/80" data-tauri-drag-region>
-          {currentProvider && (
-            <ProviderLogo providerId={currentProvider.id} size={11} />
-          )}
-          <span className="truncate">{currentModelLabel}</span>
-        </span>
+        {!flowMode && (
+          <span className="cx-title-sub" data-tauri-drag-region>
+            {currentProvider && (
+              <ProviderLogo providerId={currentProvider.id} size={11} />
+            )}
+            <span className="truncate">{currentModelLabel}</span>
+          </span>
+        )}
       </div>
 
       <div className="topbar-actions app-region-no-drag relative z-10 flex shrink-0 items-center justify-end gap-1 pr-2">
-        <Button
-          size="icon"
-          variant="ghost"
-          className={cn(
-            'topbar-icon-button topbar-review-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-            rightPanelOpen && 'bg-accent/60 text-foreground',
-          )}
-          data-panel-open={rightPanelOpen ? 'true' : undefined}
-          onClick={onToggleRightPanel}
-          title={t('reviewPanel')}
-          aria-label={t('reviewPanel')}
-        >
-          <PanelRight className="h-4 w-4" />
-        </Button>
+        {!flowMode && (
+          <button
+            type="button"
+            className="cx-tb-btn"
+            data-panel-open={rightPanelOpen ? 'true' : undefined}
+            onClick={onToggleRightPanel}
+            title={t('reviewPanel')}
+            aria-label={t('reviewPanel')}
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+        )}
 
-        {activeId && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="topbar-icon-button topbar-clear-button h-7 w-7 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+        {/* Flow mode has no chat: the clear-chat action belongs to the
+            session views only. */}
+        {!flowMode && activeId && (
+          <button
+            type="button"
+            className="cx-tb-btn"
             onClick={() => {
               if (confirm(t('clearChat') + '?')) {
                 clearMessages(activeId)
@@ -259,7 +262,7 @@ export function TopBar({ onToggleSidebar, onToggleRightPanel, showSidebarToggle 
             aria-label={t('clearChat')}
           >
             <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          </button>
         )}
 
         {!isMac && !IS_ANDROID && <WindowButtons />}

@@ -13,6 +13,10 @@ import {
   Globe,
   Wrench,
   ExternalLink,
+  GitBranch,
+  MessageSquarePlus,
+  Send,
+  ArrowRightLeft,
 } from 'lucide-react'
 import type { ToolCall } from '@/api/types'
 import { cn, copyToClipboard } from '@/lib/utils'
@@ -44,6 +48,13 @@ const TOOL_LABELS: Record<string, string> = {
   web_search: '联网搜索',
   web_fetch: '抓取网页',
   task: '创建子任务',
+  tool_search: '搜索工具',
+  code_execution: '执行代码',
+  // 线程即工具（Codex-style thread ops）
+  create_thread: '创建子会话',
+  fork_thread: '派生会话',
+  send_message_to_thread: '发送到子会话',
+  handoff_thread: '移交会话',
 }
 
 const RESULT_PREVIEW_CHARS = 500
@@ -68,6 +79,14 @@ function toolIcon(name: string) {
     case 'grep':
     case 'glob':
       return <Search className="h-3.5 w-3.5" />
+    case 'create_thread':
+      return <MessageSquarePlus className="h-3.5 w-3.5" />
+    case 'fork_thread':
+      return <GitBranch className="h-3.5 w-3.5" />
+    case 'send_message_to_thread':
+      return <Send className="h-3.5 w-3.5" />
+    case 'handoff_thread':
+      return <ArrowRightLeft className="h-3.5 w-3.5" />
     case 'web_search':
     case 'web_fetch':
       return <Globe className="h-3.5 w-3.5" />
@@ -250,13 +269,13 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
         <div className="relative">
           <button
             onClick={handleCopyArgs}
-            className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+            className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
             title="复制参数"
           >
             {copiedArgs ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
             {copiedArgs ? '已复制' : '复制'}
           </button>
-          <pre className="max-h-[180px] overflow-auto rounded-md bg-muted/40 p-2 text-[10px] text-foreground/80">
+          <pre className="tool-log-pre max-h-[180px] overflow-auto rounded-md bg-muted/40 p-2 text-[10px] text-foreground/80">
             {JSON.stringify(args, null, 2)}
           </pre>
         </div>
@@ -267,7 +286,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
             {resultTooLong && (
               <button
                 onClick={handleOpenFullResult}
-                className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
                 title="查看完整日志"
               >
                 <ExternalLink className="h-2.5 w-2.5" />
@@ -276,7 +295,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
             )}
             <button
               onClick={handleCopyResult}
-              className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+              className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
               title="复制结果"
             >
               {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
@@ -285,7 +304,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
           </div>
           <pre
             className={cn(
-              'max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
+              'tool-log-pre max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
               success ? 'bg-muted/40 text-foreground/90' : 'bg-destructive/10 text-destructive',
             )}
           >
@@ -329,7 +348,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
     return (
       <div
         className={cn(
-          'group w-full rounded-md text-xs transition-colors',
+          'group w-full min-w-0 max-w-full overflow-hidden rounded-md text-xs transition-colors',
           success
             ? 'bg-muted/40 hover:bg-muted/60'
             : 'bg-destructive/5 hover:bg-destructive/10',
@@ -346,7 +365,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
             }
           }}
           className={cn(
-            'flex w-full items-center gap-1.5 px-2.5 py-1 text-left',
+            'flex w-full min-w-0 items-center gap-1.5 overflow-hidden px-2.5 py-1 text-left',
             hasDetails ? 'cursor-pointer' : 'cursor-default',
           )}
         >
@@ -393,13 +412,13 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
               <div className="relative">
                 <button
                   onClick={handleCopyArgs}
-                  className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                  className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
                   title="复制参数"
                 >
                   {copiedArgs ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
                   {copiedArgs ? '已复制' : '复制'}
                 </button>
-                <pre className="max-h-[180px] overflow-auto rounded-md bg-muted/40 p-2 text-[10px] text-foreground/80">
+                <pre className="tool-log-pre max-h-[180px] overflow-auto rounded-md bg-muted/40 p-2 text-[10px] text-foreground/80">
                   {JSON.stringify(args, null, 2)}
                 </pre>
               </div>
@@ -410,7 +429,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
                   {resultTooLong && (
                     <button
                       onClick={handleOpenFullResult}
-                      className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                      className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
                       title="查看完整日志"
                     >
                       <ExternalLink className="h-2.5 w-2.5" />
@@ -419,7 +438,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
                   )}
                   <button
                     onClick={handleCopyResult}
-                    className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background"
+                    className="inline-flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--cx-ghost-hover)]"
                     title="复制结果"
                   >
                     {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
@@ -428,7 +447,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
                 </div>
                 <pre
                   className={cn(
-                    'max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
+                    'tool-log-pre max-h-[260px] overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap',
                     success ? 'bg-muted/40 text-foreground/90' : 'bg-destructive/10 text-destructive',
                   )}
                 >
@@ -480,7 +499,7 @@ export function ToolCallLogItem({ toolCall, standalone = false }: ToolCallLogIte
         role="button"
         tabIndex={hasDetails ? 0 : -1}
         className={cn(
-          'flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-accent/40',
+          'flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-[var(--cx-ghost-hover)]',
           !hasDetails && 'cursor-default',
         )}
         onClick={() => hasDetails && setExpanded(!expanded)}

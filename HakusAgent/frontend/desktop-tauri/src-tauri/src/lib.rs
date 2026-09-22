@@ -10,6 +10,9 @@ mod voice_cmds;
 mod tray_cmds;
 #[cfg(not(target_os = "android"))]
 mod window_cmds;
+mod clipboard_cmds;
+#[cfg(not(target_os = "android"))]
+mod git_cmds;
 
 #[cfg(not(target_os = "android"))]
 use std::time::{Duration, Instant};
@@ -148,82 +151,6 @@ fn apply_rounded_corners(app: &tauri::AppHandle) {
     }
 }
 
-/// Timestamp recorded when the splash window is created so `finish_splash`
-/// can enforce the full design timeline even when the UI boots faster.
-#[cfg(not(target_os = "android"))]
-pub static SPLASH_CREATED_AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-
-/// Create and show the native splash window.
-///
-/// The splash is a static HTML page (public/splash.html) so it renders
-/// instantly — long before the React webview has booted — replicating the
-/// Electron-era splash behaviour. The main window stays hidden until the
-/// frontend invokes `finish_splash`, which fades the splash out and reveals
-/// the UI. A safety timer below guarantees the main window always becomes
-/// visible even if the frontend never gets to signal readiness.
-#[cfg(not(target_os = "android"))]
-fn show_native_splash(app: &tauri::AppHandle) {
-    const SPLASH_FAILSAFE_MS: u64 = 90_000; // force-show the UI after 90s
-
-    let _ = SPLASH_CREATED_AT.set(Instant::now());
-
-    // Window-sized branded boot curtain (not OS fullscreen): matches the
-    // main window geometry so it reads as an in-app full-bleed splash.
-    let build = WebviewWindowBuilder::new(
-        app,
-        "splash",
-        WebviewUrl::App("splash.html".into()),
-    )
-    .title("HakusAI")
-    .inner_size(1200.0, 800.0)
-    .center()
-    .decorations(false)
-    .shadow(false)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    .skip_taskbar(true)
-    .always_on_top(true)
-    .focused(true)
-    .visible(true);
-
-    if let Err(error) = build.build() {
-        eprintln!("[setup] Splash window failed to open: {error}");
-        // Never leave the main window hidden when there is no splash.
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-        }
-        return;
-    }
-
-    let failsafe_app = app.clone();
-    std::thread::spawn(move || {
-        // If the frontend never calls finish_splash (crashed webview,
-        // blocked runtime, …) fade the splash and reveal the main window.
-        std::thread::sleep(Duration::from_millis(SPLASH_FAILSAFE_MS));
-        let main_gone = failsafe_app.get_webview_window("main").is_none();
-        if let Some(splash) = failsafe_app.get_webview_window("splash") {
-            let _ = splash.eval("document.documentElement.classList.add('is-fading');");
-            std::thread::sleep(Duration::from_millis(600));
-            if let Some(splash) = failsafe_app.get_webview_window("splash") {
-                let _ = splash.close();
-            }
-        }
-        if main_gone {
-            // The user closed the app while the splash was up — don't keep
-            // the process alive with zero windows.
-            failsafe_app.exit(0);
-            return;
-        }
-        if let Some(window) = failsafe_app.get_webview_window("main") {
-            if !window.is_visible().unwrap_or(true) {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }
-    });
-}
-
 #[cfg(not(target_os = "android"))]
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Build the tray icon EXPLICITLY here instead of relying on the
@@ -323,14 +250,12 @@ pub fn run() {
                     Err(e) => eprintln!("[setup] Backend auto-start failed: {e}"),
                 }
 
-                // In-window AWAKENING overlay is rendered by the React app.
-                // Still reveal the main window immediately so the user never
-                // sees a blank OS frame while the webview boots.
+                // No external splash window: the React app boots straight
+                // into its in-window AwakeningSplash, which covers the
+                // whole boot sequence and fades into the UI by itself.
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
-                    let _ = window.set_focus();
                 }
-                let _ = SPLASH_CREATED_AT.set(Instant::now());
 
                 // Windows 11: restore rounded corners on the undecorated
                 // window (they default to square without OS decorations).
@@ -452,6 +377,16 @@ pub fn run() {
         voice_cmds::voice_status,
         voice_cmds::voice_start_celia,
         voice_cmds::voice_stop_celia,
+        // OS clipboard (WebView navigator.clipboard is unreliable)
+        clipboard_cmds::copy_text,
+        // Codex-aligned git review / worktree / dependency doctor
+        git_cmds::git_apply_patch,
+        git_cmds::git_branch_list,
+        git_cmds::git_worktree_list,
+        git_cmds::git_worktree_add,
+        git_cmds::git_pr_list,
+        git_cmds::git_pr_checks,
+        git_cmds::doctor_check_dependencies,
     ]);
 
     #[cfg(target_os = "android")]

@@ -1280,6 +1280,14 @@ impl DeepSeekClient {
 
             let mut byte_stream = std::pin::pin!(byte_stream);
             let idle = stream_idle_timeout;
+            // First-event watchdog: some gateways (SenseNova under rate
+            // limiting, stalled GLM generations) accept the request and then
+            // send nothing. The default idle timeout is 15 minutes — a silent
+            // stall would freeze the turn with no UI feedback. Cap the wait
+            // for the FIRST byte so the engine's transparent retry (visible
+            // in the UI) takes over quickly.
+            const FIRST_EVENT_TIMEOUT: Duration = Duration::from_secs(90);
+            let first_wait = idle.min(FIRST_EVENT_TIMEOUT);
 
             // Telemetry for #103 stream-decode diagnostics: bytes received
             // since the start of this stream and last successful event time.
@@ -1297,12 +1305,13 @@ impl DeepSeekClient {
             let mut decode_failed = false;
 
             'stream: loop {
-                let chunk_result = match tokio_timeout(idle, byte_stream.next()).await {
+                let wait = if bytes_received == 0 { first_wait } else { idle };
+                let chunk_result = match tokio_timeout(wait, byte_stream.next()).await {
                     Ok(Some(result)) => result,
                     Ok(None) => break, // Stream ended normally
                     Err(_elapsed) => {
                         yield Err(anyhow::anyhow!(stream_idle_timeout_message(
-                            idle,
+                            wait,
                             bytes_received,
                             stream_start.elapsed(),
                             last_event_at.elapsed(),
@@ -3213,7 +3222,19 @@ fn is_reasoning_model_for_stream_on_route(
         return true;
     }
 
-    provider_accepts_reasoning_content(provider) && model_supports_reasoning(model)
+    provider_streams_reasoning_content(provider) && model_supports_reasoning(model)
+}
+
+/// Providers whose wire format may stream a `reasoning_content` / `reasoning`
+/// delta, even though replaying the field back into request history is not
+/// required. Used ONLY for stream classification (thinking cells vs. inlined
+/// answer text) — deliberately excludes the replay semantics of
+/// `provider_accepts_reasoning_content`, because custom OpenAI-compatible
+/// endpoints (SenseNova serving GLM, LM Studio, vLLM frontends, …) commonly
+/// emit `reasoning_content` while rejecting nothing when it is absent.
+fn provider_streams_reasoning_content(provider: ApiProvider) -> bool {
+    provider_accepts_reasoning_content(provider)
+        || matches!(provider, ApiProvider::Custom)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3504,6 +3525,8 @@ fn parse_chat_message_for_route(
         stop_reason: choice
             .get("finish_reason")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(str::to_string),
         stop_sequence: None,
         container: None,
@@ -3786,9 +3809,17 @@ fn parse_sse_chunk_with_reasoning_style(
     for choice in choices {
         let choice_index = choice.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
         let delta = choice.get("delta");
+        // SenseNova (and possibly other gateways) send `"finish_reason": ""`
+        // on every streaming chunk. Treating the empty string as a real
+        // finish made every fragment chunk run the finish path — closing
+        // open blocks and draining `tool_indices` — so each fragment of a
+        // GLM tool call opened a brand-new call. Only a non-empty
+        // finish reason terminates the stream.
         let finish_reason = choice
             .get("finish_reason")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(str::to_string);
 
         if let Some(delta) = delta {
@@ -3887,7 +3918,32 @@ fn parse_sse_chunk_with_reasoning_style(
             if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
                 for tc in tool_calls {
                     let tc_index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
-                    let tool_block_index = match tool_indices.entry(tc_index) {
+                    // GLM-via-SenseNova (and similar gateways) streams one
+                    // logical tool call as a sequence of `tool_calls` entries
+                    // whose `index` *increments per fragment* and whose later
+                    // fragments repeat (or re-generate) an `id` but carry an
+                    // empty `function.name` — only the next slice of
+                    // `arguments`. Treating each entry as a new call shatters
+                    // the arguments into separate broken tool uses
+                    // (`{"query":` / `""` / `"shell` / `"}`).
+                    // A genuine new call always declares `function.name`
+                    // (id-only or nameless fragments never introduce one), so
+                    // only a non-empty name opens a block; everything else
+                    // appends to the most recent call's block.
+                    let has_identity = tc
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(Value::as_str)
+                        .map(|s| !s.trim().is_empty())
+                        .unwrap_or(false);
+                    let continuation_block = if has_identity {
+                        None
+                    } else {
+                        tool_indices.values().copied().max()
+                    };
+                    let tool_block_index = match continuation_block {
+                        Some(last_block) => last_block,
+                        None => match tool_indices.entry(tc_index) {
                         std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             // Close text block if transitioning to tool use
@@ -3956,21 +4012,36 @@ fn parse_sse_chunk_with_reasoning_style(
                             entry.insert(block_index);
                             block_index
                         }
+                        }
                     };
 
-                    // Stream tool call arguments
-                    if let Some(args) = tc
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .and_then(Value::as_str)
-                        && !args.is_empty()
-                    {
-                        events.push(StreamEvent::ContentBlockDelta {
-                            index: tool_block_index,
-                            delta: Delta::InputJsonDelta {
-                                partial_json: args.to_string(),
-                            },
-                        });
+                    // Stream tool call arguments.
+                    //
+                    // OpenAI-compatible gateways disagree on the shape:
+                    // - most send `arguments` as a JSON *string* (possibly
+                    //   streamed as partial fragments)
+                    // - some (SenseNova/GLM, a few Chinese gateways) send it
+                    //   as an already-parsed JSON *object*
+                    //
+                    // Only accepting `as_str()` silently dropped the object
+                    // form, so the engine saw empty input and reported
+                    // "missing required field" for every call. Accept both.
+                    if let Some(args_value) = tc.get("function").and_then(|f| f.get("arguments")) {
+                        let partial_json = match args_value {
+                            Value::String(s) if !s.is_empty() => Some(s.clone()),
+                            Value::Object(_) | Value::Array(_) => {
+                                // Serialize the object/array into the same
+                                // string form the InputJsonDelta pipeline expects.
+                                Some(args_value.to_string())
+                            }
+                            _ => None,
+                        };
+                        if let Some(partial_json) = partial_json {
+                            events.push(StreamEvent::ContentBlockDelta {
+                                index: tool_block_index,
+                                delta: Delta::InputJsonDelta { partial_json },
+                            });
+                        }
                     }
                 }
             }

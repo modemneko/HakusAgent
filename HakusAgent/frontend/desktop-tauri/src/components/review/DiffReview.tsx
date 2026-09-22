@@ -1,364 +1,479 @@
+/**
+ * Git review panel — Codex-aligned fine-grained review chrome.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  RefreshCw,
-  GitBranch,
-  FileEdit,
-  FilePlus,
-  FileMinus,
-  FileQuestion,
-  ChevronRight,
   Check,
-  Undo2,
-  Loader2,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  FileEdit,
+  FileMinus,
+  FilePlus,
+  FileQuestion,
   FolderGit2,
-  Trash2,
+  GitBranch,
+  GitPullRequest,
+  Loader2,
+  RefreshCw,
+  Undo2,
 } from 'lucide-react'
 import { apiClient } from '@/api/client'
-import type { GitStatusResponse, GitDiffResponse, GitFileChange } from '@/api/types'
+import type { GitFileChange } from '@/api/types'
+import { parseDiff, buildHunkPatch, type ParsedHunk } from '@/lib/patch'
+import { useReviewStore } from '@/store/review'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/toast'
 import { useI18n } from '@/lib/i18n'
+import {
+  RpBody,
+  RpChip,
+  RpEmpty,
+  RpFooter,
+  RpHeader,
+  RpIconButton,
+  RpShell,
+  useRpCopy,
+} from './PanelChrome'
 
-interface DiffHunk {
-  oldStart: number
-  newStart: number
-  lines: DiffLine[]
-}
+type Scope = 'unstaged' | 'staged' | 'last_turn' | 'head1' | 'pr'
 
-interface DiffLine {
-  type: 'context' | 'add' | 'del' | 'hunk' | 'meta'
-  content: string
-  oldNo?: number
-  newNo?: number
-}
-
-interface FileDiff {
-  path: string
-  hunks: DiffHunk[]
-  raw: string
-}
-
-/** Parse unified diff text into per-file structured hunks. */
-function parseDiff(diff: string): FileDiff[] {
-  if (!diff || !diff.trim()) return []
-  const files: FileDiff[] = []
-  const lines = diff.split('\n')
-  let currentFile: FileDiff | null = null
-  let currentHunk: DiffHunk | null = null
-  let oldNo = 0
-  let newNo = 0
-
-  for (const line of lines) {
-    if (line.startsWith('diff --git')) {
-      if (currentFile) files.push(currentFile)
-      const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/)
-      currentFile = { path: m?.[2] || line, hunks: [], raw: line + '\n' }
-      currentHunk = null
-    } else if (line.startsWith('+++ ') && currentFile) {
-      currentFile.raw += line + '\n'
-    } else if (line.startsWith('--- ') && currentFile) {
-      currentFile.raw += line + '\n'
-    } else if (line.startsWith('@@') && currentFile) {
-      if (currentHunk) currentFile.hunks.push(currentHunk)
-      const m = line.match(/@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/)
-      oldNo = m ? parseInt(m[1], 10) : 0
-      newNo = m ? parseInt(m[2], 10) : 0
-      currentHunk = {
-        oldStart: oldNo,
-        newStart: newNo,
-        lines: [{ type: 'hunk', content: line }],
-      }
-      currentFile.raw += line + '\n'
-    } else if (currentHunk && currentFile) {
-      currentFile.raw += line + '\n'
-      if (line.startsWith('+')) {
-        currentHunk.lines.push({ type: 'add', content: line.slice(1), newNo: newNo++ })
-      } else if (line.startsWith('-')) {
-        currentHunk.lines.push({ type: 'del', content: line.slice(1), oldNo: oldNo++ })
-      } else if (line.startsWith(' ')) {
-        currentHunk.lines.push({ type: 'context', content: line.slice(1), oldNo: oldNo++, newNo: newNo++ })
-      } else if (line.startsWith('\\')) {
-        currentHunk.lines.push({ type: 'meta', content: line })
-      }
-    } else if (currentFile) {
-      currentFile.raw += line + '\n'
-    }
-  }
-  if (currentHunk && currentFile) currentFile.hunks.push(currentHunk)
-  if (currentFile) files.push(currentFile)
-  return files
-}
+const SCOPE_OPTIONS: Array<{ id: Scope; zh: string; en: string }> = [
+  { id: 'unstaged', zh: '未暂存', en: 'Unstaged' },
+  { id: 'staged', zh: '已暂存', en: 'Staged' },
+  { id: 'last_turn', zh: '上一轮', en: 'Last turn' },
+  { id: 'head1', zh: 'HEAD~1', en: 'vs HEAD~1' },
+  { id: 'pr', zh: 'PR', en: 'PRs' },
+]
 
 function statusIcon(s: GitFileChange['status']) {
   switch (s) {
-    case 'added': return <FilePlus className="h-3.5 w-3.5 text-emerald-500" />
-    case 'deleted': return <FileMinus className="h-3.5 w-3.5 text-rose-500" />
-    case 'modified': return <FileEdit className="h-3.5 w-3.5 text-amber-500" />
-    case 'renamed': return <FileQuestion className="h-3.5 w-3.5 text-sky-500" />
-    case 'untracked': return <FileQuestion className="h-3.5 w-3.5 text-muted-foreground" />
-    default: return <FileQuestion className="h-3.5 w-3.5 text-muted-foreground" />
+    case 'added':
+      return <FilePlus className="rp-row-icon text-emerald-500" />
+    case 'deleted':
+      return <FileMinus className="rp-row-icon text-rose-500" />
+    case 'modified':
+      return <FileEdit className="rp-row-icon text-amber-500" />
+    default:
+      return <FileQuestion className="rp-row-icon" />
   }
 }
 
 function statusLabel(s: GitFileChange['status']) {
-  return { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: '?', unknown: ' ' }[s]
+  return { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: '?', unknown: '·' }[s]
 }
 
 export function DiffReview() {
   const { locale } = useI18n()
-  const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
+  const copy = useRpCopy()
   const toast = useToast()
-  const [status, setStatus] = useState<GitStatusResponse | null>(null)
-  const [diff, setDiff] = useState<GitDiffResponse | null>(null)
+  const scope = useReviewStore((s) => s.reviewScope as Scope)
+  const setScope = useReviewStore((s) => s.setReviewScope)
+  const viewedFiles = useReviewStore((s) => s.viewedFiles)
+  const toggleViewed = useReviewStore((s) => s.toggleViewed)
+  const branches = useReviewStore((s) => s.branches)
+  const loadBranches = useReviewStore((s) => s.loadBranches)
+  const pullRequests = useReviewStore((s) => s.pullRequests)
+  const prLoading = useReviewStore((s) => s.prLoading)
+  const loadPullRequests = useReviewStore((s) => s.loadPullRequests)
+
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof apiClient.getGitStatus>> | null>(null)
+  const [diffText, setDiffText] = useState('')
   const [loading, setLoading] = useState(false)
-  const [scope, setScope] = useState<'unstaged' | 'staged'>('unstaged')
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
-  const [staging, setStaging] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [busyPath, setBusyPath] = useState<string | null>(null)
+  const [busyHunk, setBusyHunk] = useState<string | null>(null)
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false)
+
+  const scopeId: string = scope
+  const scopeLabel =
+    SCOPE_OPTIONS.find((o) => o.id === scopeId)?.[locale === 'zh-CN' ? 'zh' : 'en'] || scopeId
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const [s, d] = await Promise.all([
-        apiClient.getGitStatus(),
-        apiClient.getGitDiff({ staged: scope === 'staged' }),
-      ])
+      const s = await apiClient.getGitStatus()
       setStatus(s)
-      setDiff(d)
-      // Auto-expand first file
-      const files = parseDiff(d.diff)
-      if (files.length > 0 && expandedFiles.size === 0) {
-        setExpandedFiles(new Set([files[0].path]))
-        setSelectedPath(files[0].path)
+      if (s.is_repo && s.workdir) {
+        void loadBranches(s.workdir)
+        if (scopeId === 'pr') void loadPullRequests(s.workdir)
+      }
+      if (scopeId === 'pr') {
+        setDiffText('')
+        setLoading(false)
+        return
+      }
+      const d = await apiClient.getGitDiff(
+        scopeId === 'staged'
+          ? { staged: true }
+          : scopeId === 'last_turn'
+            ? { ref: 'HEAD' }
+            : scopeId === 'head1'
+              ? { ref: 'HEAD~1' }
+              : { staged: false },
+      )
+      setDiffText(d.diff || '')
+      const files = parseDiff(d.diff || '')
+      if (files.length > 0 && expanded.size === 0) {
+        setExpanded(new Set([files[0].path]))
       }
     } catch (e: any) {
+      console.error('[DiffReview]', e)
       toast.error(`${copy('获取 git 状态失败：', 'Could not read git status: ')}${e?.message || e}`)
     } finally {
       setLoading(false)
     }
-  }, [scope]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeId])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
-  const fileDiffs = useMemo(() => parseDiff(diff?.diff || ''), [diff])
+  // Close scope dropdown on outside click / Escape
+  useEffect(() => {
+    if (!scopeMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && !target.closest('.rp-scope-btn') && !target.closest('.rp-scope-menu')) {
+        setScopeMenuOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setScopeMenuOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [scopeMenuOpen])
 
-  const handleStage = async (path: string, unstage: boolean) => {
-    setStaging(path)
+  const fileDiffs = useMemo(() => parseDiff(diffText), [diffText])
+
+  const allChanges: GitFileChange[] = useMemo(() => {
+    if (!status) return []
+    if (scopeId === 'staged') return status.staged
+    if (scopeId === 'unstaged') return [...status.unstaged, ...status.untracked]
+    if (scopeId === 'last_turn' || scopeId === 'head1') {
+      return fileDiffs.map((f) => ({
+        path: f.path,
+        status: f.isNew ? ('added' as const) : f.isDeleted ? ('deleted' as const) : ('modified' as const),
+        staged: false,
+      }))
+    }
+    return []
+  }, [status, scopeId, fileDiffs])
+
+  const applyPatch = async (patch: string, opts: { reverse: boolean; cached: boolean; hunkId: string }) => {
+    setBusyHunk(opts.hunkId)
     try {
-      await apiClient.stagePath(path, unstage)
+      const { gitOs } = await import('@/api/tauriBridge')
+      const workdir = status?.workdir
+      if (!workdir) throw new Error(copy('缺少工作目录', 'Missing workdir'))
+      await gitOs.applyPatch(workdir, patch, opts.reverse, opts.cached)
+      toast.success(
+        opts.reverse
+          ? copy('已回滚该 hunk', 'Hunk reverted')
+          : opts.cached
+            ? copy('已暂存该 hunk', 'Hunk staged')
+            : copy('已应用补丁', 'Patch applied'),
+      )
       await refresh()
-      toast.success(unstage ? `${copy('已取消暂存', 'Unstaged')} ${path}` : `${copy('已暂存', 'Staged')} ${path}`)
     } catch (e: any) {
-      toast.error(`${unstage ? copy('取消暂存', 'Unstage') : copy('暂存', 'Stage')}${copy('失败：', ' failed: ')}${e?.message || e}`)
+      console.error('[DiffReview] patch', e)
+      toast.error(copy('补丁操作失败：', 'Patch failed: ') + (e?.message || e))
     } finally {
-      setStaging(null)
+      setBusyHunk(null)
     }
   }
 
-  const handleDiscard = async (path: string) => {
-    if (!confirm(copy('丢弃对 ' + path + ' 的所有未提交更改？此操作不可撤销。', 'Discard all uncommitted changes to ' + path + '? This cannot be undone.'))) return
-    setStaging(path)
+  const handleStage = async (path: string, unstage: boolean) => {
+    setBusyPath(path)
     try {
-      await apiClient.discardPath(path)
+      await apiClient.stagePath(path, unstage)
+      toast.success((unstage ? copy('已取消暂存', 'Unstaged') : copy('已暂存', 'Staged')) + ' · ' + path.split(/[\\/]/).pop())
       await refresh()
-      toast.success(copy('已丢弃', 'Discarded') + ' ' + path)
     } catch (e: any) {
-      toast.error(copy('丢弃失败：', 'Discard failed: ') + (e?.message || e))
+      console.error('[DiffReview] stage', e)
+      toast.error(copy('操作失败：', 'Failed: ') + (e?.message || e))
     } finally {
-      setStaging(null)
+      setBusyPath(null)
     }
   }
 
   const toggleFile = (path: string) => {
-    setExpandedFiles((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev)
       if (next.has(path)) next.delete(path)
       else next.add(path)
       return next
     })
-    setSelectedPath(path)
   }
 
   if (!status) {
     return (
-      <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {copy('加载中...', 'Loading...')}
-      </div>
+      <RpShell>
+        <div className="rp-empty">
+          <Loader2 className="rp-empty-icon animate-spin" />
+          <div className="rp-empty-desc">{copy('加载中...', 'Loading...')}</div>
+        </div>
+      </RpShell>
     )
   }
 
   if (!status.is_repo) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <FolderGit2 className="h-8 w-8 text-muted-foreground/50" />
-        <div>
-          <p className="text-sm font-medium">{copy('非 Git 仓库', 'Not a Git repository')}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {copy('工作目录不在 git 仓库内，无法查看差异。', 'The working directory is not inside a Git repository, so no diff is available.')}
-          </p>
-          <p className="mt-2 truncate text-[10px] text-muted-foreground/70">{status.workdir}</p>
-        </div>
-      </div>
+      <RpShell>
+        <RpEmpty
+          icon={FolderGit2}
+          title={copy('非 Git 仓库', 'Not a Git repository')}
+          desc={copy('工作目录不在 git 仓库内，无法查看差异。', 'The working directory is not inside a Git repository.')}
+        />
+      </RpShell>
     )
   }
 
-  const allChanges = scope === 'staged' ? status.staged : [...status.unstaged, ...status.untracked]
-
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Header: branch + scope + refresh */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-1.5 text-xs">
-          <GitBranch className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="truncate font-medium">{status.branch || 'detached'}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="segment">
-            <button
-              className={cn('segment-btn', scope === 'unstaged' && 'segment-btn-active')}
-              onClick={() => setScope('unstaged')}
-            >
-              {copy('未暂存', 'Unstaged')}
-            </button>
-            <button
-              className={cn('segment-btn', scope === 'staged' && 'segment-btn-active')}
-              onClick={() => setScope('staged')}
-            >
-              {copy('已暂存', 'Staged')}
-            </button>
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6 text-muted-foreground"
-            onClick={refresh}
-            disabled={loading}
-            title={copy('刷新', 'Refresh')}
-          >
-            <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
-          </Button>
-        </div>
-      </div>
+    <RpShell>
+      <RpHeader
+        icon={GitBranch}
+        title={status.branch || 'detached'}
+        meta={branches.length > 1 ? `${branches.length}` : null}
+        actions={
+          <>
+            <div className="relative">
+              <button
+                type="button"
+                className="rp-scope-btn"
+                onClick={() => setScopeMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={scopeMenuOpen}
+              >
+                {scopeLabel}
+                <ChevronDown className="h-3 w-3 opacity-55" />
+              </button>
+              {scopeMenuOpen && (
+                <div className="rp-scope-menu" role="menu">
+                  {SCOPE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="menuitem"
+                      data-active={scopeId === opt.id}
+                      className="rp-scope-item"
+                      onClick={() => {
+                        setScope(opt.id as never)
+                        setScopeMenuOpen(false)
+                      }}
+                    >
+                      {copy(opt.zh, opt.en)}
+                      {scopeId === opt.id && <Check className="h-3 w-3" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <RpIconButton icon={RefreshCw} title={copy('刷新', 'Refresh')} onClick={() => void refresh()} disabled={loading} />
+          </>
+        }
+      />
 
-      {/* File list */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {allChanges.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
-            <Check className="h-6 w-6 text-emerald-500/60" />
-          <span>{scope === 'staged' ? copy('没有已暂存的改动', 'No staged changes') : copy('工作区干净，无未提交改动', 'Working tree clean; no unstaged changes')}</span>
+      <RpBody pad={false}>
+        {scopeId === 'pr' ? (
+          <div className="rp-pad">
+            <div className="rp-section-label">
+              <GitPullRequest aria-hidden />
+              {copy('Pull requests', 'Pull requests')}
+              {prLoading ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : null}
+            </div>
+            {pullRequests.length === 0 ? (
+              <RpEmpty
+                icon={GitPullRequest}
+                title={copy('没有开放的 PR', 'No open pull requests')}
+                desc={copy('需安装 GitHub CLI（gh）并登录仓库远端。', 'Requires GitHub CLI (`gh`) authenticated to this remote.')}
+              />
+            ) : (
+              <div className="space-y-1.5">
+                {pullRequests.map((pr) => (
+                  <div key={pr.number} className="rp-card rp-card-tight">
+                    <div className="flex items-start gap-2">
+                      <GitPullRequest className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/80" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] font-medium">
+                          <span className="text-muted-foreground">#{pr.number}</span> {pr.title}
+                        </div>
+                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                          {pr.branch}
+                          {pr.author ? ` · ${pr.author}` : ''}
+                        </div>
+                      </div>
+                      <RpChip
+                        tone={
+                          pr.state === 'open' ? 'ok' : pr.state === 'draft' ? 'muted' : pr.state === 'merged' ? 'info' : 'muted'
+                        }
+                      >
+                        {pr.state}
+                      </RpChip>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+        ) : allChanges.length === 0 ? (
+          <RpEmpty
+            icon={Check}
+            title={
+              scopeId === 'staged'
+                ? copy('没有已暂存的改动', 'No staged changes')
+                : scopeId === 'last_turn'
+                  ? copy('上一轮已提交或回滚', 'The last turn was committed or reverted')
+                  : copy('工作区干净', 'Working tree clean')
+            }
+            desc={
+              scopeId === 'staged'
+                ? copy('接受编辑后它们会出现在这里。', 'Accept edits to stage them.')
+                : scopeId === 'unstaged'
+                  ? copy('代码变更会显示在这里。', 'Code changes will appear here.')
+                  : undefined
+            }
+          />
         ) : (
-          <div className="py-1">
+          <div>
             {allChanges.map((f) => {
               const fd = fileDiffs.find((d) => d.path === f.path)
-              const expanded = expandedFiles.has(f.path)
+              const isOpen = expanded.has(f.path)
+              const isViewed = Boolean(viewedFiles[f.path])
               return (
-                <div key={f.path} className="border-b border-border/30 last:border-b-0">
-                  <div
-                    className={cn(
-                      'group flex items-center gap-1.5 px-2 py-1.5 transition-colors hover:bg-accent/40',
-                      selectedPath === f.path && 'bg-accent/30',
-                    )}
-                  >
-                    <ChevronRight
-                      className={cn(
-                        'h-3 w-3 shrink-0 cursor-pointer text-muted-foreground transition-transform',
-                        expanded && 'rotate-90',
-                      )}
+                <div key={f.path} className="border-b border-border/25 last:border-b-0">
+                  <div className="rp-file-row group" data-viewed={isViewed}>
+                    <button
+                      type="button"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground"
                       onClick={() => toggleFile(f.path)}
-                    />
-                    <span className="w-3 shrink-0 text-center text-[10px] font-semibold text-muted-foreground">
+                      aria-label={isOpen ? copy('折叠', 'Collapse') : copy('展开', 'Expand')}
+                    >
+                      <ChevronDown className={cn('h-3 w-3 transition-transform', !isOpen && '-rotate-90')} />
+                    </button>
+                    <span className="w-3 shrink-0 text-center font-mono text-[10px] font-semibold text-muted-foreground">
                       {statusLabel(f.status)}
                     </span>
                     {statusIcon(f.status)}
-                    <span
-                      className="min-w-0 flex-1 cursor-pointer truncate text-xs"
-                      onClick={() => toggleFile(f.path)}
-                      title={f.path}
-                    >
+                    <button type="button" className="rp-file-path text-left" onClick={() => toggleFile(f.path)} title={f.path}>
                       {f.path}
-                    </span>
-                    {/* Discard button (unstaged scope only) */}
-                    {scope !== 'staged' && (
+                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                       <button
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void handleDiscard(f.path)
-                        }}
-                        disabled={staging === f.path}
-                        title={copy('丢弃更改', 'Discard changes')}
+                        type="button"
+                        className="rp-icon-btn !h-5 !w-5"
+                        onClick={() => toggleViewed(f.path)}
+                        title={isViewed ? copy('标记未读', 'Mark unviewed') : copy('标记已读', 'Mark viewed')}
                       >
-                        {staging === f.path ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3 w-3" />
-                        )}
+                        {isViewed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                       </button>
-                    )}
-                    {/* Stage / unstage button */}
-                    {f.status !== 'untracked' && (
-                      <button
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleStage(f.path, scope === 'staged')
-                        }}
-                        disabled={staging === f.path}
-                        title={scope === 'staged' ? copy('取消暂存', 'Unstage') : copy('暂存', 'Stage')}
-                      >
-                        {staging === f.path ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : scope === 'staged' ? (
-                          <Undo2 className="h-3 w-3" />
-                        ) : (
-                          <Check className="h-3 w-3" />
-                        )}
-                      </button>
-                    )}
+                      {scopeId !== 'staged' && scopeId !== 'pr' && f.status !== 'untracked' && (
+                        <button
+                          type="button"
+                          className="rp-icon-btn !h-5 !w-5"
+                          onClick={() => handleStage(f.path, false)}
+                          disabled={busyPath === f.path}
+                          title={copy('暂存文件', 'Stage file')}
+                        >
+                          {busyPath === f.path ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        </button>
+                      )}
+                      {scopeId === 'staged' && (
+                        <button
+                          type="button"
+                          className="rp-icon-btn !h-5 !w-5"
+                          onClick={() => handleStage(f.path, true)}
+                          disabled={busyPath === f.path}
+                          title={copy('取消暂存', 'Unstage')}
+                        >
+                          {busyPath === f.path ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {expanded && fd && (
-                    <div className="overflow-x-auto border-t border-border/30 bg-background/40 py-1">
-                      {fd.hunks.map((h, hi) => (
-                        <div key={hi} className="mb-2">
-                          <div className="diff-line diff-line-meta">
-                            <span className="diff-line-no" />
-                            <span className="text-amber-600 dark:text-amber-400/80">
-                              {h.lines[0]?.content}
-                            </span>
-                          </div>
-                          {h.lines.slice(1).map((ln, li) => (
-                            <div
-                              key={li}
-                              className={cn(
-                                'diff-line',
-                                ln.type === 'add' && 'diff-line-add',
-                                ln.type === 'del' && 'diff-line-del',
-                                ln.type === 'context' && 'diff-line-context',
-                                ln.type === 'meta' && 'diff-line-meta',
-                              )}
-                            >
-                              <span className="diff-line-no">
-                                {ln.type === 'add' ? ln.newNo : ln.type === 'del' ? ln.oldNo : ''}
-                              </span>
-                              <span className="w-3 shrink-0 select-none text-center text-muted-foreground/50">
-                                {ln.type === 'add' ? '+' : ln.type === 'del' ? '-' : ' '}
-                              </span>
-                              <span className="whitespace-pre-wrap break-all">
-                                {ln.content}
-                              </span>
+
+                  {isOpen && fd && (
+                    <div className="overflow-x-auto border-t border-border/25 bg-background/30 py-1">
+                      {fd.hunks.map((h: ParsedHunk, hi: number) => {
+                        const hunkId = `${fd.path}:${hi}`
+                        return (
+                          <div key={hunkId} className="mb-1.5">
+                            <div className="rp-hunk-bar">
+                              <span className="min-w-0 flex-1 truncate">{h.header}</span>
+                              <div className="rp-hunk-actions">
+                                <button
+                                  type="button"
+                                  className="rp-hunk-btn"
+                                  disabled={busyHunk === hunkId}
+                                  title={copy('暂存此 hunk', 'Stage hunk')}
+                                  onClick={() =>
+                                    void applyPatch(buildHunkPatch(fd, h, false), {
+                                      reverse: false,
+                                      cached: true,
+                                      hunkId,
+                                    })
+                                  }
+                                >
+                                  {busyHunk === hunkId ? (
+                                    <Loader2 className="inline h-3 w-3 animate-spin" />
+                                  ) : (
+                                    copy('暂存', 'Stage')
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rp-hunk-btn rp-hunk-btn-danger"
+                                  disabled={busyHunk === hunkId}
+                                  title={copy('回滚此 hunk', 'Revert hunk')}
+                                  onClick={() =>
+                                    void applyPatch(buildHunkPatch(fd, h, true), {
+                                      reverse: true,
+                                      cached: scopeId === 'staged',
+                                      hunkId,
+                                    })
+                                  }
+                                >
+                                  <Undo2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      ))}
+                            {h.lines.slice(1).map((ln, li) => (
+                              <div
+                                key={li}
+                                className={cn(
+                                  'diff-line',
+                                  ln.type === 'add' && 'diff-line-add',
+                                  ln.type === 'del' && 'diff-line-del',
+                                  ln.type === 'context' && 'diff-line-context',
+                                  ln.type === 'meta' && 'diff-line-meta',
+                                )}
+                              >
+                                <span className="diff-line-no">
+                                  {ln.type === 'add' ? ln.newNo : ln.type === 'del' ? ln.oldNo : ''}
+                                </span>
+                                <span className="w-3 shrink-0 select-none text-center text-muted-foreground/50">
+                                  {ln.type === 'add' ? '+' : ln.type === 'del' ? '-' : ' '}
+                                </span>
+                                <span className="whitespace-pre-wrap break-all">{ln.content}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
-                  {expanded && !fd && (
+                  {isOpen && !fd && (
                     <div className="px-3 py-2 text-[11px] text-muted-foreground">
-                      {f.status === 'untracked' ? copy('新文件，尚未跟踪', 'New file, not tracked yet') : copy('无差异内容', 'No diff content')}
+                      {f.status === 'untracked'
+                        ? copy('新文件，尚未跟踪', 'New file, not tracked yet')
+                        : copy('无差异内容', 'No diff content')}
                     </div>
                   )}
                 </div>
@@ -366,16 +481,15 @@ export function DiffReview() {
             })}
           </div>
         )}
-      </div>
+      </RpBody>
 
-      {/* Footer summary */}
-      <div className="flex shrink-0 items-center justify-between border-t border-border/50 px-3 py-1.5 text-[10px] text-muted-foreground">
+      <RpFooter>
         <span>
           {allChanges.length} {copy('个文件', allChanges.length === 1 ? 'file' : 'files')}
-          {diff?.truncated && <span className="ml-1 text-amber-500">· {copy('已截断', 'truncated')}</span>}
+          {Object.keys(viewedFiles).length > 0 ? ` · ${Object.keys(viewedFiles).length} ${copy('已读', 'viewed')}` : ''}
         </span>
         <span className="truncate">{status.workdir.split(/[\\/]/).pop()}</span>
-      </div>
-    </div>
+      </RpFooter>
+    </RpShell>
   )
 }

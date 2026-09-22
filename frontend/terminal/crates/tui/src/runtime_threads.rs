@@ -2012,6 +2012,16 @@ pub struct UpdateThreadRequest {
     pub trust_mode: Option<bool>,
     pub auto_approve: Option<bool>,
     pub model: Option<String>,
+    /// Generic provider kind (or, legacy-style, the exact provider key).
+    /// Paired with `model_provider_id` this re-points the thread's pinned
+    /// route so the next turn dispatches with the GUI's CURRENT provider
+    /// instead of failing against a stale pin (#desktop model-route fix).
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    /// Exact configured provider key (e.g. a custom provider's table name).
+    /// Takes precedence over `model_provider` during identity resolution.
+    #[serde(default)]
+    pub model_provider_id: Option<String>,
     pub mode: Option<String>,
     pub permission_posture: Option<String>,
     pub title: Option<String>,
@@ -2025,6 +2035,15 @@ pub struct StartTurnRequest {
     #[serde(default)]
     pub input_summary: Option<String>,
     pub model: Option<String>,
+    /// Explicit provider kind for this turn (desktop GUI parity). When
+    /// present (with `model_provider_id`) it is authoritative: the turn
+    /// resolves against this identity and the thread's pin is healed to
+    /// match, instead of falling back to the runtime default provider.
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    /// Exact configured provider key; takes precedence over `model_provider`.
+    #[serde(default)]
+    pub model_provider_id: Option<String>,
     pub mode: Option<String>,
     #[serde(default)]
     pub permission_posture: Option<String>,
@@ -4157,6 +4176,8 @@ impl RuntimeThreadManager {
                     prompt,
                     input_summary: Some(input_summary),
                     model: None,
+                    model_provider: None,
+                    model_provider_id: None,
                     mode: None,
                     permission_posture: None,
                     allow_shell: None,
@@ -5222,6 +5243,8 @@ impl RuntimeThreadManager {
             && req.trust_mode.is_none()
             && req.auto_approve.is_none()
             && req.model.is_none()
+            && req.model_provider.is_none()
+            && req.model_provider_id.is_none()
             && req.mode.is_none()
             && req.permission_posture.is_none()
             && req.title.is_none()
@@ -5301,6 +5324,32 @@ impl RuntimeThreadManager {
             {
                 thread.model = model.clone();
                 changes.insert("model".to_string(), json!(model));
+            }
+            // Re-point the pinned provider route. Both fields travel together
+            // from the desktop GUI: `model_provider` carries the provider kind
+            // (or legacy exact key) and `model_provider_id` the exact
+            // configured key. An explicitly empty string clears the field.
+            if let Some(provider) = req.model_provider {
+                let new_provider = if provider.trim().is_empty() {
+                    None
+                } else {
+                    Some(provider.trim().to_string())
+                };
+                if thread.model_provider != new_provider {
+                    thread.model_provider = new_provider.clone();
+                    changes.insert("model_provider".to_string(), json!(new_provider));
+                }
+            }
+            if let Some(provider_id) = req.model_provider_id {
+                let new_id = if provider_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(provider_id.trim().to_string())
+                };
+                if thread.model_provider_id != new_id {
+                    thread.model_provider_id = new_id.clone();
+                    changes.insert("model_provider_id".to_string(), json!(new_id));
+                }
             }
             if let Some(policy) = policy_patch {
                 let mode = policy.mode_setting().to_string();
@@ -6547,7 +6596,22 @@ impl RuntimeThreadManager {
             let explicit_model_requested = req.model.as_deref().is_some_and(|model| {
                 !model.trim().is_empty() && !model.trim().eq_ignore_ascii_case("auto")
             });
-            match self.provider_identity_for_thread(&cfg_snapshot, &thread) {
+            if req.model_provider.is_some() || req.model_provider_id.is_some() {
+                // The GUI explicitly names the provider for this turn — that
+                // request is authoritative for the route (and heals the
+                // thread's pin below). The default-provider heuristics below
+                // only exist for clients that cannot name a provider.
+                match cfg_snapshot.resolve_persisted_provider_identity(
+                    req.model_provider.as_deref(),
+                    req.model_provider_id.as_deref(),
+                ) {
+                    Ok(identity) => repointed_identity = Some(identity),
+                    Err(reason) => anyhow::bail!(
+                        "Requested provider route is unresolvable: {reason}"
+                    ),
+                }
+            } else {
+                match self.provider_identity_for_thread(&cfg_snapshot, &thread) {
                 Ok(pinned) => {
                     // The GUI always sends its CURRENT settings model with
                     // every turn. Zero-turn threads follow the default for
@@ -6618,6 +6682,7 @@ impl RuntimeThreadManager {
                         }
                     }
                 }
+            }
             }
             if let Some(ref identity) = repointed_identity {
                     thread.model_provider = Some(identity.provider.as_str().to_string());
@@ -8214,7 +8279,18 @@ impl RuntimeThreadManager {
                                         SUMMARY_LIMIT,
                                     );
                                     item.detail = Some(output.content.clone());
-                                    item.metadata = output.metadata.clone();
+                                    // The summary prefixes the raw tool name; UI
+                                    // consumers need the name itself to render a
+                                    // proper tool card, so expose it explicitly.
+                                    let mut metadata =
+                                        output.metadata.clone().unwrap_or_else(|| json!({}));
+                                    if let Some(obj) = metadata.as_object_mut() {
+                                        obj.entry("tool_call_id".to_string())
+                                            .or_insert_with(|| json!(id));
+                                        obj.entry("tool_name".to_string())
+                                            .or_insert_with(|| json!(name));
+                                    }
+                                    item.metadata = Some(metadata);
                                 }
                             }
                             Err(err) => {

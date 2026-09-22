@@ -21,7 +21,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Pin IPv4 so tauri's devUrl (127.0.0.1) never races against IPv6-only
+    // localhost resolution (vite would otherwise bind ::1 on some hosts).
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

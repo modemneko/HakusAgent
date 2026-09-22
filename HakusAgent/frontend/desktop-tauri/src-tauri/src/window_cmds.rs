@@ -84,43 +84,19 @@ pub fn window_is_maximized(app: AppHandle) -> Result<bool, String> {
     }
 }
 
-/// Dismiss the native splash screen and reveal the main window.
+/// Reveal the main window.
 ///
-/// Called by the frontend once the embedded runtime is connected. The main
-/// window is shown immediately (its own UI fades in via CSS), while the
-/// splash keeps playing until its full ~2.4s design timeline has elapsed,
-/// then fades out through a CSS class applied with `eval` and is closed
-/// after the transition finishes. Safe to call multiple times — every step
-/// is a no-op when the window is already gone/visible.
+/// The external splash window was removed: the React app renders its own
+/// in-window AwakeningSplash during boot. This command now only guarantees
+/// the main window is visible/focused when the frontend signals readiness.
+/// Safe to call multiple times.
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn finish_splash(app: AppHandle) -> Result<bool, String> {
-    const SPLASH_MIN_DISPLAY_MS: u64 = 2400;
-    const SPLASH_FADE_MS: u64 = 600; // 480ms CSS transition + buffer
-
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-    }
-
-    if let Some(splash) = app.get_webview_window("splash") {
-        let handle = app.clone();
-        std::thread::spawn(move || {
-            // Honour the splash design timeline even when the UI boots fast:
-            // wait out the remainder before starting the fade.
-            if let Some(started) = crate::SPLASH_CREATED_AT.get() {
-                let elapsed = started.elapsed().as_millis() as u64;
-                if elapsed < SPLASH_MIN_DISPLAY_MS {
-                    std::thread::sleep(Duration::from_millis(SPLASH_MIN_DISPLAY_MS - elapsed));
-                }
-            }
-            let _ = splash.eval("document.documentElement.classList.add('is-fading');");
-            std::thread::sleep(Duration::from_millis(SPLASH_FADE_MS));
-            if let Some(splash) = handle.get_webview_window("splash") {
-                let _ = splash.close();
-            }
-        });
     }
     Ok(true)
 }

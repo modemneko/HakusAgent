@@ -1,0 +1,21 @@
+[package]
+name = "hakus-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Compact streaming LLM client (OpenAI-compatible + Anthropic wire formats)"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util = "0.3"
+reqwest = { workspace = true, features = ["stream"] }
+# Workspace reqwest is built with `rustls-no-provider`: a crypto provider has to
+# be installed before any Client is constructed.
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

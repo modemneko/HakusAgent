@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Bot, Check, Copy, PanelRight, RefreshCw, User, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { Check, Copy, PanelRight, RefreshCw, Undo2, HelpCircle, ListTodo, CheckCircle2, ArrowRight, X, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -67,10 +67,8 @@ export const MessageBubble = memo(function MessageBubble({
     }
   }
 
-  // For assistant multi-segment messages, show the avatar only on the first
-  // segment so the chat reads like an article (one avatar per turn, with
-  // text/tool bubbles flowing below it).
-  const showAvatar = isUser || segmentIndex === 0
+  // For assistant multi-segment messages the timeline already merges segments
+  // into one article flow; the first segment hosts turn-level affordances.
   const isFirstSegmentOfAssistantTurn = isAssistant && segmentIndex === 0
   const isLastSegmentOfAssistantTurn = isAssistant && segmentIndex === totalSegments - 1
 
@@ -88,6 +86,8 @@ export const MessageBubble = memo(function MessageBubble({
   const verticalGap =
     isAssistant && !isFirstSegmentOfAssistantTurn ? 'py-1' : 'py-3'
 
+  // ChatGPT/Codex 桌面端风格：无头像列，整条消息是一个 article 流。
+  // assistant 无边框全宽排版；user 右对齐（Codex PMa: items-end justify-end gap-2）。
   return (
     <div
       // data-role + data-message-id let the parent ChatView find user
@@ -96,29 +96,13 @@ export const MessageBubble = memo(function MessageBubble({
       data-role={message.role}
       data-message-id={message.id}
       className={cn(
-        'chat-message group flex gap-3 px-5 animate-fade-in',
+        'chat-message group flex min-w-0 w-full flex-col animate-fade-in',
         verticalGap,
-        isUser && 'flex-row-reverse py-3',
+        isUser && 'items-end justify-end gap-2',
       )}
     >
-      {/* Avatar — only on first segment of an assistant turn (or always for user) */}
-      {showAvatar ? (
-        <div
-          className={cn(
-            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
-            isUser
-              ? 'bg-secondary text-secondary-foreground'
-              : 'bg-primary text-primary-foreground shadow-sm',
-          )}
-        >
-          {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" strokeWidth={1.75} />}
-        </div>
-      ) : (
-        <div className="h-7 w-7 shrink-0" aria-hidden />
-      )}
-
       {/* Message body */}
-      <div className={cn('chat-message-body flex min-w-0 max-w-[82%] flex-col gap-1', isUser && 'items-end')}>
+      <div className={cn('chat-message-body flex min-w-0 flex-col gap-1', isUser ? 'max-w-[77%]' : 'w-full')}>
         {/* Reasoning (inline, no bubble) — shown above the text bubble.
             Just muted text with a Brain icon; click to expand into full thinking. */}
         {showReasoningBlock && (
@@ -128,16 +112,16 @@ export const MessageBubble = memo(function MessageBubble({
           />
         )}
 
-        {/* Content bubble — subtle edges for assistant (article-like flow),
-            still prominent for user messages */}
+        {/* Content — user: Codex 资产精确值（app-initial PMa，data-user-message-bubble）：
+            bg-text/5 + rounded-2xl + px-3 py-2 + max-w-[77%]，无 ring 无边框；
+            assistant: borderless full-width article text with comfortable line height. */}
         {segmentText ? (
           <div
             className={cn(
-              'selectable rounded-2xl px-4 py-2.5',
+              'selectable min-w-0 text-foreground',
               isUser
-                ? 'border border-primary/35 bg-primary text-primary-foreground shadow-sm'
-                : 'border border-transparent bg-transparent text-foreground shadow-none',
-              isStreamingCursor && 'ring-1 ring-primary/10',
+                ? 'rounded-2xl bg-foreground/[0.05] px-3 py-2'
+                : 'w-full',
             )}
             style={{ fontSize: `${fontSize}px` }}
           >
@@ -149,7 +133,7 @@ export const MessageBubble = memo(function MessageBubble({
                 }
                 className={cn(
                   'mb-1 ml-auto mr-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground',
-                  'opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover:opacity-100',
+                  'opacity-0 transition-opacity hover:bg-[var(--cx-ghost-hover)] group-hover:opacity-100',
                 )}
                 title={t('openInPanel')}
                 aria-label={t('openInPanel')}
@@ -159,7 +143,7 @@ export const MessageBubble = memo(function MessageBubble({
               </button>
             )}
             {isAssistant ? (
-              <div className="markdown-body">
+              <div className="markdown-body leading-relaxed">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
@@ -168,7 +152,7 @@ export const MessageBubble = memo(function MessageBubble({
                   {segmentText}
                 </ReactMarkdown>
                 {isStreamingCursor && (
-                  <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse-dot bg-primary align-text-bottom" />
+                  <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse-dot bg-foreground/70 align-text-bottom" />
                 )}
               </div>
             ) : (
@@ -179,11 +163,8 @@ export const MessageBubble = memo(function MessageBubble({
           /* Streaming cursor when there's no text yet but the segment is the
              active streaming one — give it a tiny host so the cursor shows. */
           isStreamingCursor && (
-            <div
-              className="rounded-2xl px-4 py-2.5 ring-1 ring-primary/10"
-              style={{ fontSize: `${fontSize}px` }}
-            >
-              <span className="inline-block h-3.5 w-1.5 animate-pulse-dot bg-primary align-text-bottom" />
+            <div className="w-full px-1 py-2.5" style={{ fontSize: `${fontSize}px` }}>
+              <span className="inline-block h-3.5 w-[2px] animate-pulse-dot bg-foreground/70 align-text-bottom" />
             </div>
           )
         )}
@@ -413,7 +394,7 @@ function QuestionCard({ messageId, question, onAnswer }: QuestionCardProps) {
                 'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
                 isSelected
                   ? 'border-primary/50 bg-primary/20 text-foreground'
-                  : 'border-border/60 bg-background/80 text-foreground/90 hover:bg-accent/45',
+                  : 'border-border/60 bg-background/80 text-foreground/90 hover:bg-[var(--cx-ghost-hover)]',
               )}
             >
               <span

@@ -1,17 +1,365 @@
+import { memo, useState } from 'react'
+import {
+  ArrowRightLeft,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  FileText,
+  FolderTree,
+  GitBranch,
+  Globe,
+  Loader2,
+  MessageSquarePlus,
+  Search,
+  Send,
+  Terminal,
+  Wrench,
+  X,
+} from 'lucide-react'
 import type { ToolCall } from '@/api/types'
-import { ToolCallLogItem } from './ToolCallLogItem'
+import { cn, copyToClipboard } from '@/lib/utils'
 
 interface InlineToolCallBubbleProps {
   toolCall: ToolCall
 }
 
-export function InlineToolCallBubble({ toolCall }: InlineToolCallBubbleProps) {
+/**
+ * InlineToolCallBubble — ChatGPT/Codex 桌面端风格的工具调用披露行。
+ *
+ * 折叠态是一行紧凑摘要：图标 + 工具名 + 截断的参数摘要 + 耗时 + 状态，
+ * 绝不平铺 raw JSON。点击整行展开参数与结果的格式化 JSON（缩进、
+ * max-height 内滚动）。
+ */
+
+const TOOL_LABELS: Record<string, string> = {
+  bash: '执行命令',
+  shell: '执行命令',
+  read_file: '读取文件',
+  write_file: '写入文件',
+  edit_file: '编辑文件',
+  append_file: '追加文件',
+  multi_edit_file: '批量编辑',
+  read_multiple_files: '读取多个文件',
+  move_file: '移动文件',
+  copy_file: '复制文件',
+  delete_file: '删除文件',
+  file_stat: '查看文件信息',
+  create_directory: '创建目录',
+  glob: '匹配文件',
+  grep: '搜索内容',
+  list_dir: '列出目录',
+  tree: '查看目录树',
+  web_search: '联网搜索',
+  web_fetch: '抓取网页',
+  task: '创建子任务',
+  tool_search: '搜索工具',
+  code_execution: '执行代码',
+  // 线程即工具（Codex-style thread ops）
+  create_thread: '创建子会话',
+  fork_thread: '派生会话',
+  send_message_to_thread: '发送到子会话',
+  handoff_thread: '移交会话',
+}
+
+const RESULT_DISPLAY_CHARS = 1200
+
+function toolIcon(name: string) {
+  switch (name) {
+    case 'bash':
+    case 'shell':
+      return <Terminal className="h-3.5 w-3.5" />
+    case 'read_file':
+    case 'write_file':
+    case 'edit_file':
+    case 'append_file':
+    case 'read_multiple_files':
+    case 'file_stat':
+      return <FileText className="h-3.5 w-3.5" />
+    case 'tree':
+    case 'list_dir':
+    case 'create_directory':
+      return <FolderTree className="h-3.5 w-3.5" />
+    case 'grep':
+    case 'glob':
+      return <Search className="h-3.5 w-3.5" />
+    case 'create_thread':
+      return <MessageSquarePlus className="h-3.5 w-3.5" />
+    case 'fork_thread':
+      return <GitBranch className="h-3.5 w-3.5" />
+    case 'send_message_to_thread':
+      return <Send className="h-3.5 w-3.5" />
+    case 'handoff_thread':
+      return <ArrowRightLeft className="h-3.5 w-3.5" />
+    case 'web_search':
+    case 'web_fetch':
+      return <Globe className="h-3.5 w-3.5" />
+    default:
+      return <Wrench className="h-3.5 w-3.5" />
+  }
+}
+
+function pathOf(args: Record<string, any>): string {
+  return args.path || args.file_path || args.source || ''
+}
+
+function formatList(v: unknown): string {
+  if (Array.isArray(v)) return v.map(String).join(', ')
+  if (typeof v === 'string') return v
+  return ''
+}
+
+function firstLine(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  const nl = v.indexOf('\n')
+  return nl >= 0 ? v.slice(0, nl) : v
+}
+
+function humanizeName(name: string): string {
+  return name
+    .split('_')
+    .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : p))
+    .join(' ')
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + '…' : s
+}
+
+/** 一行参数摘要（截断），折叠态绝不展示整段 raw JSON。 */
+function describeToolCall(tc: ToolCall): { title: string; detail: string } {
+  const label = TOOL_LABELS[tc.name] || humanizeName(tc.name)
+  const args = tc.arguments ?? {}
+
+  switch (tc.name) {
+    case 'read_file':
+    case 'write_file':
+    case 'edit_file':
+    case 'append_file':
+    case 'file_stat':
+    case 'move_file':
+    case 'copy_file':
+    case 'delete_file':
+      return { title: label, detail: pathOf(args) }
+    case 'read_multiple_files':
+      return { title: label, detail: formatList(args.paths) }
+    case 'multi_edit_file':
+      return { title: label, detail: pathOf(args) }
+    case 'bash':
+    case 'shell':
+      return { title: label, detail: firstLine(args.command) }
+    case 'web_search':
+      return { title: label, detail: args.query ? `"${args.query}"` : '' }
+    case 'web_fetch':
+      return { title: label, detail: args.url || '' }
+    case 'create_directory':
+      return { title: label, detail: args.path || args.dir || '' }
+    case 'grep':
+      return {
+        title: label,
+        detail: args.pattern ? `"${args.pattern}" in ${args.path || ''}` : args.path || '',
+      }
+    case 'glob':
+      return { title: label, detail: args.pattern || '' }
+    case 'list_dir':
+    case 'tree':
+      return { title: label, detail: args.path || args.directory || '' }
+    case 'task':
+      return { title: label, detail: firstLine(args.task) }
+    default: {
+      const firstStr = Object.values(args).find((v) => typeof v === 'string' && v.length > 0)
+      return { title: label, detail: firstStr ? truncate(String(firstStr), 60) : '' }
+    }
+  }
+}
+
+/**
+ * 结果格式化：若结果是 JSON 则重新缩进为可读的多行格式；
+ * 否则原样返回文本。彻底避免一行平铺的 raw JSON。
+ */
+function formatResult(result: string): { text: string; isJson: boolean } {
+  const trimmed = result.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), isJson: true }
+    } catch {
+      // 不是合法 JSON，按原始文本展示
+    }
+  }
+  return { text: result, isJson: false }
+}
+
+export const InlineToolCallBubble = memo(function InlineToolCallBubble({ toolCall }: InlineToolCallBubbleProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [showFullResult, setShowFullResult] = useState(false)
+  const [copiedArgs, setCopiedArgs] = useState(false)
+  const [copiedResult, setCopiedResult] = useState(false)
+
+  const success = toolCall.success !== false
+  // started 事件先到、finished 未到时 success 为 undefined 且无结果 → 运行中
+  const pending = toolCall.success === undefined && !toolCall.result
+  const summary = describeToolCall(toolCall)
+  const args = toolCall.arguments ?? {}
+  const hasArgs = Object.keys(args).length > 0
+  const hasDetails = hasArgs || !!toolCall.result
+  const resultLength = toolCall.result?.length ?? 0
+  const resultTooLong = resultLength > RESULT_DISPLAY_CHARS
+
+  const handleCopyArgs = async () => {
+    const text = JSON.stringify(args, null, 2)
+    if (await copyToClipboard(text)) {
+      setCopiedArgs(true)
+      setTimeout(() => setCopiedArgs(false), 1500)
+    }
+  }
+
+  const handleCopyResult = async () => {
+    const text = toolCall.result || ''
+    if (await copyToClipboard(text)) {
+      setCopiedResult(true)
+      setTimeout(() => setCopiedResult(false), 1500)
+    }
+  }
+
+  const handleOpenFullResult = () => {
+    if (!toolCall.result) return
+    const blob = new Blob([toolCall.result], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+
+  const pretty = toolCall.result ? formatResult(toolCall.result) : null
+  // JSON 结果直接完整缩进展示（pre 自带 max-height 滚动）；
+  // 普通长文本先截断，可通过「展开全部」查看。
+  const resultText = pretty
+    ? pretty.isJson || showFullResult
+      ? pretty.text
+      : truncate(pretty.text, RESULT_DISPLAY_CHARS)
+    : ''
+
   return (
-    <div className="chat-tool-call flex gap-3 px-5 py-1">
-      <div className="h-7 w-7 shrink-0" />
-      <div className="chat-tool-call-body min-w-0 max-w-[85%] flex-1">
-        <ToolCallLogItem toolCall={toolCall} standalone />
-      </div>
+    <div className="chat-tool-call w-full min-w-0 py-0.5" data-tool-call={toolCall.call_id}>
+      {/* 折叠态：单行紧凑摘要（Codex agent-activity 风格） */}
+      <button
+        type="button"
+        onClick={() => hasDetails && setExpanded((v) => !v)}
+        disabled={!hasDetails}
+        aria-expanded={expanded}
+        className={cn(
+          'group/tool-row flex w-full min-w-0 items-center gap-2 rounded-lg py-1.5 pl-2 pr-1.5 text-left transition-colors',
+          hasDetails ? 'cursor-pointer hover:bg-[var(--cx-ghost-hover)]' : 'cursor-default',
+        )}
+      >
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
+          {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : toolIcon(toolCall.name)}
+        </span>
+        <span className={cn('shrink-0 text-xs font-medium', success && !pending ? 'text-foreground/85' : success ? 'text-foreground/60' : 'text-destructive')}>
+          {summary.title}
+        </span>
+        {summary.detail && (
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+            {summary.detail}
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground/80">
+          {toolCall.duration !== undefined && toolCall.duration > 0 && (
+            <span>{toolCall.duration.toFixed(2)}s</span>
+          )}
+          {pending ? (
+            <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+          ) : success ? (
+            <Check className="h-3 w-3 text-emerald-500" />
+          ) : (
+            <X className="h-3 w-3 text-destructive" />
+          )}
+          {hasDetails && (
+            <ChevronRight
+              className={cn(
+                'h-3 w-3 text-muted-foreground transition-transform duration-200',
+                expanded && 'rotate-90',
+              )}
+            />
+          )}
+        </span>
+      </button>
+
+      {/* 展开态：参数 + 结果的格式化 JSON，max-height 内滚动 */}
+      {expanded && hasDetails && (
+        <div className="mb-1.5 ml-2 mr-1 mt-0.5 space-y-2 pl-5">
+          {hasArgs && (
+            <div className="group/block relative">
+              <button
+                onClick={handleCopyArgs}
+                className="absolute right-1.5 top-1.5 z-10 inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 backdrop-blur-sm transition-opacity hover:text-foreground group-hover/block:opacity-100"
+                title="复制参数"
+              >
+                {copiedArgs ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                {copiedArgs ? '已复制' : '复制'}
+              </button>
+              <pre className="tool-log-pre max-h-56 overflow-auto rounded-xl border border-border/40 bg-foreground/[0.04] p-2.5 font-mono text-[11px] leading-relaxed text-foreground/85">
+                {JSON.stringify(args, null, 2)}
+              </pre>
+            </div>
+          )}
+          {pretty && (
+            <div className="group/block relative">
+              <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover/block:opacity-100">
+                {!pretty.isJson && resultTooLong && (
+                  <button
+                    onClick={handleOpenFullResult}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm hover:text-foreground"
+                    title="查看完整日志"
+                  >
+                    <ExternalLink className="h-2.5 w-2.5" />
+                    新窗口打开
+                  </button>
+                )}
+                <button
+                  onClick={handleCopyResult}
+                  className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm hover:text-foreground"
+                  title="复制结果"
+                >
+                  {copiedResult ? <CheckCheck className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                  {copiedResult ? '已复制' : '复制'}
+                </button>
+              </div>
+              <pre
+                className={cn(
+                  'tool-log-pre max-h-72 overflow-auto rounded-xl border p-2.5 font-mono text-[11px] leading-relaxed',
+                  success
+                    ? 'border-border/40 bg-foreground/[0.04] text-foreground/85'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive',
+                )}
+              >
+                {resultText}
+              </pre>
+            </div>
+          )}
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            {!pretty?.isJson && resultTooLong && (
+              <>
+                <span>结果过长（{resultLength} 字符）</span>
+                <button onClick={() => setShowFullResult((v) => !v)} className="text-primary hover:underline">
+                  {showFullResult ? '收起' : '展开全部'}
+                </button>
+                <button onClick={handleCopyResult} className="text-primary hover:underline">
+                  复制完整结果
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => setExpanded(false)}
+              className="ml-auto inline-flex items-center gap-1 transition-colors hover:text-foreground"
+            >
+              <ChevronDown className="h-3 w-3" />
+              收起
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
-}
+})

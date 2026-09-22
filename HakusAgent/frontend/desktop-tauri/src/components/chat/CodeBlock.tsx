@@ -69,7 +69,7 @@ export function CodeBlock({ children, className, node: _node, ...props }: CodeBl
           onClick={handleOpen}
           className={cn(
             'flex items-center rounded bg-muted/70 px-1.5 py-0.5 text-muted-foreground transition-opacity',
-            'opacity-0 hover:bg-accent hover:text-accent-foreground group-hover/code:opacity-100',
+            'opacity-0 hover:bg-[var(--cx-ghost-hover)] group-hover/code:opacity-100',
           )}
           title={t('openInPanel')}
           aria-label={t('openInPanel')}
@@ -81,7 +81,7 @@ export function CodeBlock({ children, className, node: _node, ...props }: CodeBl
           onClick={handleCopy}
           className={cn(
             'flex items-center rounded bg-muted/70 px-1.5 py-0.5 text-muted-foreground transition-opacity',
-            'opacity-0 hover:bg-accent hover:text-accent-foreground group-hover/code:opacity-100',
+            'opacity-0 hover:bg-[var(--cx-ghost-hover)] group-hover/code:opacity-100',
           )}
           title="Copy code"
           aria-label="Copy code"

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
-  Clock3,
   ChevronDown,
+  Clock3,
   Folder,
   FolderPlus,
   LayoutList,
@@ -15,14 +15,13 @@ import {
   Plus,
   Search,
   Settings2,
-  Smartphone,
+  ShieldOff,
   Trash2,
   X,
 } from 'lucide-react'
 import { useSessionStore } from '@/store/session'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
@@ -32,7 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { cn, truncate } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { isPhoneViewport } from '@/lib/responsive'
 import { useToast } from '@/components/ui/toast'
 import type { ChatSession, Project } from '@/api/types'
@@ -67,26 +66,8 @@ function writeSidebarPreference(key: string, value: string) {
   }
 }
 
-function formatSessionTime(timestamp: number, locale: string): string {
-  const date = new Date(timestamp)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(date)
-  }
-  const sameYear = date.getFullYear() === now.getFullYear()
-  return new Intl.DateTimeFormat(locale, sameYear
-    ? { month: 'short', day: 'numeric' }
-    : { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
-}
-
 function isWeChatSession(session: ChatSession): boolean {
   return session.provider === 'wechat'
-}
-
-function sessionPreview(session: ChatSession, messages: Record<string, { content: string }[]>, emptyLabel: string): string {
-  const entries = messages[session.id] || []
-  const last = entries[entries.length - 1]
-  return last ? truncate(last.content.replace(/\s+/g, ' ').trim(), 46) : emptyLabel
 }
 
 function sortSessions(sessions: ChatSession[], sortMode: SortMode): ChatSession[] {
@@ -99,8 +80,6 @@ interface SessionRowProps {
   active: boolean
   editing: boolean
   draftTitle: string
-  preview: string
-  timestamp: string
   onSelect: () => void
   onStartRename: () => void
   onDraftTitleChange: (value: string) => void
@@ -108,7 +87,7 @@ interface SessionRowProps {
   onCancelRename: () => void
   onDelete: () => void
   onTogglePin: () => void
-  labels: { more: string; rename: string; pin: string; unpin: string; delete: string }
+  labels: { more: string; rename: string; pin: string; unpin: string; delete: string; ephemeral: string }
 }
 
 function SessionRow({
@@ -116,8 +95,6 @@ function SessionRow({
   active,
   editing,
   draftTitle,
-  preview,
-  timestamp,
   onSelect,
   onStartRename,
   onDraftTitleChange,
@@ -128,9 +105,9 @@ function SessionRow({
   labels,
 }: SessionRowProps) {
   return (
-    <div className={cn('sidebar-session-row group', active && 'is-active')}>
+    <div className={cn('cx-row group', active && 'is-active')}>
       <div
-        className="sidebar-session-main"
+        className="cx-row-main"
         role="button"
         tabIndex={0}
         onClick={onSelect}
@@ -141,60 +118,63 @@ function SessionRow({
           }
         }}
       >
-        <span className="sidebar-session-icon" aria-hidden>
-          {session.provider === 'wechat' ? <Smartphone className="h-3.5 w-3.5" /> : <MessageSquare className="h-3.5 w-3.5" />}
-        </span>
-        <span className="sidebar-session-copy">
-          {editing ? (
-            <Input
-              autoFocus
-              value={draftTitle}
-              onChange={(event) => onDraftTitleChange(event.target.value)}
-              onBlur={onCommitRename}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') onCommitRename()
-                if (event.key === 'Escape') onCancelRename()
-              }}
-              onClick={(event) => event.stopPropagation()}
-              className="h-6 min-w-0 rounded-md border-foreground/15 bg-background/70 px-1.5 text-xs"
-            />
-          ) : (
-            <span className="sidebar-session-title" title={session.title}>
-              {session.pinned && <Pin className="mr-1 h-3 w-3 shrink-0 text-amber-500" />}
-              <span className="truncate">{session.title}</span>
-            </span>
-          )}
-          {!editing && <span className="sidebar-session-preview">{preview}</span>}
-        </span>
-        {!editing && <time className="sidebar-session-time">{timestamp}</time>}
+        {editing ? (
+          <Input
+            autoFocus
+            value={draftTitle}
+            onChange={(event) => onDraftTitleChange(event.target.value)}
+            onBlur={onCommitRename}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') onCommitRename()
+              if (event.key === 'Escape') onCancelRename()
+            }}
+            onClick={(event) => event.stopPropagation()}
+            className="cx-row-input"
+          />
+        ) : (
+          <span className="cx-row-title" title={session.title}>
+            {session.pinned && <Pin className="mr-1 h-3 w-3 shrink-0 opacity-70" aria-hidden />}
+            {session.ephemeral && (
+              <ShieldOff className="mr-1 h-3 w-3 shrink-0 text-amber-500/80" aria-hidden />
+            )}
+            <span className="truncate">{session.title}</span>
+            {session.ephemeral && (
+              <span className="ml-1 shrink-0 rounded bg-amber-500/15 px-1 py-0 text-[9px] leading-4 text-amber-600 dark:text-amber-400">
+                {labels.ephemeral}
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="sidebar-session-actions"
-            title={labels.more}
-            aria-label={labels.more}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" mobileTitle={labels.more} className="w-40">
-          <DropdownMenuItem onSelect={onStartRename}><Pencil className="h-3.5 w-3.5" />{labels.rename}</DropdownMenuItem>
-          {!isWeChatSession(session) && (
-            <DropdownMenuItem onSelect={onTogglePin}>
-              {session.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-              {session.pinned ? labels.unpin : labels.pin}
+      {!editing && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="cx-row-more"
+              title={labels.more}
+              aria-label={labels.more}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" mobileTitle={labels.more} className="w-40">
+            <DropdownMenuItem onSelect={onStartRename}><Pencil className="h-3.5 w-3.5" />{labels.rename}</DropdownMenuItem>
+            {!isWeChatSession(session) && (
+              <DropdownMenuItem onSelect={onTogglePin}>
+                {session.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                {session.pinned ? labels.unpin : labels.pin}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
+              <Trash2 className="h-3.5 w-3.5" />{labels.delete}
             </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" />{labels.delete}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }
@@ -317,6 +297,23 @@ export function Sidebar() {
     }
   }
 
+  const handleNewEphemeral = async () => {
+    try {
+      const id = await createSession(undefined, { ephemeral: true })
+      if (activeProjectId) {
+        const nextMap = { ...sessionWorkspaces, [id]: activeProjectId }
+        setSessionWorkspaces(nextMap)
+        writeSessionWorkspaceMap(nextMap)
+      }
+      setSearch('')
+      closeAfterMobileAction()
+      toast.success(copy('已开启临时会话（不入历史、关闭记忆）', 'Temporary chat started (hidden from history, memory off)'))
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
+      toast.error(locale.startsWith('zh') ? `临时会话失败：${detail}` : `Temporary chat failed: ${detail}`)
+    }
+  }
+
   /**
    * Harness-style workspace action: choosing a folder is a navigation action,
    * not a settings action. Register the folder, make it current, then open a
@@ -366,7 +363,14 @@ export function Sidebar() {
     setEditingId(null)
   }
 
-  const sessionLabels = { more: t('moreActions'), rename: t('rename'), pin: t('pin'), unpin: t('unpin'), delete: t('delete') }
+  const sessionLabels = {
+    more: t('moreActions'),
+    rename: t('rename'),
+    pin: t('pin'),
+    unpin: t('unpin'),
+    delete: t('delete'),
+    ephemeral: copy('临时', 'Temp'),
+  }
 
   const renderSession = (session: ChatSession) => (
     <SessionRow
@@ -375,8 +379,6 @@ export function Sidebar() {
       active={session.id === activeId}
       editing={editingId === session.id}
       draftTitle={draftTitle}
-      preview={sessionPreview(session, messages, t('noMessages'))}
-      timestamp={formatSessionTime(session.updated_at, locale)}
       onSelect={() => handleSelect(session.id)}
       onStartRename={() => startRename(session)}
       onDraftTitleChange={setDraftTitle}
@@ -392,11 +394,11 @@ export function Sidebar() {
     const groupId = project?.id || 'unassigned'
     const expanded = expandedProjects.has(groupId)
     return (
-    <section key={groupId} className="sidebar-workspace-group">
-      <div className="sidebar-workspace-heading">
+    <section key={groupId} className="cx-group">
+      <div className="cx-group-head">
         <button
           type="button"
-          className={cn('sidebar-workspace-title', project && activeProjectId === project.id && 'is-active')}
+          className={cn('cx-group-title', project && activeProjectId === project.id && 'is-active')}
           onClick={() => {
             if (project) setActiveProject(project.id)
             setExpandedProjects((current) => {
@@ -409,14 +411,14 @@ export function Sidebar() {
           title={project?.path}
           aria-expanded={expanded}
         >
-          <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !expanded && '-rotate-90')} />
-          <Folder className="h-3.5 w-3.5 shrink-0" />
+          <ChevronDown className={cn('cx-group-chevron h-3.5 w-3.5 shrink-0', !expanded && '-rotate-90')} />
+          <Folder className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
           <span className="truncate">{title}</span>
         </button>
         {project && (
           <button
             type="button"
-            className="sidebar-workspace-new"
+            className="cx-group-add"
             onClick={(event) => {
               event.stopPropagation()
               void handleNew(project.id)
@@ -424,87 +426,131 @@ export function Sidebar() {
             title={copy('在此工作区新建会话', 'New chat in this workspace')}
             aria-label={copy('在此工作区新建会话', 'New chat in this workspace')}
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
-      {expanded && (items.length > 0 ? <div className="sidebar-session-list">{items.map(renderSession)}</div> : <p className="sidebar-workspace-empty">{copy('暂无会话', 'No conversations yet')}</p>)}
+      {expanded && (items.length > 0 ? <div className="cx-rows">{items.map(renderSession)}</div> : <p className="cx-group-empty">{copy('暂无会话', 'No conversations yet')}</p>)}
     </section>
     )
   }
 
   const settingsButton = (
-    <Button size="icon" variant="ghost" className="sidebar-rail-button relative" onClick={() => setSettingsOpen(true)} title={t('settings')} aria-label={t('settings')}>
+    <button
+      type="button"
+      className="sidebar-rail-button cx-rail-btn relative"
+      onClick={() => setSettingsOpen(true)}
+      title={t('settings')}
+      aria-label={t('settings')}
+    >
       <Settings2 className="h-[17px] w-[17px]" />
       {updateAvailable && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-500" data-testid="update-available-dot" />}
-    </Button>
+    </button>
   )
 
   return (
-    <aside className="sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
+    <aside className="sidebar cx-sidebar flex h-full w-full min-w-0 shrink-0 flex-col">
       <div className="sidebar-compact-rail" aria-label={t('toggleSidebar')}>
-        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-[17px] w-[17px]" /></Button>
-        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => void handleNew()} title={t('newChat')} aria-label={t('newChat')}><Plus className="h-[17px] w-[17px]" /></Button>
+        <button type="button" className="sidebar-rail-button cx-rail-btn" onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-[17px] w-[17px]" /></button>
+        <button type="button" className="sidebar-rail-button cx-rail-btn" onClick={() => void handleNew()} title={t('newChat')} aria-label={t('newChat')}><Plus className="h-[17px] w-[17px]" /></button>
         <div className="sidebar-rail-spacer" />
-        <Button size="icon" variant="ghost" className="sidebar-rail-button" onClick={() => { setSidebarCompact(false); setSidebar(true) }} title={copy('展开会话列表', 'Expand sessions')} aria-label={copy('展开会话列表', 'Expand sessions')}><LayoutList className="h-[17px] w-[17px]" /></Button>
+        <button type="button" className="sidebar-rail-button cx-rail-btn" onClick={() => { setSidebarCompact(false); setSidebar(true) }} title={copy('展开会话列表', 'Expand sessions')} aria-label={copy('展开会话列表', 'Expand sessions')}><LayoutList className="h-[17px] w-[17px]" /></button>
         {settingsButton}
       </div>
 
       <div className="sidebar-expanded-content flex h-full min-h-0 w-full min-w-0 shrink-0 flex-col">
-        <div className="sidebar-header">
-          <button type="button" className="sidebar-mobile-close" onClick={() => setSidebar(false)} aria-label={t('closeSidebar')} title={t('closeSidebar')}><X className="h-5 w-5" /></button>
+        <div className="sidebar-header cx-header">
+          <button type="button" className="sidebar-mobile-close cx-mobile-close" onClick={() => setSidebar(false)} aria-label={t('closeSidebar')} title={t('closeSidebar')}><X className="h-4 w-4" /></button>
+          <button
+            type="button"
+            className={cn('cx-icon-btn', searchOpen && 'is-active')}
+            onClick={openSearch}
+            title={t('searchSessions')}
+            aria-label={t('searchSessions')}
+            aria-pressed={searchOpen}
+          >
+            <Search className="h-4 w-4" />
+          </button>
+          <button type="button" className="cx-icon-btn" onClick={() => void handleNew()} title={t('newChat')} aria-label={t('newChat')}>
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="cx-icon-btn"
+            onClick={() => void handleNewEphemeral()}
+            title={copy('临时会话', 'Temporary chat')}
+            aria-label={copy('临时会话', 'Temporary chat')}
+          >
+            <ShieldOff className="h-4 w-4" />
+          </button>
+          <div className="cx-header-spacer" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="cx-icon-btn" title={copy('分组与排序', 'Group and sort')} aria-label={copy('分组与排序', 'Group and sort')}>
+                <ListFilter className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" mobileTitle={copy('分组与排序', 'Group and sort')} className="w-56">
+              <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('分组方式', 'Group by')}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => changeGroupMode('workspace')}><Folder className="h-3.5 w-3.5" />{copy('按工作区', 'Workspace')}{groupMode === 'workspace' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => changeGroupMode('list')}><LayoutList className="h-3.5 w-3.5" />{copy('单列表', 'Single list')}{groupMode === 'list' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('排序方式', 'Sort by')}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => changeSortMode('manual')}><ListFilter className="h-3.5 w-3.5" />{copy('手动排序', 'Manual')}{sortMode === 'manual' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => changeSortMode('recent')}><Clock3 className="h-3.5 w-3.5" />{copy('最近更新', 'Recently updated')}{sortMode === 'recent' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            type="button"
+            className="cx-icon-btn"
+            onClick={() => void handleCreateWorkspace()}
+            disabled={creatingProject}
+            title={copy('添加工作区', 'Add workspace')}
+            aria-label={copy('添加工作区', 'Add workspace')}
+          >{creatingProject ? <Clock3 className="h-4 w-4 animate-pulse" /> : <FolderPlus className="h-4 w-4" />}</button>
         </div>
 
-        <div className="sidebar-workspace-toolbar">
-          <div className="sidebar-workspace-label"><span>{copy('工作区', 'Workspace')}</span></div>
-          <div className="sidebar-toolbar-actions">
-            <button type="button" className={cn('sidebar-toolbar-button', searchOpen && 'is-active')} onClick={openSearch} title={t('searchSessions')} aria-label={t('searchSessions')}><Search className="h-3.5 w-3.5" /></button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><button type="button" className="sidebar-toolbar-button" title={copy('分组与排序', 'Group and sort')} aria-label={copy('分组与排序', 'Group and sort')}><ListFilter className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" mobileTitle={copy('分组与排序', 'Group and sort')} className="w-56">
-                <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('分组方式', 'Group by')}</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={() => changeGroupMode('workspace')}><Folder className="h-3.5 w-3.5" />{copy('按工作区', 'Workspace')}{groupMode === 'workspace' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => changeGroupMode('list')}><LayoutList className="h-3.5 w-3.5" />{copy('单列表', 'Single list')}{groupMode === 'list' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-[11px] text-muted-foreground">{copy('排序方式', 'Sort by')}</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={() => changeSortMode('manual')}><ListFilter className="h-3.5 w-3.5" />{copy('手动排序', 'Manual')}{sortMode === 'manual' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => changeSortMode('recent')}><Clock3 className="h-3.5 w-3.5" />{copy('最近更新', 'Recently updated')}{sortMode === 'recent' && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <button
-              type="button"
-              className="sidebar-toolbar-button"
-              onClick={() => void handleCreateWorkspace()}
-              disabled={creatingProject}
-              title={copy('添加工作区', 'Add workspace')}
-              aria-label={copy('添加工作区', 'Add workspace')}
-            >{creatingProject ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : <FolderPlus className="h-3.5 w-3.5" />}</button>
+        {searchOpen && (
+          <div className="cx-search">
+            <Search className="h-4 w-4 shrink-0" aria-hidden />
+            <Input
+              ref={searchRef}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t('searchSessions')}
+              className="cx-search-input"
+            />
+            {search && (
+              <button type="button" className="cx-search-clear" onClick={() => setSearch('')} aria-label={copy('清空搜索', 'Clear search')}>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-        </div>
+        )}
 
-        {searchOpen && <div className="sidebar-search-row"><Search className="h-3.5 w-3.5 text-muted-foreground/70" /><Input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchSessions')} className="h-7 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-0" />{search && <button type="button" className="sidebar-search-clear" onClick={() => setSearch('')} aria-label={copy('清空搜索', 'Clear search')}><X className="h-3.5 w-3.5" /></button>}</div>}
-
-        <div className="sidebar-content-scroll">
+        <div className="cx-scroll">
           {groupMode === 'workspace' ? (
-            <div className="sidebar-workspace-list">
+            <div className="cx-groups">
               {search && ordered.length === 0 ? (
-                <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{t('noMatches')}</span></div>
+                <div className="cx-empty"><MessageSquare className="h-5 w-5" /><span>{t('noMatches')}</span></div>
               ) : (
                 <>
                   {projects.map((project) => renderWorkspaceGroup(project.name, project, sessionsForProject(project)))}
                   {unassignedSessions.length > 0 && renderWorkspaceGroup(copy('未分组', 'Unassigned'), null, unassignedSessions)}
-                  {sessions.length === 0 && projects.length === 0 && <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}
+                  {sessions.length === 0 && projects.length === 0 && <div className="cx-empty"><MessageSquare className="h-5 w-5" /><span>{copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}
                 </>
               )}
             </div>
           ) : (
-            <div className="sidebar-list-mode">{ordered.length > 0 ? ordered.map(renderSession) : <div className="sidebar-empty-state"><MessageSquare className="h-5 w-5" /><span>{search ? t('noMatches') : projects.length > 0 ? copy('点击工作区右侧的 + 新建会话', 'Use the + beside a workspace to start a chat') : copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}</div>
+            <div className="cx-list">{ordered.length > 0 ? ordered.map(renderSession) : <div className="cx-empty"><MessageSquare className="h-5 w-5" /><span>{search ? t('noMatches') : projects.length > 0 ? copy('点击工作区右侧的 + 新建会话', 'Use the + beside a workspace to start a chat') : copy('选择工作区或在主区直接开始', 'Choose a workspace or start directly from the main area')}</span></div>}</div>
           )}
         </div>
-        <div className="sidebar-footer-action">
-          <button type="button" className="sidebar-settings-row" onClick={() => setSettingsOpen(true)}>
-            <Settings2 className="h-4 w-4" />
-            <span>{t('settings')}</span>
+
+        <div className="cx-footer">
+          <button type="button" className="cx-footer-row" onClick={() => setSettingsOpen(true)}>
+            <Settings2 className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="truncate">{t('settings')}</span>
+            {updateAvailable && <span className="cx-dot" data-testid="update-available-dot" />}
           </button>
         </div>
       </div>

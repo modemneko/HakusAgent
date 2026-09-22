@@ -1,4 +1,4 @@
-import { Briefcase, Code2, Cpu, Circle, Zap, Ship } from 'lucide-react'
+import { Briefcase, Code2, Cpu, Circle, Zap, Ship, Workflow } from 'lucide-react'
 import { useAppStore, type AgentMode } from '@/store/app'
 import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n'
 const AGENT_MODE_ICONS: Record<AgentMode, typeof Zap> = {
   swift: Briefcase,
   deep: Code2,
+  flow: Workflow,
   fleet: Ship,
 }
 

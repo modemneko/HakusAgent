@@ -33,6 +33,9 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  Eye,
+  SlidersHorizontal,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
@@ -71,6 +74,7 @@ import { useProjectsStore } from '@/store/projects'
 import { useSessionStore } from '@/store/session'
 import { useSettingsStore } from '@/store/settings'
 import { LongRunningTaskVisual } from './LongRunningTaskVisual'
+import { ContextUsageMeter } from './ContextUsageMeter'
 import { useToast } from '@/components/ui/toast'
 import { ProviderLogo } from '@/components/ui/provider-logo'
 import { isProviderConfigured, getHiddenProviders } from '@/lib/providerState'
@@ -205,15 +209,38 @@ const TEXT_EXTENSIONS: Record<string, string> = {
   editorconfig: 'ini',
 }
 
-const PERMISSION_META: Record<
-  PermissionMode,
-  { label: string; hint: string; icon: LucideIcon; tone: string }
+const PERMISSION_META: Partial<
+  Record<PermissionMode, { label: string; hint: string; icon: LucideIcon; tone: string }>
 > = {
+  read_only: {
+    label: '只读',
+    hint: '仅允许读取类工具',
+    icon: Eye,
+    tone: 'text-sky-500',
+  },
   auto: {
     label: '自动',
     hint: 'Run safe tools directly',
     icon: ShieldCheck,
     tone: 'text-emerald-500',
+  },
+  granular: {
+    label: '规则',
+    hint: '按细粒度规则放行',
+    icon: SlidersHorizontal,
+    tone: 'text-violet-500',
+  },
+  guardian: {
+    label: '守卫',
+    hint: '危险操作逐项审批',
+    icon: Sparkles,
+    tone: 'text-amber-500',
+  },
+  full_access: {
+    label: '完全',
+    hint: '跳过所有权限检查',
+    icon: ShieldOff,
+    tone: 'text-red-500',
   },
   ask: {
     label: '询问',
@@ -353,11 +380,17 @@ export function Composer({
   const toast = useToast()
   const { t, locale } = useI18n()
   const copy = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
-  const permissionLabel = (mode: PermissionMode) => mode === 'auto'
-    ? copy('自动', 'Auto')
-    : mode === 'ask'
-      ? copy('询问', 'Ask')
-      : copy('跳过', 'Bypass')
+  const permissionLabel = (mode: PermissionMode) => mode === 'read_only'
+    ? copy('只读', 'Read only')
+    : mode === 'auto'
+      ? copy('自动', 'Auto')
+      : mode === 'granular'
+        ? copy('规则', 'Granular')
+        : mode === 'guardian'
+          ? copy('守卫', 'Guardian')
+          : mode === 'ask'
+            ? copy('询问', 'Ask')
+            : copy('跳过', 'Bypass')
   const reasoningLabel = (effort: string) => effort === 'auto'
     ? copy('自动', 'Auto')
     : getReasoningEffortMeta(effort).label
@@ -391,7 +424,9 @@ export function Composer({
   const [elapsed, setElapsed] = useState(0)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [permission, setPermission] = useState<PermissionMode>('ask')
-  const [availablePermissions, setAvailablePermissions] = useState<PermissionMode[]>(['auto', 'ask', 'bypass'])
+  const [availablePermissions, setAvailablePermissions] = useState<PermissionMode[]>(
+    apiClient.usesEmbeddedRuntime ? ['auto', 'ask', 'bypass'] : ['read_only', 'auto', 'granular', 'guardian', 'full_access'],
+  )
   const [permissionLoading, setPermissionLoading] = useState(false)
   const [switchingProvider, setSwitchingProvider] = useState(false)
   // Model picker (provider → collapsible model list). Models are fetched
@@ -459,7 +494,11 @@ export function Composer({
 
   const currentProvider = useMemo(
     () => {
-      const configured = providers.filter(isProviderConfigured)
+      // 必须与 usableProviders 使用同一套过滤规则：已"删除"的 provider
+      // （内置目录被重置后进入 hidden 列表）即使仍带默认/密钥标记，
+      // 也不能再作为当前模型展示。
+      const hidden = new Set(getHiddenProviders())
+      const configured = providers.filter((p) => !hidden.has(p.id) && isProviderConfigured(p))
       return configured.find((p) => p.is_default) || configured.find((p) => p.id === defaultModel)
     },
     [defaultModel, providers],
@@ -489,6 +528,25 @@ export function Composer({
   const activeReasoningEffort = activeReasoningOptions.includes(storedReasoningEffort)
     ? storedReasoningEffort
     : 'auto'
+
+  // Context-window usage: the latest assistant turn's input tokens against the
+  // selected model's context_window. The ring lives next to the model picker.
+  const selectedModelMeta = useMemo(() => {
+    const modelId = currentProvider?.model_name || model?.model_name
+    const entries = currentProvider ? modelsCache[currentProvider.id] : undefined
+    return entries?.find((entry) => entry.id === modelId)
+  }, [currentProvider, model, modelsCache])
+  const contextWindow = selectedModelMeta?.context_window ?? null
+  const contextUsed = useMemo(() => {
+    const messages = sessionMessages || []
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && typeof m.input_tokens === 'number' && m.input_tokens > 0) {
+        return m.input_tokens
+      }
+    }
+    return 0
+  }, [sessionMessages])
   const goalStatusLabel = goal?.status === 'active'
     ? copy('进行中', 'Active')
     : goal?.status === 'paused'
@@ -509,6 +567,7 @@ export function Composer({
   const currentProviderLabel = currentProvider
     ? `${currentProvider.display_name}/${currentProvider.model_name || currentProvider.display_name}`
     : copy('未配置模型', 'No model configured')
+
   // Only providers the user actually set up (key saved, models chosen, or
   // currently default) belong in the pickers — the raw vendor catalog with
   // its dozens of untouched entries is noise.
@@ -1019,10 +1078,42 @@ export function Composer({
     // only hit the network when the user hasn't configured anything.
     const configured = (provider?.configured_models || []).filter(Boolean)
     if (configured.length > 0) {
-      setModelsCache((prev) => ({
-        ...prev,
-        [providerId]: Array.from(new Set(configured)).map((id) => ({ id, name: id, owned_by: null })),
+      // Show configured models immediately, then enrich with catalog metadata
+      // (context_window, reasoning_options) in the background.
+      const baseModels: ProviderModel[] = Array.from(new Set(configured)).map((id) => ({
+        id,
+        name: id,
+        owned_by: null,
       }))
+      setModelsCache((prev) => ({ ...prev, [providerId]: baseModels }))
+      try {
+        const r = await apiClient.listProviderModels(providerId)
+        if (r.ok && r.models?.length) {
+          const catalogMap = new Map<string, ProviderModel>()
+          for (const m of r.models) catalogMap.set(m.id, m)
+          setModelsCache((prev) => {
+            const existing = prev[providerId]
+            if (!existing) return prev
+            return {
+              ...prev,
+              [providerId]: existing.map((m) => {
+                const catalog = catalogMap.get(m.id)
+                if (!catalog) return m
+                return {
+                  ...m,
+                  context_window: catalog.context_window ?? m.context_window,
+                  reasoning_options: catalog.reasoning_options?.length
+                    ? catalog.reasoning_options
+                    : m.reasoning_options,
+                  supports_reasoning: catalog.supports_reasoning ?? m.supports_reasoning,
+                }
+              }),
+            }
+          })
+        }
+      } catch {
+        // Catalog fetch failed — keep the plain configured models.
+      }
       return
     }
     setModelsLoading(true)
@@ -1160,7 +1251,7 @@ export function Composer({
                 onClick={() => insertMention(item)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
-                  index === mentionIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
+                  index === mentionIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-[var(--cx-ghost-hover)]',
                 )}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1196,7 +1287,7 @@ export function Composer({
               onClick={() => executeSlash(cmd)}
               className={cn(
                 'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors',
-                index === slashIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-foreground/[0.06]',
+                index === slashIndex ? 'bg-foreground/[0.08] text-foreground' : 'hover:bg-[var(--cx-ghost-hover)]',
               )}
             >
               <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1216,13 +1307,14 @@ export function Composer({
 
   return (
     <div className="composer-shell bg-transparent px-4 pb-4 pt-2">
-      <div className="composer-inner mx-auto max-w-4xl">
+      {/* 宽度对齐聊天内容列（--chat-max-width），输入框与正文左右同边。 */}
+      <div className="composer-inner mx-auto w-full max-w-[var(--chat-max-width)]">
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            'composer-box relative flex flex-col gap-1.5 rounded-[22px] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
+            'composer-box relative flex flex-col gap-1.5 rounded-[var(--composer-radius)] border border-border/75 bg-card/95 p-2.5 shadow-lg shadow-black/10 transition-colors',
             conversationState !== 'idle' && 'voice-composer-active',
             !hasExpandedContent && 'p-2',
             dragOver && 'border-primary/50 bg-accent/20 ring-1 ring-primary/25',
@@ -1642,12 +1734,12 @@ export function Composer({
                     {mobileSettingsSection === 'permission' && (
                       <div className="mobile-settings-list">
                         {availablePermissions.map((mode) => {
-                          const meta = PERMISSION_META[mode]
+                          const meta = PERMISSION_META[mode] ?? PERMISSION_META.ask!
                           const Icon = meta.icon
                           return (
                             <button type="button" key={mode} className="mobile-settings-row" disabled={permissionLoading} onClick={() => { setMobileSettingsOpen(false); void handlePermissionSwitch(mode) }}>
                               <Icon className={cn('mobile-settings-row-icon', meta.tone)} />
-                            <span className="mobile-settings-row-copy"><strong>{permissionLabel(mode)}</strong><small>{locale === 'zh-CN' ? meta.hint : (mode === 'auto' ? 'Run safe tools directly' : mode === 'ask' ? 'Confirm before risky actions' : 'Skip permission checks')}</small></span>
+                            <span className="mobile-settings-row-copy"><strong>{permissionLabel(mode)}</strong><small>{locale === 'zh-CN' ? meta.hint : permissionLabel(mode) + ' mode'}</small></span>
                               {permission === mode ? <Check className="mobile-settings-row-check" /> : <ChevronRight className="mobile-settings-row-chevron" />}
                             </button>
                           )
@@ -1665,7 +1757,7 @@ export function Composer({
                   disabled={isStreaming && !goal}
                   aria-pressed={longRunningArmed}
                   className={cn(
-                    'composer-edge-trigger hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                    'composer-edge-trigger hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-[var(--cx-ghost-hover)] md:inline-flex',
                     (goalHasControls || longRunningArmed) && 'border-primary/20 bg-primary/[0.06]',
                     isStreaming && !goal && 'cursor-not-allowed opacity-60',
                   )}
@@ -1691,9 +1783,9 @@ export function Composer({
                     </div>
                   )}
                   <div className="flex flex-wrap justify-end gap-2">
-                    {goal?.status === 'active' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('pause') } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-foreground/[0.06] disabled:opacity-50">暂停</button>}
+                    {goal?.status === 'active' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('pause') } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-[var(--cx-ghost-hover)] disabled:opacity-50">暂停</button>}
                     {(goal?.status === 'paused' || goal?.status === 'blocked') && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('resume'); setGoalDialogOpen(false) } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50">继续</button>}
-                    {goal && goal.status !== 'complete' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('complete'); setGoalDialogOpen(false) } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-foreground/[0.06] disabled:opacity-50">标记完成</button>}
+                    {goal && goal.status !== 'complete' && <button type="button" disabled={goalActionLoading || !onGoalAction} onClick={async () => { if (!onGoalAction) return; setGoalActionLoading(true); try { await onGoalAction('complete'); setGoalDialogOpen(false) } finally { setGoalActionLoading(false) } }} className="inline-flex h-8 items-center rounded-lg border border-border/70 px-3 text-xs font-medium hover:bg-[var(--cx-ghost-hover)] disabled:opacity-50">标记完成</button>}
                   </div>
                 </DialogContent>
               </Dialog>
@@ -1710,7 +1802,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'composer-edge-trigger composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'composer-edge-trigger composer-project-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-[var(--cx-ghost-hover)] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={activeProject ? displayPath(activeProject.path) : copy('不在项目中工作', 'No project')}
@@ -1770,7 +1862,7 @@ export function Composer({
                               setActiveProject(p.id)
                             }}
                             className={cn(
-                              'group relative flex cursor-pointer items-center gap-2 rounded-lg py-2 pl-2 pr-8 text-sm outline-none transition-colors hover:bg-foreground/[0.06] focus:bg-foreground/[0.06]',
+                              'group relative flex cursor-pointer items-center gap-2 rounded-lg py-2 pl-2 pr-8 text-sm outline-none transition-colors hover:bg-[var(--cx-ghost-hover)] focus:bg-[var(--cx-ghost-hover)]',
                               isActive && 'bg-foreground/[0.04]',
                             )}
                           >
@@ -1881,7 +1973,7 @@ export function Composer({
                     type="button"
                     disabled={providersLoading || switchingProvider || isStreaming || usableProviders.length === 0}
                     className={cn(
-                      'composer-edge-trigger composer-model-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'composer-edge-trigger composer-model-trigger hidden h-8 max-w-[220px] items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-[var(--cx-ghost-hover)] md:inline-flex',
                       (providersLoading || switchingProvider || isStreaming) && 'cursor-not-allowed opacity-60',
                     )}
                     title={copy('选择模型', 'Choose model')}
@@ -1917,7 +2009,7 @@ export function Composer({
                           onClick={() => void toggleProviderModels(provider.id)}
                           aria-current={isCurrent ? 'true' : undefined}
                           className={cn(
-                            'flex w-full items-start gap-2 rounded-lg border border-transparent px-2 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.06]',
+                            'flex w-full items-start gap-2 rounded-lg border border-transparent px-2 py-2 text-left text-sm transition-colors hover:bg-[var(--cx-ghost-hover)]',
                             isCurrent && 'border-primary/15 bg-primary/[0.06]',
                             isExpanded && !isCurrent && 'bg-foreground/[0.04]',
                           )}
@@ -1956,7 +2048,7 @@ export function Composer({
                                     type="button"
                                     onClick={() => void handleModelSelect(provider, m.id)}
                                     className={cn(
-                                      'flex w-full items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-left text-xs transition-colors hover:bg-foreground/[0.06]',
+                                      'flex w-full items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-left text-xs transition-colors hover:bg-[var(--cx-ghost-hover)]',
                                       isSelected && 'bg-primary/[0.06] text-foreground',
                                     )}
                                     aria-current={isSelected ? 'true' : undefined}
@@ -1980,6 +2072,14 @@ export function Composer({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              {/* Context-window usage ring — sits right of the model picker. */}
+              <ContextUsageMeter
+                used={contextUsed}
+                total={contextWindow}
+                messages={sessionMessages || []}
+              />
+
               </div>
 
               {/* Reasoning effort — independent dropdown. Three levels:
@@ -1991,7 +2091,7 @@ export function Composer({
                     type="button"
                     disabled={isStreaming}
                     className={cn(
-                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-[var(--cx-ghost-hover)] md:inline-flex',
                       isStreaming && 'cursor-not-allowed opacity-60',
                     )}
                     title={copy('思考强度', 'Reasoning')}
@@ -2026,7 +2126,7 @@ export function Composer({
                     type="button"
                     disabled={permissionLoading}
                     className={cn(
-                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-foreground/[0.06] md:inline-flex',
+                      'hidden h-8 items-center gap-1.5 rounded-xl border border-border/70 bg-background/80 px-2 text-xs font-medium transition-colors hover:bg-[var(--cx-ghost-hover)] md:inline-flex',
                       permissionLoading && 'cursor-not-allowed opacity-60',
                     )}
                     title="Permission mode"
@@ -2042,7 +2142,7 @@ export function Composer({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" mobileTitle={copy('权限模式', 'Permission mode')} className="w-[200px]">
                   {availablePermissions.map((mode) => {
-                    const meta = PERMISSION_META[mode]
+                    const meta = PERMISSION_META[mode] ?? PERMISSION_META.ask!
                     const Icon = meta.icon
                     const active = mode === permission
                     return (

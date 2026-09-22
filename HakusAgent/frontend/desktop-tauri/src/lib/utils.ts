@@ -54,16 +54,29 @@ export function displayPath(path: string): string {
   return out
 }
 
-/** Copy text to clipboard with fallback for older browsers / Electron */
+/** Copy text to clipboard with Tauri OS bridge + WebView fallbacks */
 export async function copyToClipboard(text: string): Promise<boolean> {
+  // 1) Tauri desktop: OS clipboard is reliable; WebView navigator.clipboard
+  //    is often blocked because the page is not a secure context.
+  try {
+    if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('copy_text', { text })
+      return true
+    }
+  } catch {
+    // fall through
+  }
+  // 2) Secure-context Clipboard API
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
       return true
     }
   } catch {
-    // fall through to legacy method
+    // fall through
   }
+  // 3) Legacy execCommand
   try {
     const ta = document.createElement('textarea')
     ta.value = text

@@ -28,7 +28,11 @@ Concurrency:
 Schema versioning:
   - ``schema_version`` row in ``meta`` table. Future migrations add
     ``ALTER TABLE`` / ``CREATE INDEX`` blocks below the version check.
-  - Current version: 1.
+  - Current version: 2.
+    v2 (Codex-inspired refactor):
+      - sessions: + parent_id (thread tree), origin (user|agent|fork|automation)
+      - events: append-only timeline ledger (id, session_id, seq, type, ...)
+      - automations / automation_runs: scheduled agent tasks
 """
 from __future__ import annotations
 
@@ -64,7 +68,7 @@ _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _schema_sql() -> str:
@@ -80,6 +84,8 @@ def _schema_sql() -> str:
         remote_session_id TEXT,
         provider          TEXT,
         pinned            INTEGER NOT NULL DEFAULT 0,
+        parent_id         TEXT,
+        origin            TEXT NOT NULL DEFAULT 'user',
         created_at        INTEGER NOT NULL,
         updated_at        INTEGER NOT NULL
     );
@@ -104,6 +110,46 @@ def _schema_sql() -> str:
         ON messages(session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated
         ON sessions(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_parent
+        ON sessions(parent_id);
+
+    CREATE TABLE IF NOT EXISTS events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT NOT NULL,
+        seq          INTEGER NOT NULL,
+        type         TEXT NOT NULL,
+        payload_json TEXT,
+        turn_id      TEXT,
+        created_at   INTEGER NOT NULL,
+        UNIQUE (session_id, seq),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_session
+        ON events(session_id, seq);
+
+    CREATE TABLE IF NOT EXISTS automations (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        schedule    TEXT NOT NULL,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        prompt      TEXT NOT NULL,
+        session_id  TEXT,
+        created_at  INTEGER NOT NULL,
+        next_run_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS automation_runs (
+        id            TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'running',
+        session_id    TEXT,
+        error         TEXT,
+        started_at    INTEGER NOT NULL,
+        finished_at   INTEGER,
+        FOREIGN KEY (automation_id) REFERENCES automations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_automation
+        ON automation_runs(automation_id, started_at DESC);
     """
 
 
@@ -132,6 +178,25 @@ def _get_conn() -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA synchronous=NORMAL;")  # WAL + NORMAL is safe & fast
 
+        # Pre-migration: if a legacy sessions table exists (v1), add the
+        # v2 columns BEFORE running _schema_sql() — the script creates
+        # idx_sessions_parent ON sessions(parent_id), which would fail on
+        # a table that lacks the column.
+        legacy = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+        ).fetchone()
+        if legacy:
+            existing_cols = {
+                r["name"] for r in conn.execute("PRAGMA table_info(sessions)")
+            }
+            if "parent_id" not in existing_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
+            if "origin" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN origin TEXT"
+                    " NOT NULL DEFAULT 'user'"
+                )
+
         conn.executescript(_schema_sql())
 
         # Record schema version (idempotent — INSERT OR IGNORE)
@@ -145,7 +210,23 @@ def _get_conn() -> sqlite3.Connection:
         current = int(row["value"]) if row else 0
 
         if current < SCHEMA_VERSION:
-            # Future: run migration blocks here.
+            # v1 -> v2: add thread-tree columns to existing sessions table
+            if current < 2:
+                existing_cols = {
+                    r["name"]
+                    for r in conn.execute(
+                        "PRAGMA table_info(sessions)"
+                    ).fetchall()
+                }
+                if "parent_id" not in existing_cols:
+                    conn.execute(
+                        "ALTER TABLE sessions ADD COLUMN parent_id TEXT"
+                    )
+                if "origin" not in existing_cols:
+                    conn.execute(
+                        "ALTER TABLE sessions ADD COLUMN origin TEXT"
+                        " NOT NULL DEFAULT 'user'"
+                    )
             conn.execute(
                 "UPDATE meta SET value=? WHERE key=?",
                 (str(SCHEMA_VERSION), "schema_version"),
@@ -171,6 +252,8 @@ def _row_to_session(row: sqlite3.Row) -> Dict[str, Any]:
         "remote_session_id": row["remote_session_id"],
         "provider": row["provider"],
         "pinned": bool(row["pinned"]),
+        "parent_id": row["parent_id"],
+        "origin": row["origin"] if "origin" in row.keys() else "user",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -203,6 +286,8 @@ def create_session(
     pinned: bool = False,
     created_at: Optional[int] = None,
     updated_at: Optional[int] = None,
+    parent_id: Optional[str] = None,
+    origin: str = "user",
 ) -> Dict[str, Any]:
     """Insert a new session row. Idempotent on id (raises if collision)."""
     import time as _time
@@ -212,8 +297,9 @@ def create_session(
         conn.execute(
             """
             INSERT INTO sessions
-                (id, title, remote_session_id, provider, pinned, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, title, remote_session_id, provider, pinned,
+                 parent_id, origin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -221,6 +307,8 @@ def create_session(
                 remote_session_id,
                 provider,
                 1 if pinned else 0,
+                parent_id,
+                origin,
                 created_at if created_at is not None else now,
                 updated_at if updated_at is not None else now,
             ),
@@ -302,13 +390,59 @@ def _row_to_message(row: sqlite3.Row) -> Dict[str, Any]:
 
 
 def list_messages(session_id: str) -> List[Dict[str, Any]]:
+    """Visible messages for a session (projection over the messages table).
+
+    The timeline ledger is append-only: rewind/clear append a
+    ``truncation`` event instead of physically deleting rows, and this
+    projection excludes every message id listed in a truncation event.
+    Return shape is unchanged."""
+    hidden = _hidden_message_ids(session_id)
     conn = _get_conn()
     with _lock:
         rows = conn.execute(
             "SELECT * FROM messages WHERE session_id=? ORDER BY created_at ASC",
             (session_id,),
         ).fetchall()
-    return [_row_to_message(r) for r in rows]
+    return [_row_to_message(r) for r in rows if r["id"] not in hidden]
+
+
+def _hidden_message_ids(session_id: str) -> set:
+    """Union of deleted_ids across all truncation events of a session."""
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT payload_json FROM events WHERE session_id=? AND type='truncation'",
+            (session_id,),
+        ).fetchall()
+    hidden: set = set()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+        except (ValueError, TypeError):
+            continue
+        for mid in payload.get("deleted_ids") or []:
+            hidden.add(mid)
+    return hidden
+
+
+def append_truncation(
+    session_id: str,
+    *,
+    deleted_ids: Optional[List[str]] = None,
+    cutoff_ts: Optional[int] = None,
+    reason: str = "rewind",
+) -> Dict[str, Any]:
+    """Record a truncation marker in the ledger (Codex rewind style).
+
+    Does NOT delete anything — :func:`list_messages` projects over
+    ``deleted_ids`` instead, so the ledger stays append-only and rewind
+    remains reversible in principle. ``cutoff_ts`` is kept for
+    informational purposes only."""
+    return append_event(
+        session_id,
+        "truncation",
+        {"cutoff_ts": cutoff_ts, "deleted_ids": deleted_ids or [], "reason": reason},
+    )
 
 
 def add_message(
@@ -363,6 +497,16 @@ def add_message(
         row = conn.execute(
             "SELECT * FROM messages WHERE id=?", (message_id,)
         ).fetchone()
+    # Timeline ledger: record the message addition (append-only).
+    try:
+        append_event(
+            session_id,
+            "message.added",
+            {"id": message_id, "role": role, "content_chars": len(content or "")},
+            created_at=created_at if created_at is not None else now,
+        )
+    except Exception:
+        pass  # ledger is best-effort; the message row is authoritative
     return _row_to_message(row)
 
 
@@ -427,6 +571,28 @@ def update_message(
         row = conn.execute(
             "SELECT * FROM messages WHERE id=?", (message_id,)
         ).fetchone()
+    if row:
+        # Timeline ledger: record which fields were mutated (append-only).
+        try:
+            changed = {
+                k: True for k, v in
+                {
+                    "content": content is not None,
+                    "reasoning": reasoning is not None,
+                    "tool_calls": tool_calls is not None,
+                    "input_tokens": input_tokens is not None,
+                    "output_tokens": output_tokens is not None,
+                    "error": error is not None,
+                    "streaming": streaming is not None,
+                }.items() if v
+            }
+            append_event(
+                row["session_id"],
+                "message.updated",
+                {"id": message_id, "changed": list(changed.keys())},
+            )
+        except Exception:
+            pass  # ledger is best-effort
     return _row_to_message(row) if row else None
 
 
@@ -438,22 +604,27 @@ def delete_message(message_id: str) -> bool:
 
 
 def clear_session_messages(session_id: str) -> int:
-    """Delete all messages belonging to a session, keep the session row.
-    Returns number of messages deleted. Used by the TopBar 'clear conversation'
+    """Hide all messages belonging to a session via a truncation event
+    (append-only ledger — rows are NOT physically deleted). Returns the
+    number of messages now hidden. Used by the TopBar 'clear conversation'
     button — user wants to start fresh in the same session without deleting it."""
-    conn = _get_conn()
     import time as _time
+    now = int(_time.time() * 1000)
+    visible = list_messages(session_id)  # projection before truncation
+    append_truncation(
+        session_id,
+        deleted_ids=[m["id"] for m in visible],
+        cutoff_ts=now,
+        reason="clear",
+    )
+    conn = _get_conn()
     with _lock:
-        cur = conn.execute(
-            "DELETE FROM messages WHERE session_id=?", (session_id,)
-        )
-        n = cur.rowcount
         # Bump session.updated_at so it floats to the top of the sidebar
         conn.execute(
             "UPDATE sessions SET updated_at=? WHERE id=?",
-            (int(_time.time() * 1000), session_id),
+            (now, session_id),
         )
-    return n
+    return len(visible)
 
 
 # ============================================================================
@@ -481,8 +652,8 @@ def bulk_import(
                     """
                     INSERT OR REPLACE INTO sessions
                         (id, title, remote_session_id, provider, pinned,
-                         created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                         parent_id, origin, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         s["id"],
@@ -490,6 +661,8 @@ def bulk_import(
                         s.get("remote_session_id"),
                         s.get("provider"),
                         1 if s.get("pinned") else 0,
+                        s.get("parent_id"),
+                        s.get("origin", "user"),
                         s.get("created_at"),
                         s.get("updated_at"),
                     ),
@@ -578,3 +751,282 @@ def export_all() -> Dict[str, Any]:
         "sessions": sessions,
         "messages": messages,
     }
+
+
+# ============================================================================
+# Events — append-only timeline ledger (Codex thread_timeline_ledger style)
+# ============================================================================
+
+
+def append_event(
+    session_id: str,
+    type: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    turn_id: Optional[str] = None,
+    created_at: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Append one event to the session's timeline ledger.
+
+    Events are append-only: nothing ever mutates or deletes a row here
+    (rewind appends a ``truncation`` marker instead — see P5). The seq is
+    per-session monotonically increasing.
+    """
+    import time as _time
+    now = int(_time.time() * 1000)
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT MAX(seq) AS m FROM events WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        seq = (row["m"] or 0) + 1
+        conn.execute(
+            """
+            INSERT INTO events
+                (session_id, seq, type, payload_json, turn_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                seq,
+                type,
+                json.dumps(payload) if payload else None,
+                turn_id,
+                created_at if created_at is not None else now,
+            ),
+        )
+    return {
+        "session_id": session_id,
+        "seq": seq,
+        "type": type,
+        "payload": payload,
+        "turn_id": turn_id,
+        "created_at": created_at if created_at is not None else now,
+    }
+
+
+def list_events(session_id: str, after_seq: int = 0) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE session_id=? AND seq>? ORDER BY seq ASC",
+            (session_id, after_seq),
+        ).fetchall()
+    return [
+        {
+            "session_id": r["session_id"],
+            "seq": r["seq"],
+            "type": r["type"],
+            "payload": json.loads(r["payload_json"]) if r["payload_json"] else None,
+            "turn_id": r["turn_id"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+# ============================================================================
+# Automations — scheduled agent tasks (Codex automations style)
+# ============================================================================
+
+
+def _row_to_automation(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "schedule": row["schedule"],
+        "enabled": bool(row["enabled"]),
+        "prompt": row["prompt"],
+        "session_id": row["session_id"],
+        "created_at": row["created_at"],
+        "next_run_at": row["next_run_at"],
+    }
+
+
+def list_automations() -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM automations ORDER BY created_at ASC"
+        ).fetchall()
+    return [_row_to_automation(r) for r in rows]
+
+
+def get_automation(automation_id: str) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT * FROM automations WHERE id=?", (automation_id,)
+        ).fetchone()
+    return _row_to_automation(row) if row else None
+
+
+def create_automation(
+    automation_id: str,
+    name: str,
+    schedule: str,
+    prompt: str,
+    *,
+    session_id: Optional[str] = None,
+    enabled: bool = True,
+    next_run_at: Optional[int] = None,
+    created_at: Optional[int] = None,
+) -> Dict[str, Any]:
+    import time as _time
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            """
+            INSERT INTO automations
+                (id, name, schedule, enabled, prompt, session_id,
+                 created_at, next_run_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                automation_id,
+                name,
+                schedule,
+                1 if enabled else 0,
+                prompt,
+                session_id,
+                created_at if created_at is not None else int(_time.time() * 1000),
+                next_run_at,
+            ),
+        )
+    result = get_automation(automation_id)
+    assert result is not None, "just inserted"
+    return result
+
+
+def update_automation(
+    automation_id: str,
+    *,
+    name: Optional[str] = None,
+    schedule: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    prompt: Optional[str] = None,
+    session_id: Optional[str] = None,
+    next_run_at: Optional[int] = None,
+    clear_next_run: bool = False,
+) -> Optional[Dict[str, Any]]:
+    sets: List[str] = []
+    args: List[Any] = []
+    if name is not None:
+        sets.append("name=?")
+        args.append(name)
+    if schedule is not None:
+        sets.append("schedule=?")
+        args.append(schedule)
+    if enabled is not None:
+        sets.append("enabled=?")
+        args.append(1 if enabled else 0)
+    if prompt is not None:
+        sets.append("prompt=?")
+        args.append(prompt)
+    if session_id is not None:
+        sets.append("session_id=?")
+        args.append(session_id)
+    if next_run_at is not None or clear_next_run:
+        sets.append("next_run_at=?")
+        args.append(None if clear_next_run else next_run_at)
+    if not sets:
+        return get_automation(automation_id)
+    args.append(automation_id)
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            f"UPDATE automations SET {', '.join(sets)} WHERE id=?", tuple(args)
+        )
+    return get_automation(automation_id)
+
+
+def delete_automation(automation_id: str) -> bool:
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM automations WHERE id=?", (automation_id,))
+        return cur.rowcount > 0
+
+
+def due_automations(now_ms: int) -> List[Dict[str, Any]]:
+    """Automations that are enabled and whose next_run_at has passed."""
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL"
+            " AND next_run_at<=? ORDER BY next_run_at ASC",
+            (now_ms,),
+        ).fetchall()
+    return [_row_to_automation(r) for r in rows]
+
+
+def create_automation_run(
+    run_id: str,
+    automation_id: str,
+    *,
+    session_id: Optional[str] = None,
+    started_at: Optional[int] = None,
+) -> Dict[str, Any]:
+    import time as _time
+    now = int(_time.time() * 1000)
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            """
+            INSERT INTO automation_runs
+                (id, automation_id, status, session_id, started_at)
+            VALUES (?, ?, 'running', ?, ?)
+            """,
+            (
+                run_id,
+                automation_id,
+                session_id,
+                started_at if started_at is not None else now,
+            ),
+        )
+    return {
+        "id": run_id,
+        "automation_id": automation_id,
+        "status": "running",
+        "session_id": session_id,
+        "error": None,
+        "started_at": now,
+        "finished_at": None,
+    }
+
+
+def finish_automation_run(
+    run_id: str,
+    *,
+    status: str = "completed",
+    error: Optional[str] = None,
+) -> None:
+    import time as _time
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE automation_runs SET status=?, error=?, finished_at=? WHERE id=?",
+            (status, error, int(_time.time() * 1000), run_id),
+        )
+
+
+def list_automation_runs(automation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM automation_runs WHERE automation_id=?"
+            " ORDER BY started_at DESC LIMIT ?",
+            (automation_id, limit),
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "automation_id": r["automation_id"],
+            "status": r["status"],
+            "session_id": r["session_id"],
+            "error": r["error"],
+            "started_at": r["started_at"],
+            "finished_at": r["finished_at"],
+        }
+        for r in rows
+    ]

@@ -14,7 +14,17 @@ interface ModelInfo {
 }
 
 export type { AgentMode }
-export type RightPanelTab = 'review' | 'terminal' | 'logs' | 'session_log' | 'artifact'
+export type RightPanelTab =
+  | 'review'
+  | 'usage'
+  | 'goal'
+  | 'worktree'
+  | 'files'
+  | 'flow'
+  | 'session_log'
+  | 'terminal'
+  | 'logs'
+  | 'artifact'
 export type SettingsCategory =
   | 'general'
   | 'character'
@@ -22,6 +32,7 @@ export type SettingsCategory =
   | 'models'
   | 'workspace-data'
   | 'tools'
+  | 'automations'
   | 'skills'
   | 'mcp'
   | 'wechat'
@@ -156,7 +167,7 @@ function readAgentMode(): AgentMode {
   try {
     const raw = localStorage.getItem(AGENT_MODE_KEY) as AgentMode | null
     // 'fleet' is retired from the UI; normalize legacy persisted value.
-    if (raw === 'swift' || raw === 'deep') return raw
+    if (raw === 'swift' || raw === 'deep' || raw === 'flow') return raw
     return 'swift'
   } catch {
     return 'swift'

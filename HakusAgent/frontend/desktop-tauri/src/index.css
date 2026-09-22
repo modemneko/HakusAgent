@@ -83,7 +83,8 @@
        anchor below THIS value so panels can never cover the window
        controls. */
     --titlebar-total: calc(3.25rem + env(safe-area-inset-top));
-    --sidebar-width: 16rem;
+    /* Codex 桌面版侧栏默认宽 275px（解码 TW(): clamp(240, win-240, 520)，默认 275） */
+    --sidebar-width: 17.1875rem;
     --sidebar-compact-width: 4.25rem;
     --right-panel-width: 26.25rem;
     --statusbar-height: 1.625rem;
@@ -103,40 +104,76 @@
     --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.04);
     --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.12);
+
+    /* ===== 解码资产布局 token（亮/暗共用）=====
+     * --thread-content-max-width: 40rem（app-initial CSS 原文）
+     * --chat-max-width: 800px / --composer-radius: var(--radius-4xl)=1.5rem
+     * --composer-gutter: calc(var(--spacing)*3)=0.75rem
+     * --codex-chat-font-size: 13px；行高 = 字号+8px
+     */
+    --thread-content-max-width: 40rem;
+    --chat-max-width: 800px;
+    --thread-gutter: 1rem;
+    /* 聊天内容的左右呼吸距离：用户与助手内容都不贴窗口边缘。timeline
+       与 composer 共用同一个 gutter，保证内容垂直对齐。 */
+    --chat-inline-padding: 1.5rem;
+    --composer-gutter: 0.75rem;
+    --composer-radius: 1.5rem;
+    --codex-chat-font-size: 13px;
   }
 
   .dark {
-    /* ===== 暗色 ===== */
-    --background: 240 5% 10%;
-    --foreground: 220 10% 96%;
-    --card: 240 4% 14%;
-    --card-foreground: 0 0% 96%;
-    --popover: 240 4% 13%;
-    --popover-foreground: 0 0% 96%;
-    --primary: 200 28% 60%;
+    /* ===== 暗色（对齐 ChatGPT/Codex 桌面版解码资产） =====
+     * 资产精确值（PUIK [data-theme=dark] + Codex shell xU.dark）：
+     *   surface #000000 / surface-secondary #181818 / surface #212121
+     *   surface-elevated #303030 / surface-elevated-secondary #414141
+     *   text #dcdcdc~#ededed / text-secondary #afafaf / text-tertiary #8f8f8f
+     *   border = white 10% / subtle white 5% / strong white 15%
+     *   user-message bg = --alpha-08（文字色 8%）→ 气泡实测 bg-text/5
+     *   accent #3a83f7 (chatgpt) / link #7ab7ff
+     */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 93%;
+    --card: 0 0% 13%;
+    --card-foreground: 0 0% 93%;
+    --popover: 0 0% 19%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 217 92% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 12% 16%;
-    --secondary-foreground: 0 0% 96%;
-    --muted: 220 12% 16%;
-    --muted-foreground: 220 8% 66%;
-    --accent: 220 14% 20%;
-    --accent-foreground: 0 0% 96%;
-    --destructive: 4 60% 58%;
+    --secondary: 0 0% 9%;
+    --secondary-foreground: 0 0% 93%;
+    --muted: 0 0% 9%;
+    --muted-foreground: 0 0% 69%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 93%;
+    --destructive: 2 94% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 10% 28%;
-    --input: 220 10% 34%;
-    --ring: 200 28% 60%;
+    --border: 0 0% 20%;
+    --input: 0 0% 25%;
+    --ring: 217 92% 60%;
 
     /* 语义色（暗色） */
-    --success: 152 25% 58%;
+    --success: 152 51% 52%;
     --warning: 41 30% 55%;
     --info: 205 70% 60%;
 
-    /* Diff 语义色（暗色） */
-    --diff-added: 137 38% 58%;
-    --diff-removed: 4 64% 60%;
+    /* Diff 语义色（暗色）— 解码资产 semanticColors：
+       diffAdded #40c977 / diffRemoved #fa423e */
+    --diff-added: 145 51% 52%;
+    --diff-removed: 2 94% 60%;
     --diff-added-bg: 137 38% 14%;
     --diff-removed-bg: 4 64% 16%;
+
+    /* ===== 解码资产布局 token（thread-scroll-layout / composer）===== */
+    --thread-content-max-width: 40rem;
+    --chat-max-width: 800px;
+    --thread-gutter: 1rem;
+    --chat-inline-padding: 1.5rem;
+    --composer-gutter: 0.75rem;
+    --composer-radius: 1.5rem;
+    --codex-chat-font-size: 13px;
+    --surface-elevated: 0 0% 19%;
+    --link-color: 213 100% 74%;
 
     --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.28);
     --shadow-md: 0 6px 14px rgba(0, 0, 0, 0.34), 0 1px 2px rgba(0, 0, 0, 0.22);
@@ -455,7 +492,7 @@
 
 @media (min-width: 768px) and (max-width: 1199px) {
   :root {
-    --sidebar-width: min(16rem, 29vw);
+    --sidebar-width: min(17.1875rem, 34vw);
   }
 
   .topbar-leading {
@@ -546,22 +583,30 @@
     min-width: 0;
   }
 
+  /* 窄屏收窄呼吸距离，保留足够的正文宽度。 */
+  :root {
+    --chat-inline-padding: 1rem;
+  }
+
   .chat-timeline {
     width: 100%;
     padding-top: 0.75rem;
     padding-bottom: 0.75rem;
+    /* Codex 桌面端解码值：正文字号 13px、行高 = 字号 + 8px */
+    font-size: var(--codex-chat-font-size);
+    line-height: calc(var(--codex-chat-font-size) + 8px);
   }
 
   .chat-message,
   .chat-tool-call {
     gap: 0.5rem;
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
+    padding-right: var(--chat-inline-padding) !important;
+    padding-left: var(--chat-inline-padding) !important;
   }
 
   .chat-message-body,
   .chat-tool-call-body {
-    max-width: calc(100% - 2.5rem) !important;
+    max-width: 100% !important;
   }
 
   .empty-state-hero {
@@ -1017,6 +1062,8 @@
 /* Markdown rendering styles */
 .markdown-body {
   @apply text-sm leading-6;
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: break-word;
   word-break: break-word;
 }
@@ -1063,6 +1110,16 @@
 }
 .markdown-body pre code {
   @apply text-[0.9em];
+}
+
+/* Tool results are machine-generated strings. Keep their own scroll surface
+   bounded by the chat column so long JSON keys cannot widen the conversation. */
+.tool-log-pre {
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .markdown-body table {
   @apply w-full border-collapse my-4;
@@ -1920,6 +1977,7 @@
   --input: 240 5% 76%;
   --ring: 211 100% 50%;
   --radius: 0.875rem;
+  --flow-grid: 220 9% 30%;
   --ios-separator: hsl(240 5% 50% / 0.22);
   --ios-material: hsl(0 0% 100% / 0.72);
   --ios-grouped: hsl(240 8% 95% / 0.78);
@@ -1943,6 +2001,7 @@
   --border: 240 5% 26%;
   --input: 240 5% 32%;
   --ring: 211 100% 65%;
+  --flow-grid: 220 9% 42%;
   --ios-separator: hsl(0 0% 100% / 0.16);
   --ios-material: hsl(240 6% 13% / 0.74);
   --ios-grouped: hsl(240 6% 10% / 0.82);
@@ -2150,13 +2209,25 @@ select:focus {
   padding-block: 0.75rem;
 }
 
+/* 聊天内容两侧的呼吸距离：用户消息、助手回复、工具调用统一 inset，
+   都不贴窗口边缘。覆盖组件里硬编码的 px-5（工具类优先级低于此处，
+   但需要 !important 才能压制 Tailwind 的 px-5）。窄屏在下方 media
+   query 里收窄，保证小窗口仍有足够正文宽度。 */
+.chat-message,
+.chat-tool-call {
+  padding-right: var(--chat-inline-padding) !important;
+  padding-left: var(--chat-inline-padding) !important;
+}
+
 .chat-message-body > .selectable {
   border-radius: 1.25rem !important;
 }
 
+/* 用户消息气泡：参考 ChatGPT 桌面端样式 —— 右对齐半透明中性气泡
+   （rounded-2xl + 前景色 6% 透明度），不再是主色实底气泡。 */
 [data-role="user"] .chat-message-body > .selectable {
-  border-color: hsl(var(--primary) / 0.34) !important;
-  background: hsl(var(--primary) / 0.18) !important;
+  border-color: transparent !important;
+  background: hsl(var(--foreground) / 0.06) !important;
   color: hsl(var(--foreground)) !important;
   box-shadow: none !important;
 }
@@ -2267,6 +2338,23 @@ select:focus {
 .right-panel .border-b,
 .right-panel .border-t {
   border-color: var(--ios-separator) !important;
+}
+
+/* Chat rows participate in nested flex layouts. Explicitly resetting their
+   automatic minimum width prevents a long tool name/result from widening the
+   outer message scroller and producing a second horizontal scrollbar. */
+.chat-timeline,
+.chat-message,
+.chat-tool-call,
+.chat-message-body,
+.chat-tool-call-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-tool-call-body,
+.chat-message-body > .selectable {
+  overflow-wrap: anywhere;
 }
 
 /* Settings and other configuration pages use inset grouped cards. */
@@ -5229,4 +5317,2607 @@ body > [data-radix-popper-content-wrapper] {
   .settings-actions button {
     flex: 0 0 auto;
   }
+}
+
+/* ========================================================================
+ * Codex / ChatGPT 桌面版 1:1 — 左侧栏 & 顶栏
+ *
+ * 解码规格来源（ChatGPT_App_decoded/renderer）：
+ *   app-primary-ae4eb3f3f10a.css.pretty.js
+ *     _Navigation_1ej6d_2     → flex-direction:column; flex:1; min-height:0;
+ *                               --color-text = 背景 85% 透明混合
+ *     _headerFadeMask_1akal_1 → 滚动上下渐隐 mask：
+ *         header 距离 = --spacing*2 (8px)
+ *         footer 距离 = --spacing*10 (40px)，stop:
+ *         black(edge-40px) → #000000e0(edge-24px) → #00000085(edge-12px)
+ *           → #0000002e(edge-4px) → transparent(edge)，mask-size 100% 100%
+ *     _stickySectionHeaders_1akal_48 → header 距离 = --spacing/2，分组标题吸顶
+ *   app-initial-4d5df9210cbc.css.pretty.js
+ *     _Layout_xmgnx_2 / _MainContentLeftBorder_xmgnx_2 → 主区 1px 左边框
+ *   app-initial-9aa16c63159e.js.pretty.js（app shell）
+ *     侧栏宽度 TW(e,t)=max(240, min(e,520,t-240))，defaultSize 275px
+ *     断点 (min-width:768px)，之下 sidebar 宽 0 且 display:none
+ *   app-primary-428fc28bff81.js.pretty.js（组件）
+ *     分组标题：group/nav-section-title → browser:h-9 browser:ps-2.5，
+ *       text = text-base font-medium text-tertiary opacity-75 leading-4.5
+ *     行：h-[var(--height-token-row)] items-center sidebar-item
+ *       hover:bg-primary-ghost-hover，radius = --radius-token-row（侧栏内 10px）
+ *     激活项：rounded-[10px] bg-surface-secondary/40 ring-1 ring-inset ring-border
+ *     滚动容器：vertical-scroll-fade-mask … gap-4 [--radius-token-row:10px]
+ *       [contain:layout_paint]
+ *     图标钮：sidebar-icon-button / ghostMuted / compact（28px ghost）
+ * ====================================================================== */
+:root {
+  /* Codex hover 规范（register-DJzgGkDK tailwind theme 精确值）：
+     --color-background-primary-ghost-hover = var(--alpha-08)
+       = color-mix(in oklab, var(--alpha-base) 8%, transparent)，light --alpha-base: #0d0d0d
+     --color-background-primary-ghost-active = var(--alpha-12) → 12% */
+  --cx-ghost-hover: rgba(13, 13, 13, 0.08);
+  --cx-ghost-active: rgba(13, 13, 13, 0.12);
+  --cx-sidebar-bg: #f9f9f9;
+  --cx-content-bg: #ffffff;
+  --cx-elevated: #ececec;
+  --cx-text: #0d0d0d;
+  --cx-text-secondary: #8f8f8f;
+  --cx-text-tertiary: #b4b4b4;
+  --cx-icon: #5d5d5d;
+  --cx-hover: rgba(13, 13, 13, 0.05);
+  --cx-active: rgba(13, 13, 13, 0.07);
+  --cx-ring: rgba(13, 13, 13, 0.10);
+  --cx-ring-strong: rgba(13, 13, 13, 0.16);
+  --cx-hairline: rgba(13, 13, 13, 0.08);
+  --cx-accent: #3a83f7;
+  --cx-row-height: 32px;
+  --cx-row-radius: 10px;
+  --cx-fade-header: 8px;   /* _headerFadeMask: --spacing*2 */
+  --cx-fade-footer: 40px;  /* _headerFadeMask: --spacing*10 */
+}
+
+.dark {
+  /* 解码资产暗色精确值：PUIK [data-theme=dark] + Codex shell */
+  /* dark --alpha-base: #fff → ghost hover 8% / active 12% */
+  --cx-ghost-hover: rgba(255, 255, 255, 0.08);
+  --cx-ghost-active: rgba(255, 255, 255, 0.12);
+  --cx-sidebar-bg: #181818;
+  --cx-content-bg: #212121;
+  --cx-elevated: #303030;
+  --cx-text: #ededed;
+  --cx-text-secondary: #afafaf;
+  --cx-text-tertiary: #8f8f8f;
+  --cx-icon: #afafaf;
+  --cx-hover: rgba(255, 255, 255, 0.055);
+  --cx-active: rgba(255, 255, 255, 0.085);
+  --cx-ring: rgba(255, 255, 255, 0.10);
+  --cx-ring-strong: rgba(255, 255, 255, 0.16);
+  --cx-hairline: rgba(255, 255, 255, 0.07);
+  --cx-accent: #3a83f7;
+}
+
+/* ── 侧栏根（_Navigation_1ej6d_2：flex column / flex:1 / min-height:0） ── */
+.sidebar.cx-sidebar,
+.sidebar-wrapper .sidebar.cx-sidebar {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+  border: 0 !important;
+  border-radius: inherit;
+  background: var(--cx-sidebar-bg) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  color: var(--cx-text);
+  font-size: 13px;
+}
+
+/* ── 侧栏头部工具行：28px ghost 图标钮（ghostMuted/compact 规格） ── */
+.cx-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  height: 44px;
+  padding: 0 8px;
+}
+
+.sidebar-header.cx-header {
+  min-height: 0;
+}
+
+.cx-header-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cx-icon-btn {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--cx-icon);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cx-icon-btn:hover,
+.cx-icon-btn.is-active,
+.cx-icon-btn[aria-pressed='true'],
+.cx-icon-btn[data-state='open'] {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-icon-btn:disabled {
+  opacity: 0.5;
+}
+
+.sidebar-mobile-close.cx-mobile-close {
+  display: none;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--cx-icon);
+}
+
+.sidebar-mobile-close.cx-mobile-close:active {
+  background: var(--cx-hover);
+}
+
+/* ── 搜索行：Codex 内嵌式（10px 圆角，bg white 5%） ── */
+.cx-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 2px 8px 6px;
+  padding: 0 8px;
+  border: 1px solid var(--cx-ring);
+  border-radius: var(--cx-row-radius);
+  background: var(--cx-hover);
+  color: var(--cx-text-secondary);
+  transition: border-color 150ms ease;
+}
+
+.cx-search:focus-within {
+  border-color: var(--cx-ring-strong);
+}
+
+.sidebar .cx-search .cx-search-input {
+  min-width: 0;
+  width: 100%;
+  height: auto;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  color: var(--cx-text) !important;
+  font-size: 13px;
+}
+
+.sidebar .cx-search .cx-search-input:focus,
+.sidebar .cx-search .cx-search-input:focus-visible {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.cx-search-clear {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--cx-icon);
+}
+
+.cx-search-clear:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+/* ── 滚动容器：_headerFadeMask 上下渐隐 + sticky 分组标题 ── */
+.cx-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 2px 8px 8px;
+  contain: layout paint;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 0,
+    #000 var(--cx-fade-header),
+    #000 calc(100% - var(--cx-fade-footer)),
+    rgba(0, 0, 0, 0.88) calc(100% - 24px),
+    rgba(0, 0, 0, 0.52) calc(100% - 12px),
+    rgba(0, 0, 0, 0.18) calc(100% - 4px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 0,
+    #000 var(--cx-fade-header),
+    #000 calc(100% - var(--cx-fade-footer)),
+    rgba(0, 0, 0, 0.88) calc(100% - 24px),
+    rgba(0, 0, 0, 0.52) calc(100% - 12px),
+    rgba(0, 0, 0, 0.18) calc(100% - 4px),
+    transparent 100%
+  );
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* 分组列表：vertical-scroll-fade-mask 容器 gap-4（16px） */
+.cx-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cx-group {
+  min-width: 0;
+}
+
+/* 分组标题吸顶：group/nav-section-title → browser:h-9 browser:ps-2.5，
+   text = text-base font-medium text-tertiary opacity-75 */
+.cx-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: var(--cx-sidebar-bg);
+  border-radius: var(--cx-row-radius) var(--cx-row-radius) 0 0;
+}
+
+.cx-group-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  color: var(--cx-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: left;
+  transition: color 150ms ease;
+}
+
+.cx-group-title:hover,
+.cx-group-title.is-active {
+  color: var(--cx-text-secondary);
+}
+
+.cx-group-chevron {
+  transition: transform 150ms ease;
+}
+
+.cx-group-add {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  border-radius: 6px;
+  color: var(--cx-icon);
+  opacity: 0;
+  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.cx-group-head:hover .cx-group-add,
+.cx-group-add:focus-visible,
+.cx-group-head:focus-within .cx-group-add {
+  opacity: 1;
+}
+
+.cx-group-add:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ── 会话行：h=--height-token-row / radius 10px / hover=primary-ghost-hover，
+   激活 = bg-surface-secondary/40 + ring-1 ring-inset ring-border ── */
+.cx-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: var(--cx-row-height);
+  align-items: center;
+  border-radius: var(--cx-row-radius);
+  color: var(--cx-text);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.cx-row:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.cx-row.is-active {
+  background: var(--cx-active);
+  box-shadow: inset 0 0 0 1px var(--cx-ring);
+}
+
+.cx-row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+  padding: 0 2px 0 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cx-row-main:focus-visible {
+  outline: 2px solid var(--cx-accent);
+  outline-offset: -2px;
+  border-radius: var(--cx-row-radius);
+}
+
+.cx-row-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.cx-row-more {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  border-radius: 6px;
+  color: var(--cx-icon);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.cx-row:hover .cx-row-more,
+.cx-row:focus-within .cx-row-more,
+.cx-row-more[data-state='open'] {
+  opacity: 1;
+}
+
+.cx-row-more:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.sidebar .cx-row .cx-row-input {
+  min-width: 0;
+  width: 100%;
+  height: 24px;
+  min-height: 0 !important;
+  border: 1px solid var(--cx-ring-strong) !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 6px !important;
+  color: var(--cx-text) !important;
+  font-size: 12.5px;
+}
+
+.cx-group-empty {
+  margin: 0;
+  padding: 2px 10px 4px;
+  color: var(--cx-text-tertiary);
+  font-size: 12px;
+}
+
+.cx-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px 12px;
+  color: var(--cx-text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ── 底部设置入口（Codex footer 行） ── */
+.cx-footer {
+  flex: 0 0 auto;
+  padding: 4px 8px max(8px, env(safe-area-inset-bottom));
+}
+
+.cx-footer-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--cx-row-radius);
+  padding: 0 10px;
+  color: var(--cx-text-secondary);
+  font-size: 13px;
+  text-align: left;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cx-footer-row:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-footer-row:active {
+  background: var(--cx-ghost-active);
+}
+
+.cx-dot {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #10a37f;
+}
+
+/* ── 紧凑栏按钮 ── */
+.sidebar-rail-button.cx-rail-btn {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: transparent;
+  color: var(--cx-icon);
+}
+
+.sidebar-rail-button.cx-rail-btn:hover {
+  background: var(--cx-ghost-hover) !important;
+  color: var(--cx-text);
+}
+
+.sidebar-rail-button.cx-rail-btn:active {
+  background: var(--cx-ghost-active) !important;
+}
+
+/* ── 顶栏（Codex/ChatGPT 桌面：与主内容同底色 + 发丝分隔线） ── */
+.titlebar.cx-titlebar {
+  position: relative;
+  z-index: 45;
+  background: var(--cx-content-bg) !important;
+  border-bottom: 1px solid var(--cx-hairline) !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.cx-leading {
+  padding-left: 8px;
+}
+
+.cx-tb-btn {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--cx-icon);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cx-tb-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-tb-btn:active {
+  background: var(--cx-ghost-active);
+}
+
+.cx-tb-btn[data-panel-open='true'],
+.cx-tb-btn[data-panel-open='true']:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-win-close:hover {
+  background: rgba(250, 66, 62, 0.15);
+  color: #fa423e;
+}
+
+/* Work/Code 分段：Codex 胶囊分段（bg 5% / 激活 chip bg 8%+ring） */
+.cx-segment {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--cx-hover);
+  padding: 2px;
+}
+
+.cx-seg-btn {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--cx-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cx-seg-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+}
+
+.cx-seg-btn-active,
+.cx-seg-btn-active:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text);
+  box-shadow: inset 0 0 0 1px var(--cx-ring);
+}
+
+/* Experimental badge on the Flow segment — small, quiet hint that survives
+   only while the feature is unstable. */
+.cx-seg-badge {
+  margin-left: 2px;
+  padding: 1px 5px;
+  border: 1px solid hsl(38 86% 59% / 0.45);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: hsl(38 86% 62%);
+  background: hsl(38 86% 59% / 0.12);
+  user-select: none;
+}
+
+/* ── 统一 ghost hover 工具类（Codex 规范的 TSX 侧入口） ──
+   hover/焦点/菜单打开 = --cx-ghost-hover（8%），按下 = --cx-ghost-active（12%）； */
+.cx-ghost-hover {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cx-ghost-hover:hover,
+.cx-ghost-hover:focus-visible,
+.cx-ghost-hover[data-state='open'] {
+  background-color: var(--cx-ghost-hover);
+}
+
+.cx-ghost-hover:active {
+  background-color: var(--cx-ghost-active);
+}
+
+/* ── 用户消息导航轨 marker（thread-user-message-navigation-rail-app 精确规格）：
+   _Marker 26×2px 线，_MarkerLine scaleX(.2308) origin-left，
+   current → opacity .6，hover → scaleX(1) + opacity 1，
+   邻接衰减 1/2/3 → scaleX .7/.4/.2；
+   transition .16s linear(0,.398 10%,…,1)（资产原样） ── */
+.cx-rail-marker {
+  position: relative;
+  display: flex;
+  width: 26px;
+  height: 2px;
+  color: hsl(var(--foreground) / 0.45);
+  opacity: 0.4;
+}
+
+.cx-rail-marker::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 1px;
+  background-color: currentColor;
+  transform: scaleX(0.2308);
+  transform-origin: 0 50%;
+  transition:
+    transform 0.16s linear(0, 0.398 10%, 0.682 20%, 0.843 30%, 0.925 40%, 0.972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1),
+    opacity 0.16s ease,
+    color 0.16s ease;
+}
+
+.cx-rail-marker[data-current='true'] {
+  opacity: 0.6;
+  color: hsl(var(--foreground));
+}
+
+.cx-rail-marker[data-level='1']::before {
+  transform: scaleX(0.7);
+}
+
+.cx-rail-marker[data-level='2']::before {
+  transform: scaleX(0.4);
+}
+
+.cx-rail-marker[data-level='3']::before {
+  transform: scaleX(0.2);
+}
+
+.cx-rail-marker[data-hot='true'] {
+  opacity: 1;
+  color: hsl(var(--foreground));
+}
+
+.cx-rail-marker[data-hot='true']::before {
+  transform: scaleX(1);
+}
+
+button:focus-visible .cx-rail-marker {
+  opacity: 1;
+  color: hsl(var(--foreground));
+}
+
+button:focus-visible .cx-rail-marker::before {
+  transform: scaleX(1);
+}
+
+.cx-title-main {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--cx-text) !important;
+}
+
+.cx-title-sub {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  font-size: 11px !important;
+  color: var(--cx-text-tertiary) !important;
+}
+
+/* ── 手机/窄屏适配 ── */
+@media (max-width: 767px), (max-device-width: 767px), (max-height: 500px) and (max-width: 1023px) and (orientation: landscape), (max-device-height: 500px) and (max-device-width: 1023px) and (orientation: landscape) {
+  .sidebar-mobile-close.cx-mobile-close {
+    display: inline-flex;
+  }
+
+  .sidebar-header.cx-header {
+    height: auto;
+    min-height: calc(44px + env(safe-area-inset-top));
+    padding-top: max(6px, env(safe-area-inset-top));
+  }
+
+  .cx-scroll {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .cx-row-more,
+  .cx-group-add {
+    opacity: 1;
+  }
+
+  .cx-tb-btn,
+  .cx-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .cx-seg-btn {
+    min-height: 30px;
+  }
+
+  .cx-footer-row {
+    min-height: 40px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Right panel design system (Codex workbench chrome)
+   Density: compact · Type: 11–13px · Hover: --cx-ghost-hover
+   ═══════════════════════════════════════════════════════════════ */
+
+.right-panel {
+  background: var(--ios-material);
+  border-left: 1px solid var(--ios-separator);
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
+  backdrop-filter: blur(26px) saturate(145%);
+}
+
+/* Tab bar — hairline, ghost hover, underline active (no primary wash) */
+.right-panel-tabs {
+  gap: 0 !important;
+  padding-inline: 0.375rem !important;
+  background: transparent;
+  border-bottom: 1px solid var(--ios-separator) !important;
+}
+
+.right-panel-tabs > button {
+  position: relative;
+  min-height: 2.25rem !important;
+  height: 2.25rem;
+  padding: 0 0.625rem !important;
+  border-radius: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  background: transparent !important;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.right-panel-tabs > button:hover {
+  background: var(--cx-ghost-hover) !important;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.right-panel-tabs > button.border-primary,
+.right-panel-tabs > button[data-active='true'] {
+  background: transparent !important;
+  color: var(--cx-text, hsl(var(--foreground))) !important;
+  border-bottom-color: hsl(var(--primary) / 0.85) !important;
+  font-weight: 600;
+}
+
+.right-panel-tabs > button svg {
+  opacity: 0.72;
+}
+
+/* 标签溢出时可以按住鼠标左右拖动平移（见 useDragScroll）。
+   光标只在真的溢出时变成 grab，避免面板够宽时误导用户。 */
+.right-panel-tabs[data-drag-scrollable='true'] {
+  cursor: grab;
+}
+
+.right-panel-tabs[data-dragging='true'] {
+  cursor: grabbing;
+  /* 拖动期间不要选中标签文字/图标，也不要让浏览器接管成原生拖拽。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.right-panel-tabs[data-dragging='true'] > button {
+  pointer-events: none;
+}
+
+.right-panel-tabs > button.border-primary svg,
+.right-panel-tabs > button[data-active='true'] svg {
+  opacity: 1;
+}
+
+/* Shared panel shell */
+.rp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--cx-text, hsl(var(--foreground)));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.rp-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.625rem;
+  border-bottom: 1px solid var(--ios-separator, hsl(var(--border) / 0.55));
+  background: hsl(var(--background) / 0.25);
+}
+
+.rp-header-left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rp-header-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  color: hsl(var(--primary) / 0.9);
+}
+
+.rp-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.rp-title-meta {
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+  font-size: 10px;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.85));
+}
+
+.rp-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.rp-icon-btn {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4375rem;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.rp-icon-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.rp-icon-btn:active {
+  background: var(--cx-ghost-active);
+}
+
+.rp-icon-btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.rp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.rp-pad {
+  padding: 0.625rem 0.75rem 0.875rem;
+}
+
+.rp-section {
+  margin-bottom: 0.875rem;
+}
+
+.rp-section:last-child {
+  margin-bottom: 0;
+}
+
+.rp-section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+  padding-inline: 0.125rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.8));
+}
+
+.rp-section-label svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  opacity: 0.75;
+}
+
+/* Cards / list rows */
+.rp-card {
+  border: 1px solid var(--fz-hairline);
+  border-radius: 0.75rem;
+  background: hsl(var(--card) / 0.42);
+  padding: 0.625rem 0.7rem;
+}
+
+.rp-card-tight {
+  padding: 0.45rem 0.55rem;
+}
+
+.rp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.5rem;
+  transition: background-color 150ms ease;
+}
+
+.rp-row:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.rp-row-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+}
+
+.rp-row-main {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.rp-row-meta {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.85));
+}
+
+/* Stats grid */
+.rp-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.rp-stat {
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 0.6875rem;
+  background: hsl(var(--card) / 0.38);
+  padding: 0.55rem 0.65rem;
+}
+
+.rp-stat-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.15rem;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.8));
+}
+
+.rp-stat-label svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.rp-stat-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.rp-stat-sub {
+  margin-top: 0.1rem;
+  font-size: 10px;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.75));
+}
+
+/* Chips / badges */
+.rp-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.2rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.rp-chip-muted {
+  background: hsl(var(--muted) / 0.85);
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+}
+
+.rp-chip-ok {
+  background: hsl(142 70% 45% / 0.14);
+  color: hsl(142 60% 38%);
+}
+
+.rp-chip-warn {
+  background: hsl(38 92% 50% / 0.16);
+  color: hsl(28 85% 40%);
+}
+
+.rp-chip-danger {
+  background: hsl(0 72% 51% / 0.13);
+  color: hsl(0 65% 45%);
+}
+
+.rp-chip-info {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+:root.dark .rp-chip-ok,
+.dark .rp-chip-ok {
+  color: hsl(142 55% 62%);
+}
+
+:root.dark .rp-chip-warn,
+.dark .rp-chip-warn {
+  color: hsl(38 90% 68%);
+}
+
+:root.dark .rp-chip-danger,
+.dark .rp-chip-danger {
+  color: hsl(0 75% 70%);
+}
+
+/* Empty state */
+.rp-empty {
+  display: flex;
+  height: 100%;
+  min-height: 8rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 1.25rem 1.5rem;
+  text-align: center;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground)));
+}
+
+.rp-empty-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  opacity: 0.4;
+}
+
+.rp-empty-title {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+}
+
+.rp-empty-desc {
+  max-width: 16rem;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.8;
+}
+
+/* Footer */
+.rp-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0.3rem 0.625rem;
+  border-top: 1px solid var(--ios-separator, hsl(var(--border) / 0.55));
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.8));
+}
+
+/* Scope pill button (review dropdown) */
+.rp-scope-btn {
+  display: inline-flex;
+  height: 1.5rem;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid hsl(var(--border) / 0.65);
+  border-radius: 0.5rem;
+  background: hsl(var(--card) / 0.5);
+  padding: 0 0.45rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cx-text, hsl(var(--foreground)));
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.rp-scope-btn:hover {
+  background: var(--cx-ghost-hover);
+  border-color: hsl(var(--border));
+}
+
+.rp-scope-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 30;
+  min-width: 9.5rem;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border) / 0.75);
+  border-radius: 0.75rem;
+  background: hsl(var(--popover));
+  padding: 0.25rem;
+  box-shadow: 0 10px 28px hsl(220 20% 4% / 0.16), 0 2px 6px hsl(220 20% 4% / 0.08);
+}
+
+.rp-scope-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  font-size: 11px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  transition: background-color 150ms ease;
+}
+
+.rp-scope-item:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.rp-scope-item[data-active='true'] {
+  font-weight: 600;
+  color: hsl(var(--primary));
+}
+
+/* Diff review file/hunk chrome */
+.rp-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.28);
+  transition: background-color 150ms ease;
+}
+
+.rp-file-row:last-child {
+  border-bottom: none;
+}
+
+.rp-file-row:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.rp-file-row[data-viewed='true'] .rp-file-path {
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground)));
+  text-decoration: line-through;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.35);
+}
+
+.rp-file-path {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.rp-hunk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+  padding: 0.15rem 0.35rem 0.15rem 0.55rem;
+  border-left: 2px solid hsl(38 92% 50% / 0.45);
+  background: hsl(var(--muted) / 0.28);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  color: hsl(38 70% 42%);
+}
+
+:root.dark .rp-hunk-bar,
+.dark .rp-hunk-bar {
+  color: hsl(38 80% 68%);
+}
+
+.rp-hunk-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: auto;
+}
+
+.rp-hunk-btn {
+  border-radius: 0.375rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.rp-hunk-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.rp-hunk-btn-danger:hover {
+  color: hsl(var(--destructive));
+}
+
+/* Legend dots (usage share) */
+.rp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  margin-top: 0.45rem;
+}
+
+.rp-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 11px;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+}
+
+.rp-legend-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+.rp-bar {
+  display: flex;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.1);
+}
+
+.rp-bar > span {
+  height: 100%;
+  min-width: 0.25rem;
+}
+
+/* Compact form controls inside panels */
+.rp-input {
+  width: 100%;
+  height: 1.75rem;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.5rem;
+  background: hsl(var(--background) / 0.7);
+  padding: 0 0.55rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.rp-input:focus {
+  border-color: hsl(var(--primary) / 0.45);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12);
+}
+
+.rp-textarea {
+  width: 100%;
+  min-height: 6.5rem;
+  resize: vertical;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.6875rem;
+  background: hsl(var(--card) / 0.45);
+  padding: 0.6rem 0.7rem;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--cx-text, hsl(var(--foreground)));
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.rp-textarea:focus {
+  border-color: hsl(var(--primary) / 0.4);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1);
+}
+
+.rp-textarea::placeholder,
+.rp-input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.55);
+}
+
+/* Narrow right-panel: hide tab labels, keep icons */
+@media (max-width: 1100px) {
+  .right-panel-tabs > button span.rp-tab-label {
+    display: none;
+  }
+
+  .right-panel-tabs > button {
+    padding-inline: 0.55rem !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Flow workbench — ComfyUI-style node runtime UI
+   ───────────────────────────────────────────────────────────────
+   Design tokens (v3 redesign): three-level elevation — canvas is the
+   darkest plane, panels sit above it, node cards float on top. Accent
+   color is reserved for state and action; category color lives in the
+   icon chip only.
+   ═══════════════════════════════════════════════════════════════ */
+.flow-workbench {
+  --fz-canvas: hsl(225 18% 6%);
+  --fz-panel: hsl(225 14% 9%);
+  --fz-node: hsl(226 16% 13%);
+  --fz-node-hover: hsl(226 16% 15%);
+  --fz-node-border: hsl(226 12% 20%);
+  --fz-node-inset: hsl(226 18% 10%);
+  --fz-hairline: hsl(226 12% 17%);
+  --fz-text-hi: hsl(225 20% 92%);
+  --fz-text-mid: hsl(224 12% 66%);
+  --fz-text-low: hsl(225 10% 45%);
+  --fz-primary: hsl(217 100% 65%);
+  --fz-success: hsl(152 58% 53%);
+  --fz-warning: hsl(38 86% 59%);
+  --fz-danger: hsl(0 84% 69%);
+  --fz-radius-node: 12px;
+  --fz-shadow-node: 0 2px 6px hsl(0 0% 0% / 0.35), 0 10px 28px hsl(0 0% 0% / 0.28);
+  --fz-shadow-node-hover: 0 4px 10px hsl(0 0% 0% / 0.4), 0 16px 40px hsl(0 0% 0% / 0.35);
+
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background: var(--fz-canvas);
+  color: var(--fz-text-hi);
+}
+
+/* Narrow window: both rails are fixed-width (248 + 320) and together left the
+   canvas ~50px wide (unusable — every node clipped). Float them over the canvas
+   so it always spans the window and the rails become overlays. The 1200px
+   threshold matches the chat shell's own panel breakpoint. */
+@media (max-width: 1199px) {
+  .flow-sidebar,
+  .flow-inspector-col {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 30;
+    box-shadow: 0 12px 32px -12px hsl(0 0% 0% / 0.55);
+  }
+
+  .flow-sidebar {
+    left: 0;
+  }
+
+  .flow-inspector-col {
+    right: 0;
+  }
+
+  .flow-main {
+    width: 100%;
+  }
+
+  .flow-resize {
+    display: none;
+  }
+}
+
+.flow-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.flow-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.flow-canvas {
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 24% 18%, hsl(217 80% 40% / 0.05), transparent 42%),
+    radial-gradient(circle at 78% 82%, hsl(200 80% 45% / 0.04), transparent 42%),
+    var(--fz-canvas);
+}
+
+.flow-side {
+  display: flex;
+  width: 280px;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--ios-separator, hsl(var(--border) / 0.55));
+  background: var(--ios-material, hsl(var(--card) / 0.5));
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+.flow-palette {
+  flex-shrink: 0;
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 0.65rem 0.7rem;
+  border-bottom: 1px solid var(--ios-separator, hsl(var(--border) / 0.45));
+}
+
+.flow-palette-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.flow-palette-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--fz-hairline);
+  border-radius: 0.55rem;
+  background: hsl(var(--card) / 0.45);
+  padding: 0.28rem 0.5rem;
+  font-size: 11px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  cursor: grab;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.flow-palette-item:hover {
+  background: var(--cx-ghost-hover);
+  border-color: hsl(var(--border));
+}
+
+.flow-inspector {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.7rem 0.75rem 1rem;
+}
+
+.flow-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.55rem;
+}
+
+.flow-field > span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.85));
+}
+
+.flow-log {
+  max-height: 8rem;
+  overflow: auto;
+  border: 1px solid hsl(var(--border) / 0.45);
+  border-radius: 0.5rem;
+  background: hsl(var(--muted) / 0.35);
+  padding: 0.4rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+  white-space: pre-wrap;
+}
+
+/* Node cards */
+/* Node cards — ComfyUI-ish: a colour bar, an icon chip, a status line. */
+.flow-node {
+  position: relative;
+  /* The xyflow wrapper shrink-wraps its content when the node has no explicit
+     size, so the card must provide its own default width — width:100% here
+     would collapse to min-content (circular sizing). The resizer's inline
+     width on the wrapper still wins over this. */
+  width: 280px;
+  height: 100%;
+  min-height: 84px;
+  display: flex;
+  flex-direction: column;
+  /* NOT overflow:hidden — the resize handles straddle the card edge and
+     would be clipped in half. Children that need clipping (the preview)
+     handle their own overflow. */
+  border: 1px solid var(--fz-node-border);
+  border-radius: var(--fz-radius-node);
+  background: var(--fz-node);
+  padding: 0;
+  box-shadow: var(--fz-shadow-node);
+  cursor: pointer;
+  transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+/* Resize affordance: xyflow's NodeResizer handles/lines, themed. */
+.flow-node .flow-resize-handle {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--fz-primary);
+  border-radius: 2px;
+  background: var(--fz-canvas);
+}
+
+.flow-node .flow-resize-line {
+  border-color: transparent;
+}
+
+/* Canvas cursor semantics (polish pass):
+   - pane: crosshair — left-drag marquees there, middle-drag pans. During an
+     actual pan xyflow toggles `dragging` on the wrapper; grabbing applies.
+   - node: pointer — the primary interaction is click-to-select; drag is
+     secondary, and xyflow's own `cursor: grab` on .draggable is wrong here. */
+.flow-canvas .react-flow__pane {
+  cursor: crosshair;
+}
+
+.flow-canvas.react-flow.dragging .react-flow__pane {
+  cursor: grabbing;
+}
+
+.flow-canvas .react-flow__node.draggable {
+  cursor: pointer;
+}
+
+.flow-canvas .react-flow__node.draggable.dragging {
+  cursor: grabbing;
+}
+
+/* Top colour bar keyed off --node-color (set inline from the node def). */
+.flow-node-bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--node-color, hsl(var(--muted-foreground)));
+  opacity: 0.85;
+}
+
+/* State hierarchy: selection is the strongest, persistent state; hover is
+   only a pointer hint and must never outshine it. */
+.flow-node:hover {
+  box-shadow: var(--fz-shadow-node-hover);
+}
+
+.flow-node-selected {
+  border-color: var(--fz-primary);
+  box-shadow: 0 0 0 2px hsl(217 100% 65% / 0.45), var(--fz-shadow-node);
+}
+
+/* Category icon chip: 30px, tinted with the node's category color. */
+.flow-node-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--node-color, #64748b) 16%, transparent);
+  color: var(--node-color, var(--fz-text-mid));
+}
+
+.flow-node-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.flow-node-status-text {
+  color: hsl(var(--muted-foreground) / 0.65);
+}
+
+.flow-node-expanded .flow-node-preview {
+  max-height: 14rem;
+}
+
+/* Port labels: shown only when a node has more than one port, which is
+   exactly when the operator cannot tell them apart by position alone. */
+.flow-port-label {
+  position: absolute;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: hsl(var(--muted-foreground) / 0.8);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.flow-port-in {
+  left: 0.35rem;
+  transform: translateY(-50%);
+}
+
+.flow-port-out {
+  right: 0.35rem;
+  transform: translateY(-50%);
+}
+
+/* Selection is the strongest state: a solid primary ring + tinted border.
+   Two-class specificity (0,2,0) so it beats the single-class :hover rule
+   above — a selected+hovered node keeps exactly this ring, and moving the
+   pointer away must not change anything. */
+.flow-node.flow-node-selected {
+  border-color: hsl(var(--primary) / 0.8);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.6), 0 6px 20px hsl(220 20% 4% / 0.14);
+}
+
+.flow-node-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px 8px;
+}
+
+.flow-node-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--fz-text-low);
+}
+
+.flow-node-running .flow-node-dot,
+.flow-node-done .flow-node-dot,
+.flow-node-error .flow-node-dot {
+  margin-left: auto;
+}
+
+.flow-node-running .flow-node-dot {
+  background: var(--fz-primary);
+  box-shadow: 0 0 8px var(--fz-primary);
+  animation: flow-pulse 1.2s ease-in-out infinite;
+}
+
+.flow-node-done .flow-node-dot {
+  background: var(--fz-success);
+}
+
+.flow-node-error .flow-node-dot {
+  background: var(--fz-danger);
+}
+
+.flow-node-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fz-text-hi);
+}
+
+/* Head text block: title over subtitle, next to the icon chip. */
+.flow-node-headtext {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.flow-node-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--fz-text-low);
+}
+
+.flow-node-type {
+  font-size: 10.5px;
+  color: var(--fz-text-low);
+}
+
+/* Body zone between head and footer: param summary rows + preview. */
+.flow-node-body {
+  padding: 0 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.flow-node-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--fz-node-inset);
+  color: var(--fz-text-mid);
+}
+
+.flow-node-kv b {
+  color: var(--fz-text-hi);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The preview soaks up whatever height a resize grants: default clamp keeps
+   small cards tidy; once the operator makes the card taller the box grows
+   with it instead of leaving dead space. */
+.flow-node-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 3.6rem;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--fz-node-inset);
+  padding: 7px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fz-text-mid);
+}
+
+.flow-node-expanded .flow-node-preview {
+  max-height: none;
+}
+
+/* Footer strip: run state left, metrics right. */
+.flow-node-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--fz-hairline);
+  font-size: 10.5px;
+  color: var(--fz-text-low);
+}
+
+.flow-node-foot .flow-node-foot-metric {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.flow-node-error-text {
+  margin-top: 0.3rem;
+  font-size: 9.5px;
+  color: var(--fz-danger);
+}
+
+/* Execution states — running glows, done/error tint the status dot only.
+   The card border stays neutral so the selection ring always reads. */
+.flow-node-running {
+  box-shadow: 0 0 0 1px hsl(217 100% 65% / 0.35), 0 0 20px hsl(217 100% 65% / 0.18), var(--fz-shadow-node);
+}
+
+.flow-node-error {
+  box-shadow: 0 0 0 1px hsl(0 84% 69% / 0.35), var(--fz-shadow-node);
+}
+
+.flow-node-waiting {
+  box-shadow: 0 0 0 1px hsl(38 86% 59% / 0.4), 0 0 14px hsl(38 86% 59% / 0.2), var(--fz-shadow-node);
+}
+
+.flow-node-skipped {
+  opacity: 0.42;
+}
+
+@keyframes flow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px hsl(217 100% 65% / 0.3), 0 0 10px hsl(217 100% 65% / 0.15), var(--fz-shadow-node);
+  }
+  50% {
+    box-shadow: 0 0 0 2px hsl(217 100% 65% / 0.5), 0 0 22px hsl(217 100% 65% / 0.3), var(--fz-shadow-node);
+  }
+}
+
+/* Ports: 13px circles, card-coloured fill with a 2.5px tinted ring — data
+   ports neutral, branch ports tinted by their verdict so the wiring reads at
+   a glance. */
+.flow-handle {
+  width: 13px !important;
+  height: 13px !important;
+  border: 2.5px solid hsl(225 12% 38%) !important;
+  background: var(--fz-node) !important;
+}
+
+.flow-handle-branch-true {
+  border-color: var(--fz-success) !important;
+}
+
+.flow-handle-branch-false {
+  border-color: var(--fz-danger) !important;
+}
+
+.flow-handle-branch-body,
+.flow-handle-branch-done {
+  border-color: var(--fz-warning) !important;
+}
+
+/* Edges: 2px, visible on the dark canvas; the active edge glows primary. */
+.flow-edge {
+  stroke: hsl(225 12% 32%);
+  transition: stroke 150ms ease;
+}
+
+.flow-edge-selected {
+  stroke: var(--fz-primary);
+}
+
+.flow-edge-active,
+.flow-edge-running {
+  stroke: var(--fz-primary);
+  stroke-dasharray: 6 4;
+  animation: flow-dash 0.6s linear infinite;
+  filter: drop-shadow(0 0 4px hsl(217 100% 65% / 0.5));
+}
+
+.flow-edge-label-bg {
+  fill: var(--fz-canvas);
+  stroke: var(--fz-hairline);
+  stroke-width: 0.5;
+}
+
+.flow-edge-label-text {
+  font-size: 9px;
+  font-weight: 700;
+  fill: var(--fz-text-mid);
+  pointer-events: none;
+}
+
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+.flow-runbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--fz-hairline);
+  background: var(--fz-panel);
+}
+
+.flow-controls button {
+  background: var(--fz-panel) !important;
+  border: 1px solid var(--fz-node-border) !important;
+  border-radius: 0.45rem !important;
+  fill: var(--fz-text-mid) !important;
+}
+
+.flow-minimap {
+  border-radius: 0.6rem !important;
+  border: 1px solid var(--fz-node-border) !important;
+  overflow: hidden;
+  opacity: 0.85;
+  transition: opacity 160ms ease;
+  right: 0.75rem !important;
+  bottom: 0.75rem !important;
+  /* Theme the minimap surface: without these it falls back to xyflow's light
+     defaults and reads as a bright chip on the dark canvas. */
+  background: var(--fz-panel) !important;
+}
+
+.flow-minimap .react-flow__minimap-mask {
+  fill: hsl(225 18% 6% / 0.72);
+}
+
+.flow-minimap svg {
+  background: var(--fz-panel);
+}
+
+.flow-minimap:hover {
+  opacity: 1;
+}
+
+/* Narrow canvas: the 168×108 minimap covers a large share of the graph, and
+   the top bar's captions would squeeze the workflow name. */
+@media (max-width: 1199px) {
+  .flow-minimap {
+    right: 0.5rem !important;
+    bottom: 0.5rem !important;
+    transform: scale(0.78);
+    transform-origin: bottom right;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Flow workbench v2 — three-pane Dify / ComfyUI layout
+   ───────────────────────────────────────────────────────────────
+   workflow list │ canvas (+ node picker) │ inspector
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --flow-sidebar-width: 248px;
+  --flow-inspector-width: 320px;
+}
+
+/* ── Left rail: workflow files ───────────────────────────────── */
+.flow-sidebar {
+  display: flex;
+  width: var(--flow-sidebar-width);
+  min-width: 0;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--fz-hairline);
+  background: var(--fz-panel);
+}
+
+.flow-sidebar-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.6rem 0.35rem;
+}
+
+.flow-sidebar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground) / 0.85));
+}
+
+.flow-search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.6rem 0.45rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--fz-hairline);
+  border-radius: 0.55rem;
+  background: hsl(var(--background) / 0.55);
+}
+
+.flow-search-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  outline: none;
+}
+
+.flow-search-input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+.flow-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0.45rem 0.5rem;
+}
+
+.flow-list-empty {
+  padding: 0.75rem 0.35rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.8);
+}
+
+.flow-list-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.15rem;
+  padding: 0.4rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.flow-list-item:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.flow-list-item-active {
+  border-color: hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.12);
+}
+
+.flow-list-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.flow-list-meta {
+  font-size: 10px;
+  color: hsl(var(--muted-foreground) / 0.75);
+}
+
+.flow-list-rename {
+  width: 100%;
+  border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 0.35rem;
+  background: hsl(var(--background));
+  padding: 0.05rem 0.25rem;
+  font-size: 12px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  outline: none;
+}
+
+.flow-list-actions {
+  display: none;
+  gap: 0.1rem;
+  flex-shrink: 0;
+}
+
+.flow-list-item:hover .flow-list-actions,
+.flow-list-item-active .flow-list-actions {
+  display: flex;
+}
+
+.flow-sidebar-foot {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border-top: 1px solid var(--ios-separator, hsl(var(--border) / 0.45));
+}
+
+.flow-foot-btn {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 1px solid var(--fz-hairline);
+  border-radius: 0.5rem;
+  background: hsl(var(--card) / 0.5);
+  padding: 0.3rem 0.4rem;
+  font-size: 11px;
+  color: var(--cx-text-secondary, hsl(var(--muted-foreground)));
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.flow-foot-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+/* ── Generic icon button ────────────────────────────────────── */
+.flow-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground)));
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.flow-icon-btn:hover {
+  background: var(--cx-ghost-hover);
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.flow-icon-btn-on {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+}
+
+.flow-icon-btn-danger:hover {
+  background: hsl(0 70% 55% / 0.16);
+  color: hsl(0 80% 65%);
+}
+
+/* ── Top bar ────────────────────────────────────────────────── */
+.flow-topbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--fz-hairline);
+  background: var(--fz-panel);
+}
+
+.flow-name-input {
+  min-width: 4rem;
+  max-width: 24rem;
+  flex: 1;
+  border: 1px solid var(--fz-node-border);
+  border-radius: 8px;
+  background: var(--fz-node-inset);
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fz-text-hi);
+  outline: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.flow-name-input:hover {
+  background: var(--fz-node);
+}
+
+.flow-name-input:focus {
+  border-color: hsl(217 100% 65% / 0.5);
+  background: var(--fz-node);
+}
+
+.flow-topbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.flow-topbar-sep {
+  width: 1px;
+  height: 1.1rem;
+  margin-inline: 0.25rem;
+  background: var(--ios-separator, hsl(var(--border) / 0.8));
+}
+
+/* Narrow top bar: drop the button captions so the workflow name keeps room
+   to breathe; icons + tooltips still carry the action. */
+@media (max-width: 1199px) {
+  .flow-btn-label {
+    display: none;
+  }
+
+  .flow-topbar-actions .flow-topbar-sep {
+    display: none;
+  }
+
+  .flow-name-input {
+    max-width: none;
+  }
+}
+
+.flow-resize {
+  cursor: col-resize;
+}
+
+/* ── Right rail: inspector ──────────────────────────────────── */
+.flow-inspector-col {
+  display: flex;
+  width: var(--flow-inspector-width);
+  min-width: 0;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--ios-separator, hsl(var(--border) / 0.55));
+  background: hsl(var(--card) / 0.42);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+.flow-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.15rem;
+  padding: 0.35rem 0.45rem 0;
+  border-bottom: 1px solid var(--ios-separator, hsl(var(--border) / 0.45));
+}
+
+.flow-tab {
+  border: 0;
+  border-radius: 0.45rem 0.45rem 0 0;
+  background: transparent;
+  padding: 0.25rem 0.6rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cx-text-tertiary, hsl(var(--muted-foreground)));
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.flow-tab:hover {
+  background: var(--cx-ghost-hover);
+}
+
+.flow-tab-active {
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+}
+
+.flow-inspector-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flow-inspector {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.7rem 0.75rem 1rem;
+}
+
+/* ── Floating node picker ───────────────────────────────────── */
+.flow-picker {
+  position: absolute;
+  z-index: 30;
+  width: 232px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.7rem;
+  background: hsl(var(--popover, var(--card)) / 0.98);
+  box-shadow: 0 18px 40px -12px hsl(0 0% 0% / 0.55);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.flow-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+.flow-picker-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
+  color: var(--cx-text, hsl(var(--foreground)));
+  outline: none;
+}
+
+.flow-picker-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+
+.flow-picker-empty {
+  padding: 0.6rem 0.4rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.8);
+}
+
+.flow-picker-group-label {
+  padding: 0.3rem 0.35rem 0.15rem;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+.flow-picker-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  padding: 0.28rem 0.4rem;
+  font-size: 11.5px;
+  text-align: left;
+  color: var(--cx-text, hsl(var(--foreground)));
+  cursor: pointer;
+}
+
+.flow-picker-item-active {
+  background: hsl(var(--primary) / 0.16);
+}
+
+.flow-picker-type {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* ── Canvas empty state ─────────────────────────────────────── */
+.flow-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  width: min(360px, 80%);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  transform: translate(-50%, -50%);
+  border: 1px dashed hsl(var(--border) / 0.8);
+  border-radius: 0.9rem;
+  background: hsl(var(--card) / 0.5);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.flow-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.flow-empty-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+
+/* ── Canvas toolbar (top-right overlay) ─────────────────────── */
+.flow-canvas-toolbar {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 0.6rem;
+  background: hsl(var(--card) / 0.92);
+  box-shadow: 0 6px 18px -8px hsl(0 0% 0% / 0.5);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.flow-toolbar-sep {
+  width: 1px;
+  height: 1rem;
+  margin-inline: 0.2rem;
+  background: hsl(var(--border) / 0.7);
+}
+
+/* Experimental notice strip — sits under the top bar, dismissible. */
+.flow-beta-notice {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  border-bottom: 1px solid hsl(38 86% 59% / 0.25);
+  background: hsl(38 86% 59% / 0.08);
+  font-size: 11px;
+  color: hsl(38 60% 72%);
+}
+
+.flow-beta-notice svg {
+  color: hsl(38 86% 62%);
+}
+
+.flow-beta-notice-close {
+  flex-shrink: 0;
+  border: 1px solid hsl(38 86% 59% / 0.35);
+  border-radius: 999px;
+  background: transparent;
+  padding: 2px 10px;
+  font-size: 10.5px;
+  color: hsl(38 60% 72%);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.flow-beta-notice-close:hover {
+  background: hsl(38 86% 59% / 0.15);
+  color: hsl(38 60% 80%);
+}
+
+.flow-toolbar-zoom {
+  min-width: 42px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fz-text-low);
+  user-select: none;
+}
+
+/* ── Inspector empty state ─────────────────────────────────── */
+.flow-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 2.5rem;
+  padding: 0 0.5rem;
+  text-align: center;
+}
+
+.flow-hint-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--cx-text, hsl(var(--foreground)));
+}
+
+.flow-hint-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.flow-hint-list li {
+  position: relative;
+  padding-left: 0.85rem;
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground) / 0.9);
+}
+
+.flow-hint-list li::before {
+  content: '';
+  position: absolute;
+  top: 0.42rem;
+  left: 0.15rem;
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: hsl(var(--primary) / 0.7);
+}
+
+.flow-run-label {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+/* ── Bottom run bar extras ──────────────────────────────────── */
+.flow-run-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.flow-human {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-x: auto;
+}
+
+/* ── Canvas context menu ────────────────────────────────────── */
+.flow-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 208px;
+  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.3rem;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.7rem;
+  background: hsl(var(--popover));
+  box-shadow: 0 14px 36px -12px hsl(0 0% 0% / 0.5);
+  color: hsl(var(--popover-foreground));
+}
+
+.flow-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.flow-menu-item:hover:not(:disabled) {
+  background: hsl(var(--primary) / 0.12);
+}
+
+.flow-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.flow-menu-item-danger {
+  color: hsl(var(--destructive));
+}
+
+.flow-menu-item-danger:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.12);
+}
+
+.flow-menu-hint {
+  font-size: 10px;
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+
+.flow-menu-sep {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  background: hsl(var(--border) / 0.6);
+}
+
+/* ── Empty canvas call to action ────────────────────────────── */
+.flow-empty-cta {
+  margin-top: 0.5rem;
+  border: 1px solid hsl(var(--primary) / 0.4);
+  border-radius: 0.6rem;
+  background: hsl(var(--primary) / 0.12);
+  padding: 0.3rem 0.85rem;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.flow-empty-cta:hover {
+  background: hsl(var(--primary) / 0.2);
 }

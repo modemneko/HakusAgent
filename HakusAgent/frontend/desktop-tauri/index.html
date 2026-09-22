@@ -66,9 +66,11 @@
       /* Critical CSS: prevent flash before framework loads.
          The desktop window is TRANSPARENT (rounded corners are painted by
          #root with CSS), so html/body stay transparent and only #root
-         carries the themed background. The main window is hidden until the
-         native splash fades, so the transparent webview is never visible
-         mid-boot; Android keeps an opaque native window background. */
+         carries the themed background. #root is painted here too, because
+         the app now boots straight into its in-window AWAKENING overlay:
+         before React mounts, an unpainted #root would leave the whole
+         window see-through — the "app is broken" look. Android keeps an
+         opaque native window background. */
       html, body, #root, #hakus-overlay-root {
         margin: 0;
         padding: 0;
@@ -81,6 +83,16 @@
       }
       html, body {
         background: transparent;
+      }
+      /* Rounded, themed surface for the frameless desktop window, painted
+         before index.css loads. Mirrors :root.is-rounded-window #root below;
+         the app is still opaque here, so the window never reads as broken. */
+      html.is-rounded-window #root {
+        border-radius: 12px;
+        background: hsl(240 8% 97%);
+      }
+      html.is-rounded-window.dark #root {
+        background: hsl(240 7% 6%);
       }
       #hakus-overlay-root {
         position: absolute;
@@ -95,6 +107,21 @@
         color: hsl(220 10% 96%);
       }
     </style>
+    <script>
+      // The desktop webview must paint its own themed surface from the first
+      // frame (see critical CSS above). Android gets an opaque native window,
+      // so it must NOT round or repaint anything. Mirrors the same class
+      // main.tsx adds — redundant, but this one lands before the first paint.
+      (function () {
+        try {
+          var isTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
+          var isAndroid = isTauri && /Android/i.test(navigator.userAgent);
+          if (isTauri && !isAndroid) {
+            document.documentElement.classList.add('is-rounded-window');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
 
   <body>

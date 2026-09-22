@@ -27,7 +27,7 @@ so they apply even in BYPASS mode.
 import asyncio
 import re
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from utils.logger import get_logger
 
@@ -51,6 +51,8 @@ class PermissionMode(Enum):
     BYPASS = "bypass"         # allow everything (no prompt)
     DANGER_AUTO = "danger_auto"  # alias of BYPASS, explicit name
     AUTO = "auto"             # DEPRECATED alias of DANGER_AUTO
+    READ_ONLY = "read_only"   # five-tier: hard-deny all mutating tools (no prompt)
+    GRANULAR = "granular"     # five-tier: granular rules first, then confirm
 
 
 _DANGEROUS_BASH_PATTERNS = [
@@ -144,6 +146,9 @@ class PermissionManager:
         self._auto_approved_tools: set = set()
         self._denied_tools: set = set()
         self._session_approvals: Dict[str, bool] = {}
+        # Five-tier granular rules (only consulted in GRANULAR mode).
+        # Set via set_granular_rules() by hakus.permissions.engine.
+        self._granular_rules: Optional[Any] = None
 
         # Layer 1: always-on strict checker (sensitive paths + catastrophic commands)
         # Lazily imported to avoid circular deps in tests.
@@ -156,6 +161,8 @@ class PermissionManager:
                 PermissionMode.BYPASS: NewPermissionMode.FULL_AUTO,
                 PermissionMode.DANGER_AUTO: NewPermissionMode.FULL_AUTO,
                 PermissionMode.AUTO: NewPermissionMode.FULL_AUTO,
+                PermissionMode.READ_ONLY: NewPermissionMode.DEFAULT,
+                PermissionMode.GRANULAR: NewPermissionMode.DEFAULT,
             }
             self._strict_checker = PermissionChecker(
                 mode=_mode_map.get(mode, NewPermissionMode.DEFAULT),
@@ -184,6 +191,46 @@ class PermissionManager:
     @mode.setter
     def mode(self, value: PermissionMode) -> None:
         self._mode = value
+        # Keep the strict checker's plan-mode projection in sync so that
+        # switching to READ_ONLY at runtime also blocks mutating tools in
+        # the always-on layer.
+        try:
+            from .permissions.checker import PermissionChecker
+            from .permissions.modes import PermissionMode as NewPermissionMode
+            if isinstance(self._strict_checker, PermissionChecker):
+                _sync_map = {
+                    PermissionMode.READ_ONLY: NewPermissionMode.DEFAULT,
+                    PermissionMode.GRANULAR: NewPermissionMode.DEFAULT,
+                    PermissionMode.ASK: NewPermissionMode.DEFAULT,
+                    PermissionMode.BYPASS: NewPermissionMode.FULL_AUTO,
+                    PermissionMode.DANGER_AUTO: NewPermissionMode.FULL_AUTO,
+                    PermissionMode.AUTO: NewPermissionMode.FULL_AUTO,
+                }
+                self._strict_checker.set_mode(_sync_map.get(value, NewPermissionMode.DEFAULT))
+        except Exception as e:
+            logger.debug(f"strict checker mode sync failed: {e}")
+
+    def set_granular_rules(self, rules: Any) -> None:
+        """Install five-tier granular rules (GranularRules instance).
+
+        Only consulted when ``mode == GRANULAR``. See
+        ``hakus.permissions.engine``.
+        """
+        self._granular_rules = rules
+
+    def _granular_allows(self, tool_name: str, args: Dict) -> Optional[bool]:
+        """Evaluate granular rules. Returns True (allow) / None (no rule)."""
+        if self._granular_rules is None:
+            return None
+        try:
+            from .permissions.engine import classify_granular
+            return classify_granular(
+                tool_name, is_dangerous=True, args=args,
+                rules=self._granular_rules,
+            )
+        except Exception as e:
+            logger.debug(f"granular rule eval failed: {e}")
+            return None
 
     # ============================================================
     # Layer 1: always-deny rules (apply in ALL modes, including BYPASS)
@@ -323,6 +370,29 @@ class PermissionManager:
             force_confirm=True,
         )
 
+    def _granular_from_action_key(self, action_key: str) -> Optional[bool]:
+        """Parse ``bash:<cmd>`` / ``write:<path>`` / ``edit:<path>`` /
+        ``tool:<name>`` action keys and evaluate granular rules."""
+        if self._granular_rules is None:
+            return None
+        tool, _, rest = action_key.partition(":")
+        args: Dict[str, str] = {}
+        if tool in ("bash", "shell"):
+            args["command"] = rest
+        elif tool == "write":
+            tool, args = "write_file", {"path": rest}
+        elif tool == "edit":
+            tool, args = "edit_file", {"path": rest}
+        elif tool == "tool":
+            tool, args = rest, {}
+        try:
+            from .permissions.engine import classify_granular
+            return classify_granular(tool, is_dangerous=True, args=args,
+                                     rules=self._granular_rules)
+        except Exception as e:
+            logger.debug(f"granular rule eval failed: {e}")
+            return None
+
     def _evaluate(
         self,
         action_key: str,
@@ -336,6 +406,19 @@ class PermissionManager:
         # (subject to Layer 1 strict checks above)
         if self._mode in (PermissionMode.BYPASS, PermissionMode.DANGER_AUTO, PermissionMode.AUTO):
             return PermissionResult(allowed=True, reason=f"{self._mode.value} mode active")
+
+        # Five-tier READ_ONLY: hard-deny mutating tools, no prompt
+        if self._mode == PermissionMode.READ_ONLY:
+            return PermissionResult(
+                allowed=False,
+                reason="Read-only mode blocks mutating tools",
+            )
+
+        # Five-tier GRANULAR: rules first, unmatched → confirm flow
+        if self._mode == PermissionMode.GRANULAR:
+            if self._granular_from_action_key(action_key):
+                return PermissionResult(allowed=True, reason="granular rule matched")
+            # fall through to ASK-style confirm
 
         # ASK mode (the default)
         if self._mode == PermissionMode.ASK or force_confirm:
@@ -393,6 +476,19 @@ class PermissionManager:
 
         if self._mode in (PermissionMode.BYPASS, PermissionMode.DANGER_AUTO, PermissionMode.AUTO):
             return PermissionResult(allowed=True, reason=f"{self._mode.value} mode active")
+
+        # Five-tier READ_ONLY: hard-deny mutating tools, no prompt
+        if self._mode == PermissionMode.READ_ONLY:
+            return PermissionResult(
+                allowed=False,
+                reason="Read-only mode blocks mutating tools",
+            )
+
+        # Five-tier GRANULAR: rules first, unmatched → confirm flow
+        if self._mode == PermissionMode.GRANULAR:
+            if self._granular_from_action_key(action_key):
+                return PermissionResult(allowed=True, reason="granular rule matched")
+            # fall through to ASK-style confirm
 
         if self._mode == PermissionMode.ASK or force_confirm:
             if self._async_confirm_callback:

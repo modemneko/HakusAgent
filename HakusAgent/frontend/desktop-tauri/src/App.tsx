@@ -3,6 +3,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster, toastApi } from '@/components/ui/toast'
 import { Sidebar } from '@/components/sidebar/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
+import { FlowWorkbench } from '@/components/flow/FlowWorkbench'
 import { TopBar } from '@/components/layout/TopBar'
 import { ResizeHandle } from '@/components/layout/ResizeHandle'
 import { RightPanel } from '@/components/review/RightPanel'
@@ -38,6 +39,7 @@ function App() {
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const sidebarCompact = useAppStore((s) => s.sidebarCompact)
+  const agentMode = useAppStore((s) => s.agentMode)
   const rightPanelOpen = useAppStore((s) => s.rightPanelOpen)
   const setSidebar = useAppStore((s) => s.setSidebar)
   const setSidebarCompact = useAppStore((s) => s.setSidebarCompact)
@@ -45,6 +47,11 @@ function App() {
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo)
+
+  // Flow mode is a full-window workbench: it ships its own left (workflow
+  // list) and right (inspector) rails, so the chat sidebar and the review
+  // panel must get out of the way entirely.
+  const isFlow = agentMode === 'flow'
 
   const toggleSidebar = () => {
     const state = useAppStore.getState()
@@ -189,7 +196,11 @@ function App() {
   useEffect(() => {
     if (!IS_TAURI || IS_ANDROID) return
 
-    // 1. Listen for backend:port event
+    // 1. Listen for the backend:port event. NOTE: the embedded Rust runtime
+    //    uses a fixed port (see src-tauri/src/embedded_backend.rs) and this
+    //    build does NOT emit the event, so the listener alone used to leave
+    //    the window permanently transparent. The port is therefore also
+    //    probed directly below.
     let unlisten: (() => void) | undefined
     ;(async () => {
       try {
@@ -200,6 +211,18 @@ function App() {
         })
       } catch { /* ignore */ }
     })()
+
+    // 1b. Direct probe of the embedded runtime: the client already defaults to
+    //     this URL, but a previously saved remote serverUrl would otherwise
+    //     make every health check fail against a dead host.
+    const embedded = 'http://127.0.0.1:48081'
+    const probeEmbedded = () => {
+      const current = useSettingsStore.getState().connection.serverUrl
+      if (current.includes('127.0.0.1') || current.includes('localhost')) {
+        apiClient.setBaseUrl(embedded)
+      }
+    }
+    probeEmbedded()
 
     // 2. Poll health every 300ms for the first ~5s (fast detection when
     //    backend is already up). If still not connected after that, fall
@@ -223,12 +246,15 @@ function App() {
             slowTimer = undefined
             return
           }
+          probeEmbedded()
           checkBackend()
         }, 2000)
         return
       }
+      probeEmbedded()
       checkBackend()
     }, 300)
+    probeEmbedded()
     checkBackend() // immediate first check
 
     return () => {
@@ -258,12 +284,15 @@ function App() {
   // This only fires if the backend hasn't connected after a full minute
   // (the Rust Runtime failed to start, antivirus blocked it, etc.). The user will see the
   // main UI with a "not connected" state and can open settings to debug.
-  // 60s is generous — normal cold start is <15s even on slow Windows.
+  //
+  // NOTE: this used to be 60s, which meant a transparent window for a full
+  // minute whenever the runtime was unreachable — it reads as "the app is
+  // broken". 6s is enough for a normal cold start on Windows.
   useEffect(() => {
     if (!IS_TAURI || IS_ANDROID) return
     const t = setTimeout(() => {
       tryDismissSplash()
-    }, 60000)
+    }, 6000)
     return () => clearTimeout(t)
   }, [IS_TAURI, tryDismissSplash])
 
@@ -398,10 +427,12 @@ function App() {
           <TopBar
             onToggleSidebar={toggleSidebar}
             onToggleRightPanel={toggleRightPanel}
+            showSidebarToggle={!isFlow}
+            flowMode={isFlow}
           />
 
           <div className="app-main relative flex min-h-0 flex-1">
-            {(sidebarOpen || rightPanelOpen) && (
+            {!isFlow && (sidebarOpen || rightPanelOpen) && (
               <button
                 type="button"
                 className="app-panel-scrim fixed inset-0 z-20 bg-black/25 backdrop-blur-[1px]"
@@ -414,21 +445,23 @@ function App() {
                 }}
               />
             )}
-            <div
-              data-testid="sidebar-wrapper"
-              data-panel-open={sidebarOpen}
-              data-sidebar-compact={compactSidebarActive ? 'true' : 'false'}
-              className={cn(
-                'sidebar-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
-                sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
-                'overflow-hidden',
-              )}
-            >
-              <Sidebar />
-            </div>
+            {!isFlow && (
+              <div
+                data-testid="sidebar-wrapper"
+                data-panel-open={sidebarOpen}
+                data-sidebar-compact={compactSidebarActive ? 'true' : 'false'}
+                className={cn(
+                  'sidebar-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
+                  sidebarOpen ? 'w-[var(--sidebar-width)]' : 'w-0',
+                  'overflow-hidden',
+                )}
+              >
+                <Sidebar />
+              </div>
+            )}
 
             {/* Sidebar resize handle — auto-collapses when dragged narrow */}
-            {sidebarOpen && !isPhoneViewport() && (
+            {!isFlow && sidebarOpen && !isPhoneViewport() && (
               <ResizeHandle
                 className="panel-resize-handle panel-resize-handle-left"
                 cssVar="--sidebar-width"
@@ -453,11 +486,11 @@ function App() {
             )}
 
             <div className="app-content flex min-h-0 min-w-0 flex-1 flex-col">
-              <ChatView />
+              {agentMode === 'flow' ? <FlowWorkbench /> : <ChatView />}
             </div>
 
             {/* Right panel resize handle */}
-            {rightPanelOpen && (
+            {!isFlow && rightPanelOpen && (
               <ResizeHandle
                 className="panel-resize-handle panel-resize-handle-right"
                 cssVar="--right-panel-width"
@@ -467,17 +500,19 @@ function App() {
               />
             )}
 
-            <div
-              data-testid="right-panel-wrapper"
-              data-panel-open={rightPanelOpen}
-              className={cn(
-                'right-panel-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
-                rightPanelOpen ? 'w-[var(--right-panel-width)]' : 'w-0',
-                'overflow-hidden',
-              )}
-            >
-              <RightPanel />
-            </div>
+            {!isFlow && (
+              <div
+                data-testid="right-panel-wrapper"
+                data-panel-open={rightPanelOpen}
+                className={cn(
+                  'right-panel-wrapper relative z-30 shrink-0 transition-[width,transform] duration-200 ease-out',
+                  rightPanelOpen ? 'w-[var(--right-panel-width)]' : 'w-0',
+                  'overflow-hidden',
+                )}
+              >
+                <RightPanel />
+              </div>
+            )}
           </div>
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
           {showFirstRun && <FirstRunSetup onComplete={() => setShowFirstRun(false)} />}

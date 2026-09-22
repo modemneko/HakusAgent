@@ -19,6 +19,7 @@ import {
   Palette,
   LayoutGrid,
   Plug,
+  Timer,
   FolderOpen,
   ArrowLeft,
 } from 'lucide-react'
@@ -47,6 +48,7 @@ import { AdvancedPanel } from './panels/AdvancedPanel'
 import { AboutPanel } from './panels/AboutPanel'
 import { ProjectsPanel } from './panels/ProjectsPanel'
 import { SkillsPanel } from './panels/SkillsPanel'
+import { AutomationsPanel } from './panels/AutomationsPanel'
 import { useAppStore, type SettingsCategory } from '@/store/app'
 
 type CategoryId = SettingsCategory
@@ -65,6 +67,7 @@ const CATEGORIES: Category[] = [
   { id: 'models', labelKey: 'settingsModels', descKey: 'modelDesc', icon: Bot },
   { id: 'workspace-data', labelKey: 'settingsWorkspaceData', descKey: 'projectsDesc', icon: FolderOpen },
   { id: 'tools', labelKey: 'tools', descKey: 'toolsDesc', icon: Shield },
+  { id: 'automations', labelKey: 'automations', descKey: 'automationsDesc', icon: Timer },
   { id: 'skills', labelKey: 'skills', descKey: 'skillsDesc', icon: Puzzle },
   { id: 'mcp', labelKey: 'mcp', descKey: 'mcpDesc', icon: Plug },
   { id: 'wechat', labelKey: 'wechat', descKey: 'wechatDesc', icon: MessageSquare },
@@ -183,6 +186,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {active === 'models' && <div className="settings-page settings-page-models"><ModelPanel /></div>}
                 {active === 'workspace-data' && <div className="settings-group-stack"><ProjectsPanel /><MemoryPanel /><AdvancedPanel /></div>}
                 {active === 'tools' && <div className="settings-page settings-page-single"><ToolsPanel /></div>}
+                {active === 'automations' && <div className="settings-page settings-page-single"><AutomationsPanel /></div>}
                 {active === 'skills' && <div className="settings-page settings-page-single"><SkillsPanel /></div>}
                 {active === 'mcp' && <div className="settings-page settings-page-single"><McpPanel /></div>}
                 {active === 'wechat' && <div className="settings-page settings-page-single"><WeChatPanel /></div>}

@@ -166,7 +166,7 @@ fn replay_placeholder_echo_is_dropped_from_ingest() {
     let mut content_index = 0;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let chunks = [
         json!({
@@ -199,7 +199,7 @@ fn replay_placeholder_echo_is_dropped_from_ingest() {
                 &mut content_index,
                 &mut text_started,
                 &mut thinking_started,
-                &mut tool_indices,
+                &mut tool_router,
                 &mut reasoning_detail_buffers,
                 true,
             )
@@ -227,7 +227,7 @@ fn streaming_fixture_accepts_delayed_tool_arguments_and_usage_tail() {
     let mut content_index = 0;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let chunks = [
         json!({
@@ -270,7 +270,7 @@ fn streaming_fixture_accepts_delayed_tool_arguments_and_usage_tail() {
                 &mut content_index,
                 &mut text_started,
                 &mut thinking_started,
-                &mut tool_indices,
+                &mut tool_router,
                 &mut reasoning_detail_buffers,
                 false,
             )

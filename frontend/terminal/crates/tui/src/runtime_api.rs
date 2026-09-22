@@ -5304,6 +5304,8 @@ async fn retry_thread_turn(
                 prompt: retry_prompt,
                 input_summary: None,
                 model: None,
+                model_provider: None,
+                model_provider_id: None,
                 mode: None,
                 permission_posture: None,
                 allow_shell: None,
@@ -6751,6 +6753,9 @@ struct ProviderModelEntry {
     reasoning_options: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     supports_reasoning: Option<bool>,
+    /// Total context window in tokens, when the catalog declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -7246,7 +7251,11 @@ fn provider_model_entry(provider: ApiProvider, id: impl Into<String>) -> Provide
             .as_ref()
             .map(|offering| offering.reasoning_options.clone())
             .unwrap_or_default(),
-        supports_reasoning: offering.and_then(|offering| offering.reasoning),
+        supports_reasoning: offering.as_ref().and_then(|offering| offering.reasoning),
+        context_window: offering
+            .as_ref()
+            .and_then(|offering| offering.limit.as_ref())
+            .and_then(|limit| limit.context),
     }
 }
 

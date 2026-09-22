@@ -40,6 +40,7 @@ import type {
   RuntimeConfigSnapshot,
   PermissionInfo,
   PermissionMode,
+  ApprovalRecord,
   MemoryDetails,
   DiagnosticsInfo,
   MetricsResponse,
@@ -276,6 +277,19 @@ export class HakusAIClient {
     return (text ? JSON.parse(text) : undefined) as T
   }
 
+  /** Sidecar (Python FastAPI) JSON call — /api/* surface. */
+  private async sidecarJson<T>(path: string, method: string, body: unknown, label: string): Promise<T> {
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}${path}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }, 30000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}${path}`, label)
+    if (res.status === 204) return undefined as T
+    const text = await res.text()
+    return (text ? JSON.parse(text) : undefined) as T
+  }
+
   // ============ Rust Runtime / HakusCLI parity surface ============
 
   getRuntimeInfo<T = unknown>(): Promise<T> { return this.runtimeJson('/runtime/info', 'GET', undefined, 'Get Runtime info failed') }
@@ -302,15 +316,42 @@ export class HakusAIClient {
   getRuntimeTask<T = unknown>(taskId: string): Promise<T> { return this.runtimeJson(`/tasks/${encodeURIComponent(taskId)}`, 'GET', undefined, 'Get task failed') }
   cancelRuntimeTask<T = unknown>(taskId: string): Promise<T> { return this.runtimeJson(`/tasks/${encodeURIComponent(taskId)}/cancel`, 'POST', {}, 'Cancel task failed') }
 
-  listRuntimeAutomations<T = unknown>(): Promise<T> { return this.runtimeJson('/automations', 'GET', undefined, 'List automations failed') }
-  createRuntimeAutomation<T = unknown>(body: unknown): Promise<T> { return this.runtimeJson('/automations', 'POST', body, 'Create automation failed') }
-  getRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'GET', undefined, 'Get automation failed') }
-  updateRuntimeAutomation<T = unknown>(id: string, body: unknown): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'PATCH', body, 'Update automation failed') }
-  deleteRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'DELETE', undefined, 'Delete automation failed') }
-  runRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/run`, 'POST', {}, 'Run automation failed') }
-  pauseRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/pause`, 'POST', {}, 'Pause automation failed') }
-  resumeRuntimeAutomation<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/resume`, 'POST', {}, 'Resume automation failed') }
-  listRuntimeAutomationRuns<T = unknown>(id: string): Promise<T> { return this.runtimeJson(`/automations/${encodeURIComponent(id)}/runs`, 'GET', undefined, 'List automation runs failed') }
+  listRuntimeAutomations<T = unknown>(): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson('/api/automations', 'GET', undefined, 'List automations failed').then(d => (d as any)?.automations ?? [])
+    return this.runtimeJson('/automations', 'GET', undefined, 'List automations failed')
+  }
+  createRuntimeAutomation<T = unknown>(body: unknown): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson('/api/automations', 'POST', body, 'Create automation failed')
+    return this.runtimeJson('/automations', 'POST', body, 'Create automation failed')
+  }
+  getRuntimeAutomation<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}`, 'GET', undefined, 'Get automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'GET', undefined, 'Get automation failed')
+  }
+  updateRuntimeAutomation<T = unknown>(id: string, body: unknown): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}`, 'PATCH', body, 'Update automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'PATCH', body, 'Update automation failed')
+  }
+  deleteRuntimeAutomation<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}`, 'DELETE', undefined, 'Delete automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}`, 'DELETE', undefined, 'Delete automation failed')
+  }
+  runRuntimeAutomation<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}/run`, 'POST', {}, 'Run automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}/run`, 'POST', {}, 'Run automation failed')
+  }
+  pauseRuntimeAutomation<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}/pause`, 'POST', {}, 'Pause automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}/pause`, 'POST', {}, 'Pause automation failed')
+  }
+  resumeRuntimeAutomation<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}/resume`, 'POST', {}, 'Resume automation failed')
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}/resume`, 'POST', {}, 'Resume automation failed')
+  }
+  listRuntimeAutomationRuns<T = unknown>(id: string): Promise<T> {
+    if (!this.usesEmbeddedRuntime) return this.sidecarJson(`/api/automations/${encodeURIComponent(id)}/runs`, 'GET', undefined, 'List automation runs failed').then(d => (d as any)?.runs ?? [])
+    return this.runtimeJson(`/automations/${encodeURIComponent(id)}/runs`, 'GET', undefined, 'List automation runs failed')
+  }
 
   getRuntimeUsage<T = unknown>(): Promise<T> { return this.runtimeJson('/usage', 'GET', undefined, 'Get usage failed') }
   listRuntimeSnapshots<T = unknown>(): Promise<T> { return this.runtimeJson('/snapshots', 'GET', undefined, 'List snapshots failed') }
@@ -409,17 +450,25 @@ export class HakusAIClient {
     hardTimeoutMs: number = 12000,
   ): Promise<Response> {
     const abortCtrl = new AbortController()
-    const signalTimeout = AbortSignal.timeout(hardTimeoutMs)
-    // 任一信号 abort 都会 abort 请求
-    const onSignalAbort = () => abortCtrl.abort()
-    if (signalTimeout.aborted) abortCtrl.abort()
-    else signalTimeout.addEventListener('abort', onSignalAbort, { once: true })
+    const callerSignal = init.signal
+    let timedOut = false
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    // Keep the caller's signal (for stop/rewind) distinct from the request
+    // timeout. Previously the timeout signal was always replaced onto fetch,
+    // and a timeout surfaced as the raw WebView error
+    // "signal is aborted without reason". That string leaked into user-facing
+    // toasts and made an ordinary network timeout look like a broken session.
+    const onCallerAbort = () => abortCtrl.abort()
+    if (callerSignal?.aborted) abortCtrl.abort()
+    else callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
 
     const hardTimeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
+        timedOut = true
         abortCtrl.abort()
         reject(new HakusAIError(`Request timed out after ${hardTimeoutMs}ms: ${url}`, 'TIMEOUT'))
-      }, hardTimeoutMs + 500) // 比 AbortSignal.timeout 晚 500ms，作为兜底
+      }, hardTimeoutMs)
     })
 
     const fetchPromise = fetch(url, {
@@ -429,8 +478,21 @@ export class HakusAIClient {
 
     try {
       return await Promise.race([fetchPromise, hardTimeoutPromise])
+    } catch (error) {
+      // Normalize platform-specific AbortError messages. A caller abort is
+      // intentionally preserved as AbortError so the chat view treats it as
+      // a user stop; only an internal timeout becomes a visible timeout.
+      if (timedOut) {
+        throw new HakusAIError(`Request timed out after ${hardTimeoutMs}ms: ${url}`, 'TIMEOUT')
+      }
+      if (callerSignal?.aborted) {
+        const abortError = new DOMException('The request was aborted', 'AbortError')
+        throw abortError
+      }
+      throw error
     } finally {
-      signalTimeout.removeEventListener('abort', onSignalAbort)
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
+      callerSignal?.removeEventListener('abort', onCallerAbort)
     }
   }
 
@@ -791,6 +853,7 @@ export class HakusAIClient {
           owned_by: null,
           reasoning_options: Array.isArray(model.reasoning_options) ? model.reasoning_options : [],
           supports_reasoning: typeof model.supports_reasoning === 'boolean' ? model.supports_reasoning : null,
+          context_window: typeof model.context_window === 'number' ? model.context_window : null,
         }
       })
       return {
@@ -829,6 +892,7 @@ export class HakusAIClient {
           owned_by: null,
           reasoning_options: Array.isArray(model.reasoning_options) ? model.reasoning_options : [],
           supports_reasoning: typeof model.supports_reasoning === 'boolean' ? model.supports_reasoning : null,
+          context_window: typeof model.context_window === 'number' ? model.context_window : null,
         }
       })
       return {
@@ -1508,9 +1572,9 @@ export class HakusAIClient {
     return res.json()
   }
 
-  async setPermission(mode: PermissionMode): Promise<void> {
+  async setPermission(mode: PermissionMode, granularRules?: unknown): Promise<void> {
     if (this.usesEmbeddedRuntime) {
-      const approval_mode = mode === 'auto' ? 'auto' : mode === 'bypass' ? 'never' : 'on-request'
+      const approval_mode = mode === 'auto' ? 'auto' : (mode === 'full_access' || mode === 'bypass') ? 'never' : mode === 'read_only' ? 'never' : 'on-request'
       const res = await this.runtimeFetch('/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1523,11 +1587,49 @@ export class HakusAIClient {
     const res = await this.fetchWithHardTimeout(`${this.baseUrl}/api/permission`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify(
+        granularRules
+          ? { mode, granular_rules: granularRules }
+          : { mode },
+      ),
     }, 10000)
     if (!res.ok) {
       await this._throwForResponse(res, `${this.baseUrl}/api/permission`, 'Set permission failed')
     }
+  }
+
+  // ============ 五档权限 / 审批流（sidecar P1/P2） ============
+
+  /** Pending approvals for a session (sidecar only). */
+  async listPendingApprovals(sessionId?: string): Promise<ApprovalRecord[]> {
+    if (this.usesEmbeddedRuntime) return []
+    const qs = new URLSearchParams({ pending: '1' })
+    if (sessionId) qs.set('session_id', sessionId)
+    const res = await this.fetchWithHardTimeout(
+      `${this.baseUrl}/api/approvals?${qs.toString()}`, {}, 10000,
+    )
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/api/approvals`, 'List approvals failed')
+    const data = await res.json()
+    return (data.approvals || []) as ApprovalRecord[]
+  }
+
+  /** Approve or deny an approval. decision: 'once' | 'session' | 'deny'. */
+  async decideApproval(approvalId: string, decision: 'once' | 'session' | 'deny'): Promise<void> {
+    if (this.usesEmbeddedRuntime) {
+      await this.decideRuntimeApproval(approvalId, {
+        decision: decision === 'deny' ? 'deny' : 'approve',
+      })
+      return
+    }
+    const path = decision === 'deny'
+      ? `/api/approvals/${encodeURIComponent(approvalId)}/deny`
+      : `/api/approvals/${encodeURIComponent(approvalId)}/approve`
+    const res = await this.fetchWithHardTimeout(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(decision === 'session' ? { scope: 'session' } : {}),
+    }, 10000)
+    if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}${path}`, 'Decide approval failed')
   }
 
   // ============ 配置导出/导入 / 重载 ============
@@ -1854,9 +1956,10 @@ export class HakusAIClient {
     projectId?: string,
     model?: string,
     longRunningGoal = false,
+    providerId?: string,
   ): Promise<void> {
     if (this.usesEmbeddedRuntime) {
-      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, model || provider, runMode, projectId, reasoningEffort, longRunningGoal)
+      await this.chatStreamEmbedded(message, sessionId, onChunk, signal, model || provider, runMode, projectId, reasoningEffort, longRunningGoal, providerId ?? provider)
       return
     }
     const res = await fetch(`${this.baseUrl}/api/chat/stream`, {
@@ -1930,6 +2033,7 @@ export class HakusAIClient {
     projectId?: string,
     reasoningEffort?: string,
     longRunningGoal = false,
+    providerId?: string,
   ): Promise<void> {
     const project = projectId
       ? (await this.listProjects()).find((candidate) => candidate.id === projectId) || null
@@ -1947,16 +2051,19 @@ export class HakusAIClient {
         await this._throwForResponse(workspaceResponse, workspaceUrl, 'Set Runtime project workspace failed')
       }
     }
-    // The GUI sends its CURRENT model with every turn. Re-point the thread's
-    // pinned model first, so route resolution follows the user's latest
-    // provider choice instead of failing with "model X is not served by
-    // direct provider Y" on threads that already have turn history.
+    // The GUI sends its CURRENT model + provider with every turn. Re-point
+    // the thread's pinned route first, so route resolution follows the
+    // user's latest provider choice instead of failing with "model X is not
+    // served by direct provider Y" on threads that already have turn history.
     if (provider) {
       try {
         await this.runtimeFetch(`/threads/${encodeURIComponent(threadId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: provider }),
+          body: JSON.stringify({
+            model: provider,
+            ...(providerId ? { model_provider: providerId, model_provider_id: providerId } : {}),
+          }),
           signal,
         })
       } catch (error) {
@@ -1974,6 +2081,10 @@ export class HakusAIClient {
       body: JSON.stringify({
         prompt: runtimePrompt,
         ...(provider ? { model: provider } : {}),
+        // Explicit provider identity: makes this turn's route authoritative
+        // (and heals the thread's pinned provider) instead of falling back
+        // to the runtime's default provider.
+        ...(providerId ? { model_provider: providerId, model_provider_id: providerId } : {}),
         // The Runtime speaks plan/act/operate — the UI's swift/deep map onto
         // act (daily work) and operate (full power) respectively.
         ...(runMode ? { mode: runtimeModeFromAgentMode(runMode) } : {}),
@@ -2072,6 +2183,14 @@ export class HakusAIClient {
         if (payload.kind === 'agent_reasoning') return { event_type: 'reasoning_delta', text: String(payload.delta || '') }
         return null
       case 'item.started': {
+        // The user-message item carries the runtime's durable item id. The
+        // UI creates its local message with a client-generated id (`m_…`)
+        // before the turn starts; rewinding needs the runtime item id, so
+        // surface it for the UI to bind to its local user message.
+        if (payload.kind === 'user_message' || payload.item?.kind === 'user_message') {
+          const item = payload.item || payload
+          return { event_type: 'remote_message_id', remote_id: String(item.id || '') } as any
+        }
         const tool = payload.tool || payload
         return {
           event_type: 'tool_call_started',
@@ -2093,14 +2212,24 @@ export class HakusAIClient {
           }
         }
         if (item.kind !== 'tool_call' && item.kind !== 'command_execution' && item.kind !== 'file_change') return null
+        // The tool name must come from item.metadata.tool_name (or the nested
+        // tool envelope on item.started). item.summary is a human receipt like
+        // "tool_search: {...}" — falling back to it made the whole JSON blob
+        // render as the tool name.
+        const toolName = String(
+          item.tool?.name
+            || item.metadata?.tool_name
+            || item.name
+            || '',
+        )
         return {
           event_type: 'tool_call_finished',
-          call_id: String(item.id || ''),
-          name: String(item.name || item.summary || ''),
+          call_id: String(item.tool?.id || item.id || ''),
+          name: toolName,
           result: String(item.detail || item.summary || ''),
           success: name === 'item.completed',
           duration: 0,
-          arguments: item.input || {},
+          arguments: item.tool?.input || item.input || {},
         }
       }
       case 'user_input.required': {

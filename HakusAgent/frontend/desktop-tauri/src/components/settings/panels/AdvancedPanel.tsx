@@ -31,6 +31,7 @@ import { useProjectsStore } from '@/store/projects'
 import { cn } from '@/lib/utils'
 import { DEFAULT_SETTINGS, type DiagnosticsInfo, type MetricsResponse } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
+import { DependencyDoctorPanel } from './DependencyDoctorPanel'
 
 export function AdvancedPanel() {
   const toast = useToast()
@@ -272,6 +273,11 @@ export function AdvancedPanel() {
           {copy('刷新诊断', 'Refresh diagnostics')}
         </Button>
       </div>
+
+      <Separator />
+
+      {/* Codex-style dependency doctor */}
+      <DependencyDoctorPanel />
 
       <Separator />
 

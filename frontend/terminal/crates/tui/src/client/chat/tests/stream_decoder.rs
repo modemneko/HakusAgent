@@ -1,4 +1,4 @@
-//! Drive `parse_sse_chunk` (the in-place SSE event extractor) over canned
+﻿//! Drive `parse_sse_chunk` (the in-place SSE event extractor) over canned
 //! chunk sequences. The full `handle_chat_completion_stream` path needs a
 //! live `reqwest::Response` so it isn't unit-testable without a mock HTTP
 //! harness (issue #69 tracks that). For #103 we exercise the chunk decoder
@@ -17,14 +17,14 @@ fn decode_chunk_with_reasoning(json_text: &str, is_reasoning_model: bool) -> Vec
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     parse_sse_chunk(
         &chunk,
         &mut content_index,
         &mut text_started,
         &mut thinking_started,
-        &mut tool_indices,
+        &mut tool_router,
         &mut reasoning_detail_buffers,
         is_reasoning_model,
     )
@@ -37,7 +37,7 @@ fn decode_chunks_with_style(
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let mut inline_reasoning_tags = InlineReasoningTagState::default();
     let mut events = Vec::new();
@@ -49,7 +49,7 @@ fn decode_chunks_with_style(
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             &mut inline_reasoning_tags,
             reasoning_stream_style,
@@ -301,7 +301,7 @@ fn decoder_streams_moonshot_multi_chunk_reasoning_as_thinking() {
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let mut events = Vec::new();
     for chunk in chunks {
@@ -311,7 +311,7 @@ fn decoder_streams_moonshot_multi_chunk_reasoning_as_thinking() {
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             is_reasoning,
         ));
@@ -389,7 +389,7 @@ fn decoder_streams_minimax_reasoning_details_as_incremental_thinking() {
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let mut events = Vec::new();
     for chunk in chunks {
@@ -399,7 +399,7 @@ fn decoder_streams_minimax_reasoning_details_as_incremental_thinking() {
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             is_reasoning,
         ));
@@ -460,7 +460,7 @@ fn modelstudio_streams_reasoning_content_as_thinking() {
         let mut content_index = 0u32;
         let mut text_started = false;
         let mut thinking_started = false;
-        let mut tool_indices = std::collections::HashMap::new();
+        let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut reasoning_detail_buffers = std::collections::HashMap::new();
         let mut inline_reasoning_tags = InlineReasoningTagState::default();
         let mut events = Vec::new();
@@ -471,7 +471,7 @@ fn modelstudio_streams_reasoning_content_as_thinking() {
                 &mut content_index,
                 &mut text_started,
                 &mut thinking_started,
-                &mut tool_indices,
+                &mut tool_router,
                 &mut reasoning_detail_buffers,
                 &mut inline_reasoning_tags,
                 style,
@@ -529,7 +529,7 @@ fn decoder_does_not_render_reasoning_as_text_for_known_provider_models() {
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let is_reasoning_model =
         is_reasoning_model_for_stream(ApiProvider::XiaomiMimo, "mimo-v2.5-pro");
@@ -544,7 +544,7 @@ fn decoder_does_not_render_reasoning_as_text_for_known_provider_models() {
         &mut content_index,
         &mut text_started,
         &mut thinking_started,
-        &mut tool_indices,
+        &mut tool_router,
         &mut reasoning_detail_buffers,
         is_reasoning_model,
     );
@@ -743,7 +743,7 @@ fn decoder_treats_done_frame_as_terminal() {
     let mut content_index = 0u32;
     let mut text_started = false;
     let mut thinking_started = false;
-    let mut tool_indices = std::collections::HashMap::new();
+    let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     let mut reasoning_detail_buffers = std::collections::HashMap::new();
     let mut inline_reasoning_tags = InlineReasoningTagState::default();
 
@@ -752,7 +752,7 @@ fn decoder_treats_done_frame_as_terminal() {
         &mut content_index,
         &mut text_started,
         &mut thinking_started,
-        &mut tool_indices,
+        &mut tool_router,
         &mut reasoning_detail_buffers,
         &mut inline_reasoning_tags,
         ReasoningStreamStyle::SeparateField,
@@ -765,7 +765,7 @@ fn decoder_treats_done_frame_as_terminal() {
     assert_eq!(content_index, 0);
     assert!(!text_started);
     assert!(!thinking_started);
-    assert!(tool_indices.is_empty());
+    assert!(tool_router.is_empty());
 }
 
 #[test]
@@ -814,6 +814,79 @@ fn decoder_uses_fallback_name_for_empty_streaming_tool_name() {
         )),
         "empty upstream tool names should render as unknown_tool; got {events:?}"
     );
+}
+
+#[test]
+fn decoder_ignores_empty_finish_reason_on_fragment_chunks() {
+    // SenseNova sends `"finish_reason": ""` on every streaming chunk. The
+    // empty string must not trigger the finish path (which drains
+    // tool_indices and closes open blocks), or each fragment of a GLM
+    // tool call opens a brand-new call.
+    let events = decode_chunks_with_style(
+        &[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"tool_search","arguments":"{"}}]},"finish_reason":""}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"","arguments":"\"query\": "}}]},"finish_reason":""}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","function":{"arguments":"\"shell\"}"}}]},"finish_reason":"tool_calls"}]}"#,
+        ],
+        ReasoningStreamStyle::SeparateField,
+    );
+
+    let starts = events
+        .iter()
+        .filter(|e| matches!(e, StreamEvent::ContentBlockStart { .. }))
+        .count();
+    assert_eq!(
+        starts, 1,
+        "empty finish_reason must not close blocks between fragments; got {events:?}"
+    );
+    let args: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::ContentBlockDelta {
+                delta: Delta::InputJsonDelta { partial_json },
+                ..
+            } => Some(partial_json.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(args, r#"{"query": "shell"}"#, "got {events:?}");
+}
+
+#[test]
+fn decoder_appends_glm_fragmented_tool_call_without_identity() {
+    // GLM-via-SenseNova streams one logical tool call as multiple
+    // `tool_calls` entries with incrementing indices; later entries repeat a
+    // (fresh) `id` but carry an empty `function.name` — only the next
+    // `arguments` slice. They must append to the first call's block, not
+    // open new calls.
+    let events = decode_chunks_with_style(
+        &[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_glm","function":{"name":"tool_search","arguments":"{\"query\":"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_glm_b","function":{"name":"","arguments":""}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_glm_c","function":{"arguments":"\"shell\"}"}}]}}]}"#,
+        ],
+        ReasoningStreamStyle::SeparateField,
+    );
+
+    let starts = events
+        .iter()
+        .filter(|e| matches!(e, StreamEvent::ContentBlockStart { .. }))
+        .count();
+    assert_eq!(
+        starts, 1,
+        "identity-less fragments must not open new tool blocks; got {events:?}"
+    );
+    let args: String = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::ContentBlockDelta {
+                delta: Delta::InputJsonDelta { partial_json },
+                ..
+            } => Some(partial_json.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(args, r#"{"query":"shell"}"#, "got {events:?}");
 }
 
 #[test]

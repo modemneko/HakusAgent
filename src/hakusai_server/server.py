@@ -54,7 +54,7 @@ logger = get_logger("haku.sidecar.server")
 # sidecar.exe 还是 beta.2 时期的（没有 /api/config/providers 等新端点）。
 # 加这个版本号后，客户端能直接告诉用户 "sidecar 版本过旧" 而不是让用户
 # 对着 404 一头雾水。
-SIDECAR_API_VERSION = "0.13.0"
+SIDECAR_API_VERSION = "0.14.0"
 SIDECAR_API_VERSION_INT = 13  # 整数版本，便于客户端比较
 # v0.13.0: + User-managed Skills API (/api/skills*) and explicit
 #          @skill:<name> prompt injection for desktop conversations.
@@ -211,6 +211,22 @@ class SessionCreateRequest(BaseModel):
     pinned: bool = False
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+
+
+class AutomationCreateRequest(BaseModel):
+    """创建 automation 请求"""
+    name: str
+    schedule: str  # "30m" / "1h" / "@hourly" / "@daily" / "@manual"
+    prompt: str
+    enabled: bool = True
+
+
+class AutomationUpdateRequest(BaseModel):
+    """更新 automation 请求 — 所有字段可选"""
+    name: Optional[str] = None
+    schedule: Optional[str] = None
+    prompt: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 class SessionUpdateRequest(BaseModel):
@@ -892,8 +908,24 @@ class HakusAIServer:
             except Exception as e:
                 logger.warning(f"[WS] background loops start failed: {e}", exc_info=True)
 
+            # Start automation scheduler (Codex-style scheduled turns).
+            # Non-blocking: failures don't crash the sidecar.
+            try:
+                from .automations import get_scheduler
+                await get_scheduler().start()
+            except Exception as e:
+                logger.warning(f"automation scheduler start failed: {e}", exc_info=True)
+
             yield
             
+            # Stop the automation scheduler first so no new turns fire
+            # while we tear down AI components.
+            try:
+                from .automations import get_scheduler
+                await get_scheduler().stop()
+            except Exception as e:
+                logger.warning(f"automation scheduler stop failed: {e}")
+
             # 关闭时
             logger.info("Shutting down HakusAI Server...")
             # 如果 init 还没完成，等它结束（最多 5s），避免资源没释放
@@ -1565,6 +1597,34 @@ class HakusAIServer:
                                 turn_failed = True
                                 self._inc_metric("total_errors", provider=request.provider or "default")
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            # 审批流：把新产生的 pending approval 注入 SSE 流,
+                            # 前端弹 glass 审批对话框。
+                            # 时序：approval 在 tool_call_started 之后、
+                            # tool_call_finished 之前创建（工具执行中被回调阻塞），
+                            # 所以下一个 chunk 不会到来 —— 必须在 started 后
+                            # 主动短轮询 drain，否则 approval_required 永远发不出。
+                            try:
+                                from .approvals import get_store as _get_ap_store
+                                _ap_store = _get_ap_store()
+                                _ap_retries = 6 if etype == "tool_call_started" else 1
+                                for _ in range(_ap_retries):
+                                    _new_ap = _ap_store.drain_new(request.session_id)
+                                    if _new_ap:
+                                        for _ap in _new_ap:
+                                            _ap_chunk = {
+                                                'content': '',
+                                                'emotion': None,
+                                                'actions': [],
+                                                'done': False,
+                                                'event_type': 'approval_required',
+                                                'approval': _ap.to_dict(),
+                                            }
+                                            yield "data: " + json.dumps(_ap_chunk, ensure_ascii=False) + "\n\n"
+                                    if _ap_retries <= 1:
+                                        break
+                                    await asyncio.sleep(0.25)
+                            except Exception as _ap_err:
+                                logger.debug(f"approval drain failed: {_ap_err}")
                     except Exception as e:
                         logger.error(f"AgentCore stream error: {e}", exc_info=True)
                         if not turn_failed:
@@ -1760,11 +1820,25 @@ class HakusAIServer:
         #     浏览器缓存清空就丢"的问题)
 
         @app.get("/api/sessions")
-        async def list_sessions_api():
+        async def list_sessions_api(tree: int = 0):
             """列出所有 sessions (按 updated_at 倒序, pinned 优先).
-            不返回 messages — 客户端按需 GET /api/sessions/{id} 拉详情."""
+            不返回 messages — 客户端按需 GET /api/sessions/{id} 拉详情.
+            tree=1 时返回父子树 (Codex thread tree): 每项带 children 列表,
+            顶层仅包含无 parent 的会话."""
             try:
-                return {"sessions": session_store.list_sessions()}
+                sessions = session_store.list_sessions()
+                if not tree:
+                    return {"sessions": sessions}
+                by_id = {s["id"]: {**s, "children": []} for s in sessions}
+                roots = []
+                for s in sessions:
+                    node = by_id[s["id"]]
+                    parent = s.get("parent_id")
+                    if parent and parent in by_id:
+                        by_id[parent]["children"].append(node)
+                    else:
+                        roots.append(node)
+                return {"sessions": roots}
             except Exception as e:
                 logger.error(f"list_sessions failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
@@ -1880,6 +1954,173 @@ class HakusAIServer:
             except Exception as e:
                 logger.error(f"delete_session failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/sessions/{session_id}/fork")
+        async def fork_session_api(session_id: str, request: dict = None):
+            """Fork 一个会话到新分支（Codex fork_thread 语义）。
+
+            body 可选: {title?: str, with_messages?: bool (默认 true)}
+            返回新会话。新会话 origin='fork', parent_id=源会话。
+            """
+            try:
+                import uuid as _uuid
+                src = session_store.get_session(session_id)
+                if src is None:
+                    raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+                body = request or {}
+                new_id = f"s_fork_{_uuid.uuid4().hex[:12]}"
+                new_session = session_store.create_session(
+                    new_id,
+                    title=body.get("title") or f"{src['title']} (fork)",
+                    parent_id=session_id,
+                    origin="fork",
+                )
+                if body.get("with_messages", True):
+                    for m in session_store.list_messages(session_id):
+                        session_store.add_message(
+                            new_id, m["id"] + "_f", m["role"], m["content"],
+                            reasoning=m.get("reasoning"),
+                            tool_calls=m.get("tool_calls") or None,
+                            created_at=m.get("created_at"),
+                            updated_at=m.get("updated_at"),
+                        )
+                    # P5: fork copies the timeline ledger too, so the child
+                    # session keeps the full history (Codex fork_thread).
+                    for ev in session_store.list_events(session_id):
+                        session_store.append_event(
+                            new_id,
+                            ev["type"],
+                            ev.get("payload"),
+                            turn_id=ev.get("turn_id"),
+                            created_at=ev.get("created_at"),
+                        )
+                return new_session
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"fork_session failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        # -----------------------------------------------------------------
+        # Automations (Codex-style scheduled turns)
+        # -----------------------------------------------------------------
+
+        @app.get("/api/automations")
+        async def list_automations_api():
+            try:
+                return {"automations": session_store.list_automations()}
+            except Exception as e:
+                logger.error(f"list_automations failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/api/automations")
+        async def create_automation_api(req: AutomationCreateRequest):
+            try:
+                from .automations import compute_next_run, validate_schedule
+                if not validate_schedule(req.schedule):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="invalid schedule (use '30m'/'1h'/'@daily'/'@manual')",
+                    )
+                auto_id = f"auto_{uuid.uuid4().hex[:12]}"
+                auto = session_store.create_automation(
+                    auto_id,
+                    req.name,
+                    req.schedule,
+                    req.prompt,
+                    enabled=req.enabled,
+                    next_run_at=compute_next_run(req.schedule) if req.enabled else None,
+                )
+                return auto
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"create_automation failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/automations/{automation_id}")
+        async def get_automation_api(automation_id: str):
+            auto = session_store.get_automation(automation_id)
+            if auto is None:
+                raise HTTPException(status_code=404, detail="automation not found")
+            return auto
+
+        @app.patch("/api/automations/{automation_id}")
+        async def update_automation_api(automation_id: str, req: AutomationUpdateRequest):
+            try:
+                from .automations import compute_next_run, validate_schedule
+                if session_store.get_automation(automation_id) is None:
+                    raise HTTPException(status_code=404, detail="automation not found")
+                if req.schedule is not None and not validate_schedule(req.schedule):
+                    raise HTTPException(status_code=422, detail="invalid schedule")
+                kwargs: Dict[str, Any] = {
+                    k: v for k, v in {
+                        "name": req.name,
+                        "schedule": req.schedule,
+                        "prompt": req.prompt,
+                    }.items() if v is not None
+                }
+                if req.enabled is not None:
+                    kwargs["enabled"] = req.enabled
+                    # Toggling enabled recomputes next_run_at from now.
+                    if req.enabled:
+                        schedule = req.schedule or session_store.get_automation(automation_id)["schedule"]
+                        kwargs["next_run_at"] = compute_next_run(schedule)
+                    else:
+                        kwargs["clear_next_run"] = True
+                updated = session_store.update_automation(automation_id, **kwargs)
+                return updated
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"update_automation failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.delete("/api/automations/{automation_id}")
+        async def delete_automation_api(automation_id: str):
+            if not session_store.delete_automation(automation_id):
+                raise HTTPException(status_code=404, detail="automation not found")
+            return {"deleted": True}
+
+        @app.post("/api/automations/{automation_id}/run")
+        async def run_automation_api(automation_id: str):
+            """手动触发一次 — 不等待完成，立即返回 run 记录."""
+            auto = session_store.get_automation(automation_id)
+            if auto is None:
+                raise HTTPException(status_code=404, detail="automation not found")
+            from .automations import get_scheduler
+            sched = get_scheduler()
+            if auto["id"] in sched._running:
+                raise HTTPException(status_code=409, detail="automation already running")
+            sched._running.add(auto["id"])
+            asyncio.create_task(sched._run_automation(auto), name=f"auto-manual-{auto['id']}")
+            return {"started": True, "automation_id": auto["id"]}
+
+        @app.post("/api/automations/{automation_id}/pause")
+        async def pause_automation_api(automation_id: str):
+            updated = session_store.update_automation(
+                automation_id, enabled=False, clear_next_run=True
+            )
+            if updated is None:
+                raise HTTPException(status_code=404, detail="automation not found")
+            return updated
+
+        @app.post("/api/automations/{automation_id}/resume")
+        async def resume_automation_api(automation_id: str):
+            from .automations import compute_next_run
+            auto = session_store.get_automation(automation_id)
+            if auto is None:
+                raise HTTPException(status_code=404, detail="automation not found")
+            updated = session_store.update_automation(
+                automation_id,
+                enabled=True,
+                next_run_at=compute_next_run(auto["schedule"]),
+            )
+            return updated
+
+        @app.get("/api/automations/{automation_id}/runs")
+        async def list_automation_runs_api(automation_id: str, limit: int = 20):
+            return {"runs": session_store.list_automation_runs(automation_id, limit)}
 
         @app.get("/api/sessions/{session_id}/messages")
         async def list_messages_api(session_id: str):
@@ -2083,15 +2324,17 @@ class HakusAIServer:
                 idx = next((i for i, m in enumerate(msgs) if m["id"] == message_id), -1)
                 if idx == -1:
                     raise HTTPException(status_code=404, detail="message not found")
-                # Delete message_id and all messages after it
+                # Delete message_id and all messages after it.
+                # P5: the ledger is append-only — we record a truncation
+                # event instead of physically deleting rows; list_messages
+                # projects over the cutoff.
                 to_delete = msgs[idx:]
-                deleted_count = 0
-                for m in to_delete:
-                    try:
-                        session_store.delete_message(m["id"])
-                        deleted_count += 1
-                    except Exception as _de:
-                        logger.warning(f"delete_message {m['id']} failed: {_de}")
+                session_store.append_truncation(
+                    session_id,
+                    deleted_ids=[m["id"] for m in to_delete],
+                    reason="rewind",
+                )
+                deleted_count = len(to_delete)
                 # Best-effort: clear AgentCore in-memory context
                 try:
                     agentcore_clear_session(session_id)
@@ -2875,11 +3118,17 @@ class HakusAIServer:
                 logger.warning(f"sync disabled categories to agents failed: {_e}")
             return {"tool_id": tool_id, "enabled": enabled, "disabled_categories": sorted(disabled)}
 
+        # ========== 五档权限引擎（Codex-style profiles） ==========
+
+        _FIVE_MODES = ["read_only", "auto", "granular", "guardian", "full_access"]
+
         @app.get("/api/permission")
         async def get_permission():
-            """获取当前权限模式"""
+            """获取当前五档权限模式 + granular 规则 + profile"""
             import os, yaml as _yaml
             from pathlib import Path as _Path
+            from hakus.permissions.engine import get_engine, PROFILES
+
             config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
             raw: dict = {}
             if config_path.exists():
@@ -2887,17 +3136,43 @@ class HakusAIServer:
                     raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
                 except Exception:
                     raw = {}
-            mode = raw.get("permission", {}).get("mode", "ask")
-            return {"mode": mode, "available_modes": ["auto", "ask", "bypass"]}
+            perm_cfg = raw.get("permission", {}) or {}
+            mode = perm_cfg.get("mode", "auto")
+            if mode not in _FIVE_MODES:
+                # legacy modes map into the five tiers
+                mode = {"ask": "auto", "bypass": "full_access"}.get(mode, "auto")
+            engine = get_engine()
+            # Engine state is the source of truth for the running process;
+            # config.yaml only seeds it on first call.
+            return {
+                "mode": engine.mode.value,
+                "granular_rules": engine.rules.to_dict(),
+                "profile": PROFILES[engine.mode.value],
+                "available_modes": _FIVE_MODES,
+                "config_mode": mode,
+            }
 
         @app.post("/api/permission")
         async def set_permission(request: dict):
-            """设置权限模式。请求体: {mode: "auto"|"ask"|"bypass"}"""
+            """设置五档权限模式。
+
+            请求体: {mode, granular_rules?: {shell, write_paths, network}}
+            持久化到 config.yaml 并即时应用到所有活跃 agent。
+            """
             import os, yaml as _yaml
             from pathlib import Path as _Path
+            from hakus.permissions.engine import get_engine
+
             mode = request.get("mode")
-            if mode not in ("auto", "ask", "bypass"):
-                raise HTTPException(status_code=400, detail="mode must be auto/ask/bypass")
+            if mode not in _FIVE_MODES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"mode must be one of {_FIVE_MODES}",
+                )
+            granular_rules = request.get("granular_rules")
+            engine = get_engine()
+            state = engine.set_mode(mode, rules=granular_rules)
+
             config_path = _Path(os.path.expanduser("~/.hakus/config.yaml"))
             raw: dict = {}
             if config_path.exists():
@@ -2907,6 +3182,8 @@ class HakusAIServer:
                     raw = {}
             perm_cfg = raw.setdefault("permission", {})
             perm_cfg["mode"] = mode
+            if granular_rules is not None:
+                perm_cfg["granular_rules"] = granular_rules
             try:
                 config_path.write_text(
                     _yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False),
@@ -2914,7 +3191,66 @@ class HakusAIServer:
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"failed to write config: {e}")
-            return {"mode": mode}
+
+            # Hot-apply to every live agent's PermissionManager
+            from . import agent_bridge as _bridge
+            with _bridge._agent_cache_lock:
+                live_agents = list(_bridge._agent_cache.values())
+            for _agent in live_agents:
+                try:
+                    engine.apply_to_manager(_agent._permission)
+                except Exception as _e:
+                    logger.warning(f"apply permission mode to agent failed: {_e}")
+
+            return {"mode": state["mode"], "granular_rules": state["granular_rules"],
+                    "profile": state["profile"]}
+
+        # ========== 审批流（五档权限引擎的 approval_required） ==========
+
+        @app.get("/api/approvals")
+        async def list_approvals(session_id: str = "", pending: int = 1):
+            """列出待审批（pending=1）或全部审批记录"""
+            from .approvals import get_store
+            store = get_store()
+            if pending:
+                items = store.pending(session_id or None)
+            else:
+                with store._lock:
+                    items = [a for a in store._approvals.values()
+                             if not session_id or a.session_id == session_id]
+            return {"approvals": [a.to_dict() for a in items]}
+
+        @app.post("/api/approvals/{approval_id}/approve")
+        async def approve_approval(approval_id: str, request: dict = None):
+            """批准审批。body: {scope: "once"|"session"}（默认 once）"""
+            from .approvals import get_store
+            store = get_store()
+            scope = (request or {}).get("scope", "once")
+            if scope not in ("once", "session"):
+                scope = "once"
+            approval = store.resolve(approval_id, scope)
+            if approval is None:
+                raise HTTPException(status_code=404, detail="approval not found or already resolved")
+            # session 范围 → 写入该会话 agent 的白名单，后续同 key 自动放行
+            if scope == "session":
+                with agent_bridge._agent_cache_lock:
+                    agents = [v for k, v in agent_bridge._agent_cache.items()
+                              if k[0] == approval.session_id]
+                for _agent in agents:
+                    try:
+                        _agent._permission.approve_for_session(approval.action_key)
+                    except Exception as _e:
+                        logger.warning(f"approve_for_session failed: {_e}")
+            return approval.to_dict()
+
+        @app.post("/api/approvals/{approval_id}/deny")
+        async def deny_approval(approval_id: str):
+            from .approvals import get_store
+            store = get_store()
+            approval = store.resolve(approval_id, "deny")
+            if approval is None:
+                raise HTTPException(status_code=404, detail="approval not found or already resolved")
+            return approval.to_dict()
 
         # ========== 配置导出/导入 ==========
 

@@ -77,6 +77,7 @@ MODE_ALLOWED_CATEGORIES: Final[dict[RunMode, FrozenSet[str] | None]] = {
         "task",
         "plan",
         "interactive",
+        "threads",      # Codex-style thread ops (create/fork/handoff thread)
         "general",
     }),
     DEEP_MODE: None,    # no restriction — Code = full power

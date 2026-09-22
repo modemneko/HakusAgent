@@ -137,6 +137,113 @@ def post_answer(session_id: str, question_id: str, choice: str) -> bool:
         return False
 
 
+# ============================================================================
+# Thread-as-tool runner (create_thread / fork_thread / send_message_to_thread
+# / handoff_thread). The tool classes live in hakus/tools/builtin/threads.py
+# and stay sidecar-free — the actual execution is injected here.
+# ============================================================================
+
+async def _thread_runner(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a thread op for the builtin thread tools.
+
+    ``payload["parent_session_id"]`` is always set by the tool layer.
+    """
+    import uuid as _uuid
+    from hakus.tools.builtin import threads as _threads_mod
+    from . import session_store as _store
+
+    parent_sid = payload["parent_session_id"]
+
+    def _new_sid(prefix: str) -> str:
+        return f"s_{prefix}_{_uuid.uuid4().hex[:12]}"
+
+    def _working_dir_of(sid: str) -> Optional[str]:
+        for k, v in list(_agent_cache.items()):
+            if k[0] == sid:
+                ctx = getattr(v, "_context", None)
+                wd = getattr(ctx, "working_dir", None)
+                if wd and os.path.isdir(wd):
+                    return wd
+        return None
+
+    if action == "create":
+        new_sid = _new_sid("agent")
+        title = payload.get("title") or payload.get("task", "")[:40]
+        _store.create_session(
+            new_sid, title=title, parent_id=parent_sid, origin="agent",
+        )
+        result = await run_turn_collect(
+            payload["task"], new_sid,
+            working_dir=_working_dir_of(parent_sid),
+        )
+        return {
+            "session_id": new_sid,
+            "title": title,
+            "status": "failed" if result.get("failed") else "completed",
+            "summary": result.get("content", "")[:4000],
+            "error": result.get("error"),
+        }
+
+    if action == "fork":
+        source_sid = payload.get("session_id") or parent_sid
+        if not _store.get_session(source_sid):
+            return {"error": f"session not found: {source_sid}"}
+        new_sid = _new_sid("fork")
+        src = _store.get_session(source_sid) or {}
+        _store.create_session(
+            new_sid,
+            title=payload.get("title") or f"{src.get('title', 'Chat')} (fork)",
+            parent_id=source_sid,
+            origin="fork",
+        )
+        for m in _store.list_messages(source_sid):
+            _store.add_message(
+                new_sid, m["id"] + "_f", m["role"], m["content"],
+                reasoning=m.get("reasoning"),
+                tool_calls=m.get("tool_calls") or None,
+                created_at=m.get("created_at"), updated_at=m.get("updated_at"),
+            )
+        prompt = payload.get("prompt")
+        summary = None
+        if prompt:
+            result = await run_turn_collect(
+                prompt, new_sid, working_dir=_working_dir_of(source_sid),
+            )
+            summary = result.get("content", "")[:4000]
+        return {"session_id": new_sid, "forked_from": source_sid,
+                "summary": summary}
+
+    if action in ("send", "handoff"):
+        target_sid = payload.get("session_id") or ""
+        if not _store.get_session(target_sid):
+            return {"error": f"session not found: {target_sid}"}
+        result = await run_turn_collect(
+            payload["message"], target_sid,
+            working_dir=_working_dir_of(target_sid) or _working_dir_of(parent_sid),
+        )
+        return {
+            "session_id": target_sid,
+            "status": "failed" if result.get("failed") else "completed",
+            "summary": result.get("content", "")[:4000],
+            "error": result.get("error"),
+        }
+
+    return {"error": f"unknown thread action: {action}"}
+
+
+def _install_thread_runner() -> None:
+    """Idempotently register the thread runner with the tool layer."""
+    try:
+        from hakus.tools.builtin import threads as _threads_mod
+        if _threads_mod._runner is None:
+            _threads_mod.set_runner(_thread_runner)
+    except Exception as e:
+        logger.warning(f"thread runner install failed (non-blocking): {e}")
+
+
+_install_thread_runner()
+
+
 def _resolve_provider(explicit: Optional[str] = None) -> str:
     """Pick the provider name to pass to AgentCore.
 
@@ -170,34 +277,72 @@ def _extract_benchmark_output_dir(message: str) -> Optional[str]:
     return os.path.normpath(output_dir)
 
 
-def _make_confirm_callback():
-    """Auto-approve every dangerous tool call.
+def _make_confirm_callback(session_id: str = "default"):
+    """Sync confirm callback — routes through the five-tier engine.
 
-    The sidecar has no UI to show a permission dialog, so we
-    approve everything. This is the same effective behavior as
-    the old BaseAgent (which had no permission system at all),
-    but now goes through the full permission pipeline — meaning
-    the strict always-deny rules in PermissionChecker still apply
-    (e.g. writing to ``.aws/credentials`` will still be blocked).
-
-    Future: replace this with an async callback that pushes an
-    ApprovalOp to a per-session queue and waits for the frontend
-    to respond via a new ``/api/approval/{session_id}`` endpoint.
+    - full_access: auto-approve (never reaches here in practice, the
+      PermissionManager BYPASS mode skips callbacks entirely)
+    - auto / granular / guardian: create a pending approval and block
+      (short poll loop) until the frontend resolves it. Fail-safe:
+      timeout → deny.
     """
 
     def _cb(action_key: str, reason: str) -> str:
-        logger.info(f"[sidecar-perm] auto-approve: {action_key} ({reason})")
-        return "session"
+        from hakus.permissions.engine import get_engine, FiveMode
+        engine = get_engine()
+        if engine.mode == FiveMode.FULL_ACCESS:
+            logger.info(f"[sidecar-perm] auto-approve: {action_key} ({reason})")
+            return "session"
+        # approval-required tiers → pending approval flow (sync poll)
+        import time as _time
+        from .approvals import get_store, DEFAULT_TIMEOUT_S
+        store = get_store()
+        approval = store.create(
+            session_id=session_id,
+            tool=action_key.split(":", 1)[0],
+            action_key=action_key,
+            reason=reason,
+            approver="guardian" if engine.mode == FiveMode.GUARDIAN else "user",
+        )
+        logger.info(f"[sidecar-perm] approval required: {approval.id} {action_key}")
+        deadline = _time.time() + DEFAULT_TIMEOUT_S
+        while _time.time() < deadline:
+            _time.sleep(0.2)
+            rec = store.get(approval.id)
+            if rec and rec.status != "pending":
+                return rec.decision or "deny"
+        return "deny"
 
     return _cb
 
 
-def _make_async_confirm_callback():
-    """Async version of _make_confirm_callback (for TUI mode off)."""
+def _make_async_confirm_callback(session_id: str = "default"):
+    """Async confirm callback — routes through the five-tier engine.
+
+    full_access → auto-approve; auto / granular / guardian → create a
+    pending approval and await the frontend's decision via the approval
+    store (timeout → deny).
+    """
 
     async def _cb(action_key: str, reason: str) -> str:
-        logger.info(f"[sidecar-perm] auto-approve (async): {action_key} ({reason})")
-        return "session"
+        from hakus.permissions.engine import get_engine, FiveMode
+        engine = get_engine()
+        if engine.mode == FiveMode.FULL_ACCESS:
+            logger.info(f"[sidecar-perm] auto-approve (async): {action_key} ({reason})")
+            return "session"
+        from .approvals import get_store, DEFAULT_TIMEOUT_S
+        store = get_store()
+        approval = store.create(
+            session_id=session_id,
+            tool=action_key.split(":", 1)[0],
+            action_key=action_key,
+            reason=reason,
+            approver="guardian" if engine.mode == FiveMode.GUARDIAN else "user",
+        )
+        logger.info(f"[sidecar-perm] approval required: {approval.id} {action_key}")
+        decision = await store.wait(approval.id, timeout=DEFAULT_TIMEOUT_S)
+        logger.info(f"[sidecar-perm] approval {approval.id} → {decision}")
+        return decision
 
     return _cb
 
@@ -251,7 +396,7 @@ def get_or_create_agent(
             agent = AgentCore(
                 model_type=resolved_provider,
                 permission_mode=PermissionMode.ASK,
-                confirm_callback=_make_confirm_callback(),
+                confirm_callback=_make_confirm_callback(session_id),
                 session_id=session_id,
                 working_dir=resolved_working_dir,
                 # Sidecar runs headless — no Textual event loop. The
@@ -270,9 +415,18 @@ def get_or_create_agent(
             # Install async callback too — AgentCore uses it when
             # _tui_mode is False (which is the case here).
             try:
-                agent._permission.set_async_confirm_callback(_make_async_confirm_callback())
+                agent._permission.set_async_confirm_callback(_make_async_confirm_callback(session_id))
             except Exception as e:
                 logger.warning(f"Could not set async confirm callback: {e}")
+
+            # Five-tier permission engine: seed from config.yaml (once) and
+            # project the current tier onto this agent's PermissionManager.
+            try:
+                from hakus.permissions.engine import get_engine, seed_from_config
+                seed_from_config()
+                get_engine().apply_to_manager(agent._permission)
+            except Exception as e:
+                logger.warning(f"Could not apply permission engine: {e}")
 
             # Phase 2 round 2: register MCP tools into the agent.
             # If McpClientManager has running servers, their tools become
@@ -524,6 +678,15 @@ async def run_turn_stream(
         logger.warning(f"session_log init failed (non-blocking): {_sl_err}")
         _recorder = None
         _turn_num = 0
+
+    # ── Thread-as-tool context: bind the parent session so the builtin
+    # create_thread / fork_thread / ... tools know which session spawned
+    # them (ContextVar — safe across concurrent turns).
+    try:
+        from hakus.tools.builtin import threads as _threads_mod
+        _thread_token = _threads_mod.set_thread_session(session_id)
+    except Exception:
+        _thread_token = None
 
     try:
         if use_orchestrator:
@@ -888,6 +1051,14 @@ async def run_turn_stream(
             "error": str(e),
             "code": "stream_error",
         }
+    finally:
+        # Thread-as-tool context teardown
+        if _thread_token is not None:
+            try:
+                from hakus.tools.builtin import threads as _threads_mod
+                _threads_mod.reset_thread_session(_thread_token)
+            except Exception:
+                pass
 
 
 async def run_turn_collect(

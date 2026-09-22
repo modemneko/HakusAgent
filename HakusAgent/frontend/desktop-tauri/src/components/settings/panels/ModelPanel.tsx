@@ -349,22 +349,9 @@ export function ModelPanel() {
     }
   }
 
-  // Debounced auto-save: any change to the current model / base URL / API
-  // format / model list persists ~800ms after the last edit. No manual
-  // save button — the status pill next to the actions shows progress.
-  useEffect(() => {
-    if (!selected) return
-    const snapshot = savedSnapshotRef.current
-    if (!snapshot || snapshot.providerId !== selected.id) return
-    const changed =
-      snapshot.modelName !== modelName.trim() ||
-      snapshot.baseUrl !== baseUrl.trim() ||
-      snapshot.apiFormat !== apiFormat ||
-      JSON.stringify(snapshot.models) !== JSON.stringify(providerModels)
-    if (!changed) return
-    const timer = setTimeout(() => { void persistNow() }, 800)
-    return () => clearTimeout(timer)
-  }, [modelName, baseUrl, apiFormat, providerModels, selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Manual save: edits stay local until the user clicks 保存. The status
+  // pill only reflects the in-flight/saved/error state of that explicit save.
+  // (Changed from the old 800ms debounced auto-save per user request.)
 
   // Editing a provider that is no longer in the list (deleted elsewhere, or
   // a creation whose persistence is still settling) must not render an empty
@@ -1426,7 +1413,6 @@ export function ModelPanel() {
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    onBlur={() => { if (apiKey.trim()) void persistNow({ apiKey: apiKey.trim() }) }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && apiKey.trim()) { e.preventDefault(); void persistNow({ apiKey: apiKey.trim() }) } }}
                     placeholder={
                       selected.has_api_key
@@ -1458,30 +1444,32 @@ export function ModelPanel() {
             )}
 
             <div className="flex items-center gap-2 pt-1">
-              {/* 自动保存状态：改动后自动落盘，无需手动保存 */}
-              <span
-                className={cn(
-                  'inline-flex h-8 items-center gap-1.5 rounded-xl border px-3 text-xs transition-colors',
-                  saveState === 'error'
-                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
-                    : saveState === 'saving'
-                      ? 'border-border/60 bg-muted/30 text-muted-foreground'
-                      : saveState === 'saved'
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-transparent text-muted-foreground',
-                )}
-                title={saveState === 'error' ? copy('点击重试保存', 'Click to retry') : undefined}
-              >
-                {saveState === 'saving' ? (
-                  <><Loader2 className="h-3 w-3 animate-spin" /> {copy('保存中…', 'Saving…')}</>
-                ) : saveState === 'error' ? (
-                  <button type="button" onClick={() => void persistNow()} className="font-medium">{copy('保存失败，点击重试', 'Save failed — retry')}</button>
-                ) : saveState === 'saved' && savedAt ? (
-                  <>{copy('已保存', 'Saved')} {savedAt.toLocaleTimeString()}</>
-                ) : (
-                  copy('更改将自动保存', 'Changes save automatically')
-                )}
-              </span>
+              {/* 手动保存：改动仅在本地，点击「保存」才落盘。空闲态不显示提示 */}
+              {saveState !== 'idle' && (
+                <span
+                  className={cn(
+                    'inline-flex h-8 items-center gap-1.5 rounded-xl border px-3 text-xs transition-colors',
+                    saveState === 'error'
+                      ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                      : saveState === 'saving'
+                        ? 'border-border/60 bg-muted/30 text-muted-foreground'
+                        : 'border-primary/30 bg-primary/10 text-primary',
+                  )}
+                  title={saveState === 'error' ? copy('点击重试保存', 'Click to retry') : undefined}
+                >
+                  {saveState === 'saving' ? (
+                    <><Loader2 className="h-3 w-3 animate-spin" /> {copy('保存中…', 'Saving…')}</>
+                  ) : saveState === 'error' ? (
+                    <button type="button" onClick={() => void persistNow()} className="font-medium">{copy('保存失败，点击重试', 'Save failed — retry')}</button>
+                  ) : savedAt ? (
+                    <>{copy('已保存', 'Saved')} {savedAt.toLocaleTimeString()}</>
+                  ) : null}
+                </span>
+              )}
+              <Button size="sm" onClick={() => void persistNow()} disabled={saving}>
+                {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Check className="mr-1.5 h-3.5 w-3.5" />}
+                {copy('保存', 'Save')}
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => loadProviders()} disabled={saving}>{copy('刷新列表', 'Refresh')}</Button>
               {lastProviderRefresh && <span className="text-[10px] text-muted-foreground">{copy('已更新', 'Updated')} {lastProviderRefresh.toLocaleTimeString()}</span>}
             </div>

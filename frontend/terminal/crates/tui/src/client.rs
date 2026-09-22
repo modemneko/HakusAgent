@@ -8479,7 +8479,7 @@ mod tests {
         let mut content_index = 0;
         let mut text_started = false;
         let mut thinking_started = false;
-        let mut tool_indices = std::collections::HashMap::new();
+        let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut reasoning_detail_buffers = std::collections::HashMap::new();
         let events = parse_sse_chunk(
             &json!({
@@ -8492,7 +8492,7 @@ mod tests {
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             true,
         );
@@ -8647,15 +8647,14 @@ mod tests {
         let mut content_index = 0;
         let mut text_started = false;
         let mut thinking_started = false;
-        let mut tool_indices: std::collections::HashMap<u32, u32> =
-            std::collections::HashMap::new();
+        let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut reasoning_detail_buffers = std::collections::HashMap::new();
         let events = parse_sse_chunk(
             &chunk,
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             false,
         );
@@ -8708,15 +8707,14 @@ mod tests {
         let mut content_index = 0;
         let mut text_started = false;
         let mut thinking_started = false;
-        let mut tool_indices: std::collections::HashMap<u32, u32> =
-            std::collections::HashMap::new();
+        let mut tool_router: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut reasoning_detail_buffers = std::collections::HashMap::new();
         let events = parse_sse_chunk(
             &chunk,
             &mut content_index,
             &mut text_started,
             &mut thinking_started,
-            &mut tool_indices,
+            &mut tool_router,
             &mut reasoning_detail_buffers,
             false,
         );

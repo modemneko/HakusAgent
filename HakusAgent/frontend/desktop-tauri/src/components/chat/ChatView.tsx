@@ -6,11 +6,15 @@ import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
 import { apiClient, HakusAIError } from '@/api/client'
-import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal, Project } from '@/api/types'
+import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal, Project, ApprovalRecord } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
+import { ApprovalDialog } from './ApprovalDialog'
 import { Composer, type QueuedComposerMessage } from './Composer'
 import { ChatNavButtons } from './ChatNavButtons'
+import { MessageNavRail } from './MessageNavRail'
+import { CheckpointList } from './CheckpointList'
+import { SubagentsPanel } from './SubagentsPanel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import {
@@ -189,11 +193,14 @@ export function ChatView() {
   const applyFinishedToolCall = useSessionStore((s) => s.applyFinishedToolCall)
   const clearPendingToolCalls = useSessionStore((s) => s.clearPendingToolCalls)
   const renameSession = useSessionStore((s) => s.renameSession)
+  // 五档权限审批卡（approval_required SSE 事件驱动）
+  const [pendingApproval, setPendingApproval] = useState<ApprovalRecord | null>(null)
   const isStreaming = useSessionStore((s) => s.isStreaming)
   const setStreaming = useSessionStore((s) => s.setStreaming)
   const persistNewMessage = useSessionStore((s) => s.persistNewMessage)
   const persistMessage = useSessionStore((s) => s.persistMessage)
   const rewindToMessage = useSessionStore((s) => s.rewindToMessage)
+  const bindRemoteMessageId = useSessionStore((s) => s.bindRemoteMessageId)
 
   const settings = useSettingsStore()
   const configuredProviders = settings.providers.filter(isProviderConfigured)
@@ -215,6 +222,8 @@ export function ChatView() {
   const connState = useConnectionStore((s) => s.state)
   const agentMode = useAppStore((s) => s.agentMode)
   const getReasoningEffort = useAppStore((s) => s.getReasoningEffort)
+  const addTokens = useAppStore((s) => s.addTokens)
+  const resetTokens = useAppStore((s) => s.resetTokens)
   const connCheck = useConnectionStore((s) => s.check)
   const projects = useProjectsStore((s) => s.projects)
   const activeProjectId = useProjectsStore((s) => s.activeProjectId)
@@ -266,7 +275,9 @@ export function ChatView() {
     // The armed state is a composer affordance for one conversation. Do not
     // carry it into another thread when the user switches sessions.
     setLongRunningArmed(false)
-  }, [activeId])
+    // Reset cumulative token totals so they don't carry across sessions.
+    resetTokens()
+  }, [activeId, resetTokens])
 
   useEffect(() => {
     const remoteId = activeSession?.remote_session_id || activeId
@@ -627,6 +638,22 @@ export function ChatView() {
       setGoal((event as any).goal || null)
       return
     }
+    // The runtime echoes the user-message item it durably recorded for this
+    // turn. Rebind the locally-generated user message id (`m_…`) to the
+    // runtime item id (`item_…`) so the rewind button / checkpoint list can
+    // address it. This must run before the streamingLogId gate below — the
+    // event arrives right at turn start and is unrelated to the assistant
+    // streaming placeholder.
+    if ((event as any).event_type === 'remote_message_id') {
+      const remoteId = String((event as any).remote_id || '')
+      const msgs = useSessionStore.getState().messages[sessionId] || []
+      // The newest user message is the one this turn just created.
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
+      if (remoteId && lastUser && lastUser.id !== remoteId) {
+        bindRemoteMessageId(sessionId, lastUser.id, remoteId)
+      }
+      return
+    }
     const messageId = useSessionStore.getState().streamingLogId[sessionId]
     if (!messageId) return
 
@@ -658,6 +685,12 @@ export function ChatView() {
         cacheStartedToolCall(sessionId, messageId, toolCall)
         break
       }
+      case 'approval_required': {
+        // 五档权限引擎（guardian/granular/ask）要求用户审批 → 弹 glass 审批卡
+        const ap = (event as any).approval as ApprovalRecord | undefined
+        if (ap && ap.id) setPendingApproval(ap)
+        break
+      }
       case 'tool_call_finished':
         // Materialize: the tool card only appears when the call is fully done,
         // with complete arguments and result, so the user never sees a stack
@@ -683,6 +716,7 @@ export function ChatView() {
           cache_hit_tokens: (event as any).cache_hit_tokens ?? 0,
           cache_miss_tokens: (event as any).cache_miss_tokens ?? 0,
         })
+        addTokens(event.input_tokens, event.output_tokens)
         break
       case 'turn_completed':
         // A host-managed long-running goal can produce several durable turns
@@ -958,20 +992,33 @@ export function ChatView() {
           corner. The buttons live OUTSIDE the scroll div so they
           don't scroll with the content. */}
       <div className="relative min-h-0 flex-1">
+        {/* 悬浮工具簇：检查点 + 子代理（Codex 风格借鉴）。有消息时显示。 */}
+        {activeMessages.length > 0 && (
+          <div className="absolute right-3 top-3 z-10 flex gap-1.5">
+            <CheckpointList messages={activeMessages} onRewind={handleRewind} />
+            <SubagentsPanel sessionId={activeId || undefined} />
+          </div>
+        )}
         <ChatNavButtons
           scrollRef={scrollRef}
+          offsetTop="top-[4.75rem]"
           // Re-evaluate button visibility whenever the message count
           // or the last message id changes (new content arrived).
           messagesKey={`${activeMessages.length}#${activeMessages[activeMessages.length - 1]?.id ?? ''}`}
         />
-        <div ref={scrollRef} className="h-full overflow-y-auto">
+        {/* 右缘用户消息导航轨（长会话跳转） */}
+        <MessageNavRail
+          scrollRef={scrollRef}
+          messagesKey={`${activeMessages.length}#${activeMessages[activeMessages.length - 1]?.id ?? ''}`}
+        />
+        <div ref={scrollRef} className="h-full min-w-0 overflow-x-hidden overflow-y-auto">
         {activeMessages.length === 0 ? (
           <EmptyStateHero
             projectName={activeProject ? activeProject.name : t('currentDirectory')}
             onPick={(prompt) => setComposerDraft(prompt)}
           />
         ) : (
-          <div className="chat-timeline mx-auto w-full max-w-3xl py-6">
+          <div className="chat-timeline mx-auto min-w-0 w-full max-w-[var(--chat-max-width)] py-6">
             {buildTimeline(activeMessages).map((item, idx, arr) => {
               if (item.kind === 'message') {
                 return (
@@ -1018,6 +1065,12 @@ export function ChatView() {
         longRunningArmed={longRunningArmed}
         onToggleLongRunning={toggleLongRunning}
         onGoalAction={applyGoalAction}
+      />
+
+      {/* 五档权限审批卡（glass） */}
+      <ApprovalDialog
+        approval={pendingApproval}
+        onClose={() => setPendingApproval(null)}
       />
     </div>
   )
@@ -1195,7 +1248,7 @@ function EmptyStateHero({ projectName, onPick }: { projectName: string; onPick: 
                 key={card.labelKey}
                 onClick={() => onPick(t(card.promptKey))}
                 title={t(card.promptKey)}
-                className="group flex w-32 aspect-square flex-col items-start gap-2 rounded-xl border border-border/60 bg-card/60 p-3 text-left backdrop-blur-xl transition-colors hover:bg-foreground/[0.06]"
+                className="group flex w-32 aspect-square flex-col items-start gap-2 rounded-xl border border-border/60 bg-card/60 p-3 text-left backdrop-blur-xl transition-colors hover:bg-[var(--cx-ghost-hover)]"
               >
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/50 bg-muted/30 text-muted-foreground transition-colors group-hover:text-foreground">
                   <Icon className="h-4 w-4" strokeWidth={1.75} />

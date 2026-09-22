@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { Shield, ShieldAlert, ShieldCheck, ShieldOff, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Shield, ShieldAlert, ShieldOff, Loader2, RefreshCw, AlertTriangle, Eye, Zap, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -12,19 +12,44 @@ import { apiClient, BackendOutdatedError } from '@/api/client'
 import { BackendOutdatedBanner } from '@/components/settings/BackendOutdatedBanner'
 import { cn } from '@/lib/utils'
 import { GlassSelect } from '@/components/ui/glass-select'
-import type { ToolInfo, PermissionMode, RuntimeConfigSnapshot } from '@/api/types'
+import type { ToolInfo, PermissionMode, RuntimeConfigSnapshot, GranularRules } from '@/api/types'
 import { useI18n } from '@/lib/i18n'
 
-const PERMISSION_META: Record<
-  PermissionMode,
-  { title: string; desc: string; tone: string; icon: typeof Shield }
-> = {
+type PermMeta = { title: string; desc: string; tone: string; icon: typeof Shield }
+
+// Codex 五档权限模型: read_only → auto → granular → guardian → full_access
+const PERMISSION_META: Record<string, PermMeta> = {
+  read_only: {
+    title: '只读',
+    desc: '只允许读取类工具，拒绝一切写入与命令执行。',
+    tone: 'border-sky-500/50 bg-sky-500/10 text-sky-500',
+    icon: Eye,
+  },
   auto: {
     title: '自动执行',
     desc: '所有工具调用直接执行，不询问。最快但风险最高。',
     tone: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500',
-    icon: ShieldCheck,
+    icon: Zap,
   },
+  granular: {
+    title: '细粒度规则',
+    desc: '按规则放行：shell 级别、可写路径 glob、网络访问。',
+    tone: 'border-violet-500/50 bg-violet-500/10 text-violet-500',
+    icon: SlidersHorizontal,
+  },
+  guardian: {
+    title: '守卫模式',
+    desc: '危险操作弹出审批卡片，由你逐项放行。最稳妥。',
+    tone: 'border-amber-500/50 bg-amber-500/10 text-amber-500',
+    icon: Sparkles,
+  },
+  full_access: {
+    title: '完全访问',
+    desc: '跳过所有权限检查（包括 shell/browser）。仅用于受信环境。',
+    tone: 'border-red-500/50 bg-red-500/10 text-red-500',
+    icon: ShieldOff,
+  },
+  // Legacy embedded-runtime modes
   ask: {
     title: '询问确认',
     desc: '危险工具调用前询问用户，安全工具直接执行。推荐。',
@@ -39,11 +64,18 @@ const PERMISSION_META: Record<
   },
 }
 
-const EN_PERMISSION_META: Record<PermissionMode, { title: string; desc: string }> = {
+const EN_PERMISSION_META: Record<string, { title: string; desc: string }> = {
+  read_only: { title: 'Read only', desc: 'Read-only tools only; all writes and shell are denied.' },
   auto: { title: 'Run automatically', desc: 'Run every tool call without asking. Fastest, but highest risk.' },
+  granular: { title: 'Granular rules', desc: 'Allow by rule: shell level, writable path globs, network access.' },
+  guardian: { title: 'Guardian', desc: 'Risky operations pop an approval card for you to allow one by one. Safest.' },
+  full_access: { title: 'Full access', desc: 'Skip all permission checks, including shell and browser. Use only in trusted environments.' },
   ask: { title: 'Ask for confirmation', desc: 'Ask before risky tools; run safe tools directly. Recommended.' },
   bypass: { title: 'Skip permissions', desc: 'Skip all permission checks, including shell and browser. Use only in trusted environments.' },
 }
+
+const FIVE_MODES: PermissionMode[] = ['read_only', 'auto', 'granular', 'guardian', 'full_access']
+const LEGACY_MODES: PermissionMode[] = ['auto', 'ask', 'bypass']
 
 export function ToolsPanel() {
   const toast = useToast()
@@ -54,6 +86,8 @@ export function ToolsPanel() {
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [permission, setPermission] = useState<PermissionMode>('ask')
   const [availableModes, setAvailableModes] = useState<string[]>(['auto', 'ask', 'bypass'])
+  const [granularRules, setGranularRules] = useState<GranularRules>({ shell: 'read_only', write_paths: [], network: false })
+  const [granularPaths, setGranularPaths] = useState('')
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [settingPerm, setSettingPerm] = useState(false)
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigSnapshot | null>(null)
@@ -72,6 +106,10 @@ export function ToolsPanel() {
       setTools(toolsResp.tools)
       setPermission(permResp.mode)
       setAvailableModes(permResp.available_modes)
+      if (permResp.granular_rules) {
+        setGranularRules(permResp.granular_rules)
+        setGranularPaths((permResp.granular_rules.write_paths || []).join(', '))
+      }
       setRuntimeConfig(configResp)
     } catch (e: any) {
       console.error('[ToolsPanel] load failed:', e)
@@ -111,7 +149,7 @@ export function ToolsPanel() {
     const prev = permission
     setPermission(mode)
     try {
-      await apiClient.setPermission(mode)
+      await apiClient.setPermission(mode, mode === 'granular' ? granularRules : undefined)
       toast.success(copy(`权限模式已切换为「${PERMISSION_META[mode].title}」`, `Permission mode changed to “${EN_PERMISSION_META[mode].title}”`))
     } catch (e: any) {
       setPermission(prev)
@@ -121,7 +159,24 @@ export function ToolsPanel() {
     }
   }
 
-  const handleRuntimeSetting = async (key: 'allow_shell' | 'strict_tool_mode' | 'sandbox_mode', value: boolean | string) => {
+  const handleApplyGranular = async () => {
+    setSettingPerm(true)
+    const rules: GranularRules = {
+      ...granularRules,
+      write_paths: granularPaths.split(',').map((p) => p.trim()).filter(Boolean),
+    }
+    try {
+      await apiClient.setPermission('granular', rules)
+      setGranularRules(rules)
+      toast.success(copy('细粒度规则已应用', 'Granular rules applied'))
+    } catch (e: any) {
+      toast.error(copy(`应用失败：${e?.message || e}`, `Apply failed: ${e?.message || e}`))
+    } finally {
+      setSettingPerm(false)
+    }
+  }
+
+  const handleRuntimeSetting = async (key: 'allow_shell' | 'strict_tool_mode' | 'sandbox_mode' | 'memory_enabled' | 'approval_mode', value: boolean | string) => {
     if (!runtimeConfig) return
     const previous = runtimeConfig[key]
     setRuntimeConfig((current) => current ? { ...current, [key]: value } : current)
@@ -214,6 +269,47 @@ export function ToolsPanel() {
                     ]}
                   />
                 </label>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{copy('审批策略', 'Approval policy')}</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {copy('Codex 风格：需要时询问，或直接阻断升级操作。', 'Codex-style: ask on request, or block escalations outright.')}
+                    </p>
+                  </div>
+                  <GlassSelect
+                    value={
+                      runtimeConfig.approval_mode === 'auto' || runtimeConfig.approval_mode === 'never'
+                        ? runtimeConfig.approval_mode
+                        : 'on-request'
+                    }
+                    onChange={(value) => {
+                      const mode = value === 'auto' ? 'auto' : value === 'never' ? 'bypass' : 'ask'
+                      void handleSetPermission(mode)
+                    }}
+                    disabled={settingPerm}
+                    className="w-44"
+                    ariaLabel={copy('审批策略', 'Approval policy')}
+                    options={[
+                      { value: 'on-request', label: copy('请求时询问', 'Ask on request') },
+                      { value: 'auto', label: copy('自动执行', 'Never ask') },
+                      { value: 'never', label: copy('阻断并失败', 'Block and fail') },
+                    ]}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{copy('记忆系统', 'Memory')}</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {copy('关闭后新消息不会写入长期记忆（临时会话会自动关闭）。', 'When off, new turns are not written to long-term memory. Temporary chats turn this off.')}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={Boolean(runtimeConfig.memory_enabled)}
+                    onCheckedChange={(value) => void handleRuntimeSetting('memory_enabled', value)}
+                    disabled={updatingSetting === 'memory_enabled'}
+                    aria-label={copy('记忆系统', 'Memory')}
+                  />
+                </div>
               </div>
             ) : (
               <div className="flex items-center py-6 text-sm text-muted-foreground">
@@ -270,9 +366,9 @@ export function ToolsPanel() {
           {copy('决定 AI 调用工具时是否需要用户确认。修改后立即生效。', 'Controls whether the AI needs confirmation before using tools. Changes apply immediately.')}
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
-          {(Object.keys(PERMISSION_META) as PermissionMode[])
-            .filter((m) => availableModes.includes(m))
+        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
+          {(usesEmbeddedRuntime ? LEGACY_MODES : FIVE_MODES)
+            .filter((m) => usesEmbeddedRuntime ? availableModes.includes(m) : true)
             .map((m) => {
               const meta = PERMISSION_META[m]
               const localizedMeta = locale === 'zh-CN' ? meta : { ...meta, ...EN_PERMISSION_META[m] }
@@ -303,7 +399,53 @@ export function ToolsPanel() {
               )
             })}
         </div>
-        {permission === 'bypass' && (
+        {/* granular 子表单：shell 级别 / 可写路径 / 网络 */}
+        {!usesEmbeddedRuntime && permission === 'granular' && (
+          <div className="space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+            <div className="flex items-center gap-2 text-[12px] font-medium text-violet-500">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              {copy('细粒度规则', 'Granular rules')}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground">{copy('命令执行', 'Shell commands')}</label>
+                <GlassSelect
+                  value={granularRules.shell}
+                  onChange={(v) => setGranularRules((r) => ({ ...r, shell: v as GranularRules['shell'] }))}
+                  ariaLabel={copy('命令执行', 'Shell commands')}
+                  options={[
+                    { value: 'none', label: copy('禁止', 'None') },
+                    { value: 'read_only', label: copy('仅安全命令', 'Read-only only') },
+                    { value: 'all', label: copy('全部允许', 'All') },
+                  ]}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground">{copy('可写路径（逗号分隔 glob）', 'Writable paths (comma-separated globs)')}</label>
+                <input
+                  value={granularPaths}
+                  onChange={(e) => setGranularPaths(e.target.value)}
+                  placeholder="D:/项目/**, ~/docs/*"
+                  className="h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-[12px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2">
+                <span className="text-[12px]">{copy('允许网络访问', 'Allow network access')}</span>
+                <Switch
+                  checked={granularRules.network}
+                  onCheckedChange={(v) => setGranularRules((r) => ({ ...r, network: v }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => void handleApplyGranular()} disabled={settingPerm}>
+                {settingPerm && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {copy('应用规则', 'Apply rules')}
+              </Button>
+            </div>
+          </div>
+        )}
+        {(permission === 'full_access' || permission === 'bypass') && (
           <div className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-500">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>

@@ -22,6 +22,7 @@ from .search import Glob, Grep
 from .shell import Bash
 from .task import TaskManage
 from .task_done import TaskDoneTool
+from .threads import CreateThread, ForkThread, HandoffThread, SendMessageToThread
 from .todo import TodoWrite
 from .web import WebFetch, WebSearch
 
@@ -53,6 +54,10 @@ BUILTIN_TOOL_CLASSES = [
     TaskManage,         # long-running background tasks
     TaskDoneTool,       # task completion signal (trae-agent style)
     AskUser,            # interactive clarification
+    CreateThread,       # threads — spawn child conversation (Codex-style)
+    ForkThread,         # threads — branch a conversation
+    SendMessageToThread,  # threads — continue a child conversation
+    HandoffThread,      # threads — hand task to another thread
 ]
 
 
@@ -70,5 +75,6 @@ __all__ = [
     "TaskManage",
     "TaskDoneTool",
     "AskUser",
+    "CreateThread", "ForkThread", "SendMessageToThread", "HandoffThread",
     "BUILTIN_TOOL_CLASSES",
 ]

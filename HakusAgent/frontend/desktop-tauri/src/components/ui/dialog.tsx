@@ -47,7 +47,7 @@ const DialogContent = React.forwardRef<
             // box against the viewport on every WebView, while translate/-
             // transform centering silently breaks when any ancestor gains
             // a transform/filter (fixed elements then anchor to that box).
-            'fixed inset-0 z-50 m-auto grid h-fit w-[calc(100%-2rem)] max-w-lg gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
+            'fixed inset-0 z-50 m-auto grid h-fit w-[calc(100%-2rem)] max-w-lg gap-4 border bg-background p-6 shadow-lg duration-200 sm:rounded-2xl',
         className,
       )}
       {...props}

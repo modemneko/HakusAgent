@@ -1,0 +1,33 @@
+[package]
+name = "hakus-company"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Company-scale multi-agent orchestration: org, tickets, goals, heartbeat scheduling, budgets"
+
+[dependencies]
+hakus-paths = { path = "../paths", version = "0.9.10" }
+hakus-llm = { path = "../llm", version = "0.9.10" }
+
+anyhow.workspace = true
+clap.workspace = true
+# SSE frames arrive as a byte stream.
+futures-util = "0.3"
+async-trait.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+# SSE streaming needs the `stream` feature on top of the workspace defaults.
+reqwest = { workspace = true, features = ["stream"] }
+
+[dev-dependencies]
+tempfile.workspace = true

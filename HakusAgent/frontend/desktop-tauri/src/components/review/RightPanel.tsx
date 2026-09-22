@@ -1,17 +1,49 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, Copy, FileText, GitCompareArrows, TerminalSquare, ScrollText, FileClock, X } from 'lucide-react'
-import { useAppStore } from '@/store/app'
+import {
+  Check,
+  Copy,
+  FileClock,
+  FileText,
+  FolderTree,
+  GitCompareArrows,
+  ScrollText,
+  Target,
+  TerminalSquare,
+  Waypoints,
+  X,
+  Coins,
+  Workflow,
+} from 'lucide-react'
+import { useAppStore, type RightPanelTab } from '@/store/app'
 import { cn, copyToClipboard } from '@/lib/utils'
 import { DiffReview } from './DiffReview'
 import { TerminalPanel } from './TerminalPanel'
 import { LogsPanel } from './LogsPanel'
 import { SessionLogTab } from './SessionLogTab'
+import { UsageCostPanel } from './UsageCostPanel'
+import { GoalPanel } from './GoalPanel'
+import { WorktreePanel } from './WorktreePanel'
+import { FilesPanel } from './FilesPanel'
+import { FlowRunPanel } from '@/components/flow/FlowRunPanel'
+import { RpEmpty, RpHeader, RpIconButton } from './PanelChrome'
+import { useDragScroll } from './useDragScroll'
 import { useI18n } from '@/lib/i18n'
 
-const TABS: { id: 'review' | 'session_log' | 'terminal' | 'logs'; labelKey: 'reviewTab' | 'trajectoryTab' | 'terminalTab' | 'logsTab'; icon: typeof GitCompareArrows }[] = [
+type TabDef = {
+  id: Exclude<RightPanelTab, 'artifact'>
+  labelKey: 'reviewTab' | 'usageTab' | 'goalTab' | 'worktreeTab' | 'filesTab' | 'flowRunTab' | 'trajectoryTab' | 'terminalTab' | 'logsTab'
+  icon: typeof GitCompareArrows
+}
+
+const TABS: TabDef[] = [
   { id: 'review', labelKey: 'reviewTab', icon: GitCompareArrows },
+  { id: 'usage', labelKey: 'usageTab', icon: Coins },
+  { id: 'goal', labelKey: 'goalTab', icon: Target },
+  { id: 'worktree', labelKey: 'worktreeTab', icon: Waypoints },
+  { id: 'files', labelKey: 'filesTab', icon: FolderTree },
+  { id: 'flow', labelKey: 'flowRunTab', icon: Workflow },
   { id: 'session_log', labelKey: 'trajectoryTab', icon: FileClock },
   { id: 'terminal', labelKey: 'terminalTab', icon: TerminalSquare },
   { id: 'logs', labelKey: 'logsTab', icon: ScrollText },
@@ -19,7 +51,6 @@ const TABS: { id: 'review' | 'session_log' | 'terminal' | 'logs'; labelKey: 'rev
 
 const DOC_LANGS = new Set(['markdown', 'md', 'mdx', 'text', 'txt', 'plaintext'])
 
-/** Rendered artifact document — opened by clicking a block in AI output. */
 function ArtifactView() {
   const { t } = useI18n()
   const artifact = useAppStore((s) => s.rightPanelArtifact)
@@ -27,9 +58,8 @@ function ArtifactView() {
 
   if (!artifact) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
-        <FileText className="h-7 w-7 text-muted-foreground/40" />
-        <p className="text-[11px]">{t('openInPanel')}</p>
+      <div className="rp-shell">
+        <RpEmpty icon={FileText} title={t('openInPanel')} />
       </div>
     )
   }
@@ -45,33 +75,31 @@ function ArtifactView() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-        <span className="min-w-0 truncate text-[12px] font-medium text-foreground">
-          {artifact.title}
-          {artifact.language && !isDoc && (
-            <span className="ml-2 rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-              {artifact.language}
-            </span>
-          )}
-        </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title={t('copyLabel')}
-          aria-label={t('copyLabel')}
-        >
-          {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="rp-shell">
+      <RpHeader
+        icon={FileText}
+        title={artifact.title}
+        meta={
+          artifact.language && !isDoc ? (
+            <span className="rp-chip rp-chip-muted font-mono">{artifact.language}</span>
+          ) : null
+        }
+        actions={
+          <RpIconButton
+            icon={copied ? Check : Copy}
+            title={t('copyLabel')}
+            onClick={handleCopy}
+            className={copied ? 'text-emerald-500' : undefined}
+          />
+        }
+      />
+      <div className="rp-body">
         {isDoc ? (
-          <div className="px-4 py-3 text-[13px] leading-relaxed [&_h1,&_h2,&_h3]:mb-2 [&_h1,&_h2,&_h3]:mt-4 [&_h1,&_h2,&_h3]:text-sm [&_h1,&_h2,&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted/60 [&_pre]:p-2 [&_pre]:font-mono [&_pre]:text-[11px]">
+          <div className="rp-pad text-[13px] leading-relaxed [&_h1,&_h2,&_h3]:mb-2 [&_h1,&_h2,&_h3]:mt-4 [&_h1,&_h2,&_h3]:text-[13px] [&_h1,&_h2,&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted/50 [&_pre]:p-2 [&_pre]:font-mono [&_pre]:text-[11px]">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifact.content}</ReactMarkdown>
           </div>
         ) : (
-          <pre className="whitespace-pre-wrap break-words p-3 font-mono text-[11.5px] leading-relaxed text-foreground">
+          <pre className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[11.5px] leading-relaxed">
             {artifact.content}
           </pre>
         )}
@@ -86,6 +114,8 @@ export function RightPanel() {
   const setTab = useAppStore((s) => s.setRightPanelTab)
   const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen)
   const artifact = useAppStore((s) => s.rightPanelArtifact)
+  // 标签多于面板宽度时，允许按住鼠标左右拖动平移这一排标签。
+  const tabStrip = useDragScroll<HTMLDivElement>()
 
   return (
     <aside className="right-panel flex h-full w-full min-w-0 shrink-0 flex-col">
@@ -101,46 +131,55 @@ export function RightPanel() {
           <X className="h-5 w-5" />
         </button>
       </div>
-      {/* Codex Tab bar — 底部边框激活态 */}
-      <div className="right-panel-tabs flex shrink-0 items-center gap-0 overflow-x-auto border-b border-border/60 px-2">
+
+      {/* Codex workbench tab strip */}
+      <div
+        ref={tabStrip.ref}
+        onPointerDown={tabStrip.onPointerDown}
+        className="right-panel-tabs flex shrink-0 items-center overflow-x-auto"
+        role="tablist"
+        aria-label={t('workbench')}
+      >
         {TABS.map((tabDef) => {
           const Icon = tabDef.icon
           const active = tab === tabDef.id
           return (
             <button
               key={tabDef.id}
+              role="tab"
+              aria-selected={active}
+              data-active={active}
               onClick={() => setTab(tabDef.id)}
-              className={cn(
-                'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-[12px] font-medium transition-colors',
-                active
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
+              className={cn('inline-flex shrink-0 items-center gap-1.5', active && 'border-primary')}
+              title={t(tabDef.labelKey)}
             >
               <Icon className="h-3.5 w-3.5" />
-              {t(tabDef.labelKey)}
+              <span className="rp-tab-label">{t(tabDef.labelKey)}</span>
             </button>
           )
         })}
         {artifact && (
           <button
+            role="tab"
+            aria-selected={tab === 'artifact'}
+            data-active={tab === 'artifact'}
             onClick={() => setTab('artifact')}
-            className={cn(
-              'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-[12px] font-medium transition-colors',
-              tab === 'artifact'
-                ? 'border-primary text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
+            className={cn('inline-flex shrink-0 items-center gap-1.5', tab === 'artifact' && 'border-primary')}
+            title={artifact.title}
           >
             <FileText className="h-3.5 w-3.5" />
-            <span className="max-w-[8rem] truncate">{artifact.title}</span>
+            <span className="rp-tab-label max-w-[7rem] truncate">{artifact.title}</span>
           </button>
         )}
       </div>
 
-      {/* Content */}
       <div className="min-h-0 flex-1">
         {tab === 'review' && <DiffReview />}
+        {tab === 'usage' && <UsageCostPanel />}
+        {tab === 'goal' && <GoalPanel />}
+        {tab === 'worktree' && <WorktreePanel />}
+        {tab === 'files' && <FilesPanel />}
+        {tab === 'flow' && <FlowRunPanel />}
         {tab === 'session_log' && <SessionLogTab />}
         {tab === 'terminal' && <TerminalPanel />}
         {tab === 'logs' && <LogsPanel />}
