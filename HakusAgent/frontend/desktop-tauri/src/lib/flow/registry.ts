@@ -5,7 +5,24 @@
 
 import { interpolate, evalCondition, evalExpression, splitItems, toDisplay } from './template'
 import type { FlowEdge, FlowNodeDef, FlowValue, IncomingEdge, NodeExecCtx, NodeExecResult } from './types'
-import { BookOpen, Code2, FileText, GitBranch, GitMerge, Play, Repeat, Send, Sparkles, UserCheck, Users, Wrench } from 'lucide-react'
+import {
+  BookOpen,
+  Braces,
+  Code2,
+  FileText,
+  GitBranch,
+  GitMerge,
+  Globe,
+  Play,
+  Repeat,
+  Send,
+  Sparkles,
+  Timer,
+  Type,
+  UserCheck,
+  Users,
+  Wrench,
+} from 'lucide-react'
 
 const text = (v: FlowValue) => toDisplay(v)
 
@@ -94,6 +111,29 @@ async function runAgentTurn(
   )
   onDelta?.(acc)
   return acc.trim() || '(empty)'
+}
+
+/** Parse a headers JSON blob. Tolerant on purpose: a typo should not kill a run. */
+function parseHeaders(raw: string): Record<string, string> {
+  if (!raw || !raw.trim()) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed)) out[String(k)] = String(v ?? '')
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** Best-effort JSON parse: invalid input stays a string rather than throwing. */
+function safeParse(raw: string): FlowValue {
+  try {
+    return JSON.parse(raw) as FlowValue
+  } catch {
+    return raw
+  }
 }
 
 export const FLOW_NODE_DEFS: FlowNodeDef[] = [
@@ -502,6 +542,181 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
       const wideScope = scopeOf(ctx)
       const result = interpolate(String(ctx.data.template || '{{input}}'), wideScope)
       return { outputs: { out: result } }
+    },
+  },
+  {
+    type: 'http',
+    label: 'HTTP',
+    labelZh: 'HTTP 请求',
+    category: 'tool',
+    color: '#38bdf8',
+    icon: Globe,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'body', label: 'body', dataType: 'string' },
+      { id: 'json', label: 'json', dataType: 'object' },
+      { id: 'status', label: 'status', dataType: 'number' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'method', label: '方法', kind: 'select', options: [
+        { value: 'GET', label: 'GET' },
+        { value: 'POST', label: 'POST' },
+        { value: 'PUT', label: 'PUT' },
+        { value: 'PATCH', label: 'PATCH' },
+        { value: 'DELETE', label: 'DELETE' },
+      ] },
+      { key: 'url', label: 'URL（支持 {{input.x}}）', kind: 'text', placeholder: 'https://api.example.com/v1/things' },
+      { key: 'headers', label: '请求头 JSON', kind: 'json', rows: 3, placeholder: '{"Authorization":"Bearer ..."}' },
+      { key: 'body', label: '请求体（GET 忽略）', kind: 'textarea', rows: 4, placeholder: '{"query":"{{input}}"}' },
+      { key: 'timeoutSecs', label: '超时（秒）', kind: 'number' },
+      { key: 'allowInsecureHttp', label: '允许明文 http（仅本机除外）', kind: 'select', options: [
+        { value: 'no', label: '否（推荐）' },
+        { value: 'yes', label: '是' },
+      ] },
+    ],
+    defaults: {
+      label: 'HTTP 请求',
+      method: 'GET',
+      url: 'https://api.github.com/repos/{{input}}',
+      headers: '{}',
+      body: '',
+      timeoutSecs: 15,
+      allowInsecureHttp: 'no',
+    },
+    execute: async (ctx) => {
+      const wideScope = scopeOf(ctx)
+      const url = interpolate(String(ctx.data.url || ''), wideScope).trim()
+      const method = String(ctx.data.method || 'GET').toUpperCase()
+      const headers = parseHeaders(interpolate(String(ctx.data.headers || '{}'), wideScope))
+      const rawBody = interpolate(String(ctx.data.body || ''), wideScope)
+      const timeoutSecs = Number(ctx.data.timeoutSecs || 15)
+      const allowInsecure = String(ctx.data.allowInsecureHttp || 'no') === 'yes'
+
+      if (!url) {
+        ctx.log('HTTP: no url configured')
+        return { outputs: { body: '', json: null, status: 0, text: '(no url)' } }
+      }
+
+      ctx.log(`HTTP ${method} ${url.slice(0, 120)}`)
+      try {
+        const { httpOs } = await import('@/api/tauriBridge')
+        const res = await httpOs.request({ method, url, headers, body: rawBody, timeoutSecs, allowInsecureHttp: allowInsecure })
+        ctx.log(`HTTP → ${res.status} (${res.body.length} chars)`)
+        return {
+          outputs: {
+            body: res.body,
+            json: (res.json ?? null) as FlowValue,
+            status: res.status,
+            text: String(res.status),
+          },
+        }
+      } catch (e: any) {
+        // Surface the failure as a node error instead of killing the run.
+        const message = e?.message || String(e)
+        ctx.log(`HTTP failed: ${message}`)
+        throw new Error(message)
+      }
+    },
+  },
+  {
+    type: 'json',
+    label: 'JSON',
+    labelZh: 'JSON',
+    category: 'data',
+    color: '#facc15',
+    icon: Braces,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'value', label: 'value', dataType: 'any' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'mode', label: '操作', kind: 'select', options: [
+        { value: 'parse', label: '解析 JSON 字符串' },
+        { value: 'stringify', label: '对象转 JSON' },
+        { value: 'pick', label: '取字段（a.b.c）' },
+      ] },
+      { key: 'path', label: '字段路径（pick 模式，留空取全部）', kind: 'text', placeholder: 'data.items.0' },
+    ],
+    defaults: { label: 'JSON', mode: 'parse', path: '' },
+    execute: async (ctx) => {
+      const input = ctx.inputs.in
+      const mode = String(ctx.data.mode || 'parse')
+      let value: FlowValue
+
+      if (mode === 'stringify') {
+        value = JSON.stringify(input, null, 2)
+      } else if (mode === 'pick') {
+        const path = String(ctx.data.path || '').trim()
+        let cur: any = typeof input === 'string' ? safeParse(input) : input
+        if (path) {
+          for (const part of path.split('.')) {
+            if (cur == null) break
+            cur = cur[part]
+          }
+        }
+        value = (cur ?? null) as FlowValue
+      } else {
+        value = safeParse(text(input))
+      }
+      ctx.log(`JSON [${mode}] → ${text(value).slice(0, 100)}`)
+      return { outputs: { value, text: text(value) } }
+    },
+  },
+  {
+    type: 'template',
+    label: 'Template',
+    labelZh: '文本拼接',
+    category: 'data',
+    color: '#4ade80',
+    icon: Type,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [{ id: 'text', label: 'text', dataType: 'string' }],
+    fields: [
+      { key: 'template', label: '模板（{{input}} / {{run.x}} / {{input.field}}）', kind: 'textarea', rows: 5, placeholder: '标题：{{input.title}}\n摘要：{{input.summary}}' },
+      { key: 'joinWith', label: '数组输入时的连接符', kind: 'text', placeholder: '\n' },
+    ],
+    defaults: { label: '文本拼接', template: '{{input}}', joinWith: '\n' },
+    execute: async (ctx) => {
+      const wideScope = scopeOf(ctx)
+      const template = String(ctx.data.template || '{{input}}')
+      const joinWith = String(ctx.data.joinWith ?? '\n')
+      const input = ctx.inputs.in
+      const out = Array.isArray(input)
+        ? input.map((item) => interpolate(template, { inputs: { ...ctx.inputs, item }, run: ctx.runInputs, outputsByNode: ctx.inputs as any })).join(joinWith)
+        : interpolate(template, wideScope)
+      ctx.log(`Template → ${out.slice(0, 100)}`)
+      return { outputs: { text: out } }
+    },
+  },
+  {
+    type: 'delay',
+    label: 'Delay',
+    labelZh: '延时',
+    category: 'logic',
+    color: '#94a3b8',
+    icon: Timer,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [{ id: 'out', label: 'out', dataType: 'any' }],
+    fields: [
+      { key: 'seconds', label: '延时（秒，最多 60）', kind: 'number' },
+    ],
+    defaults: { label: '延时', seconds: 1 },
+    execute: async (ctx) => {
+      const seconds = Math.min(60, Math.max(0, Number(ctx.data.seconds || 0)))
+      ctx.log(`Delay ${seconds}s`)
+      // Abortable: waking early on cancel keeps "stop" responsive.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, seconds * 1000)
+        const onAbort = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        if (ctx.signal.aborted) onAbort()
+        else ctx.signal.addEventListener('abort', onAbort, { once: true })
+      })
+      return { outputs: { out: ctx.inputs.in } }
     },
   },
 ]

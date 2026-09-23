@@ -98,6 +98,38 @@ export const voice = {
   stopCelia: () => invoke("voice_stop_celia"),
 };
 
+// ── HTTP (Flow canvas node) ────────────────────────────────────────
+// Requests run in Rust (see src-tauri/src/http_cmds.rs) because the WebView
+// CSP keeps `connect-src` at 'self'. Keeping it there is deliberate: it is
+// what stops an injected script from shipping user data off the machine.
+
+export interface TauriHttpResponse {
+  status: number
+  ok: boolean
+  headers: Record<string, string>
+  body: string
+  json: unknown | null
+}
+
+export const httpOs = {
+  request: (opts: {
+    method: string
+    url: string
+    headers?: Record<string, string>
+    body?: string
+    timeoutSecs?: number
+    allowInsecureHttp?: boolean
+  }) =>
+    invoke<TauriHttpResponse>('http_request', {
+      method: opts.method,
+      url: opts.url,
+      headers: opts.headers ?? null,
+      body: opts.body ?? null,
+      timeoutSecs: opts.timeoutSecs ?? null,
+      allowInsecureHttp: opts.allowInsecureHttp ?? null,
+    }),
+}
+
 // ── Git review / worktree / doctor ─────────────────────────────────
 export interface TauriWorktree {
   path: string
