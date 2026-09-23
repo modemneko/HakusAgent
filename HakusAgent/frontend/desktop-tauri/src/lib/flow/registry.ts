@@ -8,12 +8,15 @@ import type { FlowEdge, FlowNodeDef, FlowValue, IncomingEdge, NodeExecCtx, NodeE
 import {
   BookOpen,
   Braces,
+  Calculator,
+  CalendarClock,
   Code2,
   FileText,
   GitBranch,
   GitMerge,
   Globe,
   Play,
+  Regex,
   Repeat,
   Send,
   Sparkles,
@@ -133,6 +136,29 @@ function safeParse(raw: string): FlowValue {
     return JSON.parse(raw) as FlowValue
   } catch {
     return raw
+  }
+}
+
+/** Date formatting without a date library — the four formats flows actually use. */
+function formatDate(date: Date, format: string): string {
+  const pad = (n: number, width = 2) => String(n).padStart(width, '0')
+  const y = date.getFullYear()
+  const mo = pad(date.getMonth() + 1)
+  const d = pad(date.getDate())
+  const h = pad(date.getHours())
+  const mi = pad(date.getMinutes())
+  const s = pad(date.getSeconds())
+  switch (format) {
+    case 'iso':
+      return date.toISOString()
+    case 'date':
+      return `${y}-${mo}-${d}`
+    case 'time':
+      return `${h}:${mi}:${s}`
+    case 'locale':
+      return date.toLocaleString()
+    default:
+      return `${y}-${mo}-${d} ${h}:${mi}:${s}`
   }
 }
 
@@ -480,7 +506,12 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
       const list = splitItems(ctx.inputs.in, String(ctx.data.splitBy || 'lines')).slice(0, Number(ctx.data.maxItems || 20))
       const template = String(ctx.data.template || '{{item}}')
       const results = list.map((item, index) =>
-        interpolate(template, { inputs: { ...ctx.inputs, item, index }, run: ctx.runInputs, outputsByNode: ctx.inputs as any }),
+        interpolate(template, {
+          // `in: item` so `{{input}}` also means "the current item" inside a loop.
+          inputs: { ...ctx.inputs, in: item, item, index },
+          run: ctx.runInputs,
+          outputsByNode: ctx.inputs as any,
+        }),
       )
       ctx.log(`Iteration x${results.length} (no body wired -> template map)`)
       return { outputs: { items: results, text: results.join('\n') } }
@@ -684,7 +715,17 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
       const joinWith = String(ctx.data.joinWith ?? '\n')
       const input = ctx.inputs.in
       const out = Array.isArray(input)
-        ? input.map((item) => interpolate(template, { inputs: { ...ctx.inputs, item }, run: ctx.runInputs, outputsByNode: ctx.inputs as any })).join(joinWith)
+        ? input
+            .map((item, index) =>
+              interpolate(template, {
+                // `item`/`index` ride on the `in` port so `{{input}}`,
+                // `{{input.x}}` and `{{item}}` all resolve for one item.
+                inputs: { ...ctx.inputs, in: item, item, index },
+                run: ctx.runInputs,
+                outputsByNode: ctx.inputs as any,
+              }),
+            )
+            .join(joinWith)
         : interpolate(template, wideScope)
       ctx.log(`Template → ${out.slice(0, 100)}`)
       return { outputs: { text: out } }
@@ -717,6 +758,162 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
         else ctx.signal.addEventListener('abort', onAbort, { once: true })
       })
       return { outputs: { out: ctx.inputs.in } }
+    },
+  },
+  {
+    type: 'regex',
+    label: 'Regex',
+    labelZh: '正则提取',
+    category: 'data',
+    color: '#a3e635',
+    icon: Regex,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'match', label: 'match', dataType: 'string' },
+      { id: 'group', label: 'group', dataType: 'string' },
+      { id: 'all', label: 'all', dataType: 'array' },
+    ],
+    fields: [
+      { key: 'pattern', label: '正则（不含斜杠，可带 flags 后缀）', kind: 'text', placeholder: '\\d{4}-\\d{2}-\\d{2}' },
+      { key: 'flags', label: 'flags', kind: 'text', placeholder: 'gi' },
+      { key: 'groupIndex', label: '捕获组序号（0=整个匹配）', kind: 'number' },
+    ],
+    defaults: { label: '正则提取', pattern: '', flags: 'g', groupIndex: 1 },
+    execute: async (ctx) => {
+      const raw = text(ctx.inputs.in)
+      const pattern = String(ctx.data.pattern || '')
+      if (!pattern) {
+        ctx.log('Regex: no pattern configured')
+        return { outputs: { match: '', group: '', all: [] } }
+      }
+      const flagsRaw = String(ctx.data.flags || 'g').replace(/[^gimsuy]/g, '')
+      const groupIndex = Math.max(0, Number(ctx.data.groupIndex ?? 1))
+      let re: RegExp
+      try {
+        re = new RegExp(pattern, flagsRaw.includes('g') ? flagsRaw : flagsRaw + 'g')
+      } catch (e: any) {
+        // A bad pattern is a node error worth surfacing, not a silent no-op.
+        throw new Error(`Invalid regex: ${e?.message || e}`)
+      }
+      const all = [...raw.matchAll(re)]
+      const first = all[0] || null
+      const match = first?.[0] ?? ''
+      const group = first?.[groupIndex] ?? ''
+      ctx.log(`Regex /${pattern}/${flagsRaw} → ${all.length} match(es)`)
+      return { outputs: { match, group, all: all.map((m) => m[0]) } }
+    },
+  },
+  {
+    type: 'datetime',
+    label: 'Date / Time',
+    labelZh: '日期时间',
+    category: 'data',
+    color: '#fb923c',
+    icon: CalendarClock,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'text', label: 'text', dataType: 'string' },
+      { id: 'timestamp', label: 'timestamp', dataType: 'number' },
+    ],
+    fields: [
+      { key: 'mode', label: '操作', kind: 'select', options: [
+        { value: 'now', label: '当前时间' },
+        { value: 'format', label: '格式化输入时间' },
+        { value: 'offset', label: '当前时间加减' },
+      ] },
+      { key: 'format', label: '输出格式（format 模式）', kind: 'select', options: [
+        { value: 'iso', label: 'ISO 8601' },
+        { value: 'date', label: 'YYYY-MM-DD' },
+        { value: 'datetime', label: 'YYYY-MM-DD HH:mm:ss' },
+        { value: 'time', label: 'HH:mm:ss' },
+        { value: 'locale', label: '本地化字符串' },
+      ] },
+      { key: 'offsetValue', label: '数量（offset 模式，可为负）', kind: 'number' },
+      { key: 'offsetUnit', label: '单位（offset 模式）', kind: 'select', options: [
+        { value: 'seconds', label: '秒' },
+        { value: 'minutes', label: '分' },
+        { value: 'hours', label: '小时' },
+        { value: 'days', label: '天' },
+      ] },
+    ],
+    defaults: { label: '日期时间', mode: 'now', format: 'datetime', offsetValue: 0, offsetUnit: 'days' },
+    execute: async (ctx) => {
+      const mode = String(ctx.data.mode || 'now')
+      const fmt = String(ctx.data.format || 'datetime')
+      let date: Date
+      if (mode === 'format') {
+        const parsed = new Date(text(ctx.inputs.in))
+        if (Number.isNaN(parsed.getTime())) {
+          throw new Error(`Cannot parse as a date: ${text(ctx.inputs.in).slice(0, 60)}`)
+        }
+        date = parsed
+      } else if (mode === 'offset') {
+        const amount = Number(ctx.data.offsetValue || 0)
+        const unit = String(ctx.data.offsetUnit || 'days')
+        const ms = { seconds: 1000, minutes: 60_000, hours: 3_600_000, days: 86_400_000 }[unit] ?? 86_400_000
+        date = new Date(Date.now() + amount * ms)
+      } else {
+        date = new Date()
+      }
+      const text$ = formatDate(date, fmt)
+      ctx.log(`DateTime [${mode}] → ${text$}`)
+      return { outputs: { text: text$, timestamp: date.getTime() } }
+    },
+  },
+  {
+    type: 'math',
+    label: 'Number',
+    labelZh: '数值计算',
+    category: 'data',
+    color: '#22d3ee',
+    icon: Calculator,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'value', label: 'value', dataType: 'number' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'op', label: '运算', kind: 'select', options: [
+        { value: 'round', label: '四舍五入' },
+        { value: 'floor', label: '向下取整' },
+        { value: 'ceil', label: '向上取整' },
+        { value: 'abs', label: '绝对值' },
+        { value: 'add', label: '加' },
+        { value: 'subtract', label: '减' },
+        { value: 'multiply', label: '乘' },
+        { value: 'divide', label: '除' },
+      ] },
+      { key: 'operand', label: '操作数（二元运算用）', kind: 'number' },
+      { key: 'decimals', label: '保留小数位（round 用）', kind: 'number' },
+    ],
+    defaults: { label: '数值计算', op: 'round', operand: 0, decimals: 0 },
+    execute: async (ctx) => {
+      const n = Number(text(ctx.inputs.in).trim())
+      if (Number.isNaN(n)) {
+        throw new Error(`Not a number: ${text(ctx.inputs.in).slice(0, 40)}`)
+      }
+      const op = String(ctx.data.op || 'round')
+      const operand = Number(ctx.data.operand || 0)
+      const decimals = Math.max(0, Math.min(10, Number(ctx.data.decimals || 0)))
+      let value: number
+      switch (op) {
+        case 'floor': value = Math.floor(n); break
+        case 'ceil': value = Math.ceil(n); break
+        case 'abs': value = Math.abs(n); break
+        case 'add': value = n + operand; break
+        case 'subtract': value = n - operand; break
+        case 'multiply': value = n * operand; break
+        case 'divide':
+          if (operand === 0) throw new Error('Division by zero')
+          value = n / operand
+          break
+        default: {
+          const factor = 10 ** decimals
+          value = Math.round(n * factor) / factor
+        }
+      }
+      ctx.log(`Number ${n} ${op} → ${value}`)
+      return { outputs: { value, text: String(value) } }
     },
   },
 ]

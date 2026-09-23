@@ -40,10 +40,25 @@ export function interpolate(
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, rawPath: string) => {
     const path = rawPath.trim()
     if (path.startsWith('input.') || path === 'input') {
-      return toDisplay(getPath(scope.inputs || {}, path === 'input' ? '' : path.slice('input.'.length)))
+      // Both `{{input}}` and `{{input.field}}` address the node's primary `in`
+      // port. The old form looked the field up on the inputs map itself, so
+      // `{{input.name}}` never matched the object that actually arrived there.
+      const from = scope.inputs?.in ?? null
+      if (path === 'input') return toDisplay(from)
+      return toDisplay(getPath(from, path.slice('input.'.length)))
     }
     if (path.startsWith('run.') || path === 'run') {
-      return toDisplay(getPath(scope.run || {}, path === 'run' ? '' : path.slice('run.'.length)))
+      // Same for `{{run}}`: the Start node's fields live under `run`.
+      if (path === 'run') return toDisplay(scope.run ?? null)
+      return toDisplay(getPath(scope.run || {}, path.slice('run.'.length)))
+    }
+    // Loop-scoped tokens: an Iteration/template body exposes the current item
+    // and its index directly (`{{item}}`, `{{item.title}}`, `{{index}}`).
+    if (path === 'item' || path.startsWith('item.') || path === 'index') {
+      const scoped = scope.inputs?.item
+      if (path === 'index') return toDisplay(scope.inputs?.index ?? null)
+      if (path === 'item') return toDisplay(scoped ?? null)
+      return toDisplay(getPath(scoped, path.slice('item.'.length)))
     }
     // nodeId.port or nodeId.a.b
     return toDisplay(getPath(scope.outputsByNode || {}, path))
