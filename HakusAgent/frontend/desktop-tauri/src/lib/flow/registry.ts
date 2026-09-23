@@ -221,10 +221,13 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
     ],
     fields: [
       { key: 'system', label: '系统提示', kind: 'textarea', rows: 3, placeholder: 'You are a helpful assistant.' },
-      { key: 'prompt', label: '用户提示（可用 {{input.x}} / {{start.out.topic}}）', kind: 'textarea', rows: 5, placeholder: '围绕 {{input}} 写一段摘要' },
+      { key: 'prompt', label: '用户提示（可用 {{input}} / {{start.out.topic}}）', kind: 'textarea', rows: 5, placeholder: '围绕 {{input}} 写一段摘要' },
       { key: 'sessionPrefix', label: '会话前缀', kind: 'text', placeholder: 'flow_llm' },
-      { key: 'provider', label: '供应商（留空用运行时默认）', kind: 'text', placeholder: 'sensenova-compat' },
-      { key: 'model', label: '模型（留空用供应商默认）', kind: 'text', placeholder: 'deepseek-v4-flash' },
+      // Pickers, not free text: the runtime knows which providers have
+      // credentials and which models each serves, so asking it beats making
+      // the operator spell a model id correctly.
+      { key: 'provider', label: '供应商', kind: 'select', optionsFrom: 'configured-providers' },
+      { key: 'model', label: '模型', kind: 'select', optionsFrom: 'models', dependsOn: 'provider' },
     ],
     defaults: {
       label: 'LLM',

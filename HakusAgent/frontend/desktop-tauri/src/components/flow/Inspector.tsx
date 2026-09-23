@@ -15,6 +15,7 @@ import { getNodeDef } from '@/lib/flow/registry'
 import { toDisplay } from '@/lib/flow/template'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/lib/i18n'
+import { FlowField } from './FlowField'
 
 export function Inspector() {
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds)
@@ -96,56 +97,17 @@ export function Inspector() {
         />
       </label>
 
-      {def.fields.map((field) => {
-        if (field.showWhen) {
-          const cur = node.data[field.showWhen.key]
-          if (String(cur) !== String(field.showWhen.equals)) return null
-        }
-        const value = node.data[field.key]
-        return (
-          <label key={field.key} className="flow-field">
-            <span>{field.label}</span>
-            {field.kind === 'textarea' || field.kind === 'code' || field.kind === 'json' ? (
-              <textarea
-                className="rp-textarea"
-                rows={field.rows || 3}
-                value={String(value ?? '')}
-                placeholder={field.placeholder}
-                onChange={(e) => updateNodeData(node.id, { [field.key]: e.target.value })}
-                {...batchProps}
-              />
-            ) : field.kind === 'select' ? (
-              <select
-                className="rp-input"
-                value={String(value ?? '')}
-                onChange={(e) => updateNodeData(node.id, { [field.key]: e.target.value })}
-              >
-                {field.options?.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : field.kind === 'number' ? (
-              <input
-                className="rp-input"
-                type="number"
-                value={String(value ?? '')}
-                onChange={(e) => updateNodeData(node.id, { [field.key]: Number(e.target.value) })}
-                {...batchProps}
-              />
-            ) : (
-              <input
-                className="rp-input"
-                value={String(value ?? '')}
-                placeholder={field.placeholder}
-                onChange={(e) => updateNodeData(node.id, { [field.key]: e.target.value })}
-                {...batchProps}
-              />
-            )}
-          </label>
-        )
-      })}
+      {def.fields.map((field) => (
+        <FlowField
+          key={field.key}
+          field={field}
+          value={node.data[field.key]}
+          data={node.data as Record<string, unknown>}
+          onChange={(key, value) => updateNodeData(node.id, { [key]: value })}
+          onFocus={beginBatch}
+          onBlur={endBatch}
+        />
+      ))}
 
       {state?.log?.length ? (
         <div className="flow-field">

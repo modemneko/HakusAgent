@@ -6852,11 +6852,15 @@ button:focus-visible .cx-rail-marker::before {
 /* Node cards — ComfyUI-ish: a colour bar, an icon chip, a status line. */
 .flow-node {
   position: relative;
-  /* The xyflow wrapper shrink-wraps its content when the node has no explicit
-     size, so the card must provide its own default width — width:100% here
-     would collapse to min-content (circular sizing). The resizer's inline
-     width on the wrapper still wins over this. */
-  width: 280px;
+  /* Sizing contract with the xyflow wrapper:
+     - the wrapper shrink-wraps a node that has no explicit size, so a bare
+       `width:100%` here resolves against itself and collapses to min-content;
+       `min-width` breaks that cycle and supplies the default;
+     - once the NodeResizer writes an inline width on the wrapper, `width:100%`
+       makes the card follow it — a fixed `width` ignores the resize, which is
+       exactly why horizontal dragging used to do nothing. */
+  width: 100%;
+  min-width: 280px;
   height: 100%;
   min-height: 84px;
   display: flex;
@@ -7100,6 +7104,89 @@ button:focus-visible .cx-rail-marker::before {
 
 .flow-node-expanded .flow-node-preview {
   max-height: none;
+}
+
+/* Inline parameter form on the node card (ComfyUI-style widgets).
+   Rows are label-left / control-right; controls stay usable at ~200px. */
+.flow-node-form {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 12px 10px;
+}
+
+.flow-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.flow-field-row-label {
+  flex: 0 0 34%;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--fz-text-low);
+}
+
+.flow-field-inline-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px !important;
+  padding: 2px 7px !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+}
+
+textarea.flow-field-inline-control {
+  height: auto !important;
+  padding: 4px 7px !important;
+  line-height: 1.4;
+}
+
+/* Toggle used by switch fields. */
+.flow-switch {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  border: 1px solid var(--fz-node-border);
+  background: var(--fz-node-inset);
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.flow-switch-knob {
+  display: block;
+  width: 11px;
+  height: 11px;
+  margin-left: 2px;
+  border-radius: 999px;
+  background: var(--fz-text-low);
+  transition: transform 140ms ease, background-color 140ms ease;
+}
+
+.flow-switch-on {
+  background: hsl(217 100% 65% / 0.25);
+  border-color: hsl(217 100% 65% / 0.6);
+}
+
+.flow-switch-on .flow-switch-knob {
+  transform: translateX(13px);
+  background: var(--fz-primary);
+}
+
+/* Collapsed card: the form is hidden, so say so rather than looking broken. */
+.flow-node-collapsed .flow-node-foot-note {
+  color: var(--fz-warning);
+}
+
+.flow-node-foot-note {
+  font-size: 10px;
 }
 
 /* Footer strip: run state left, metrics right. */

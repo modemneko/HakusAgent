@@ -25,6 +25,16 @@ export interface FieldDef {
   kind: FieldKind
   placeholder?: string
   options?: Array<{ value: string; label: string }>
+  /**
+   * Options that come from the runtime rather than the node definition:
+   * - `providers` — every provider the runtime knows about;
+   * - `configured-providers` — only those with credentials;
+   * - `models` — the models of the provider named by `dependsOn`.
+   * Lets a field be a picker instead of a text box the user has to spell right.
+   */
+  optionsFrom?: 'providers' | 'configured-providers' | 'models'
+  /** For `optionsFrom: 'models'`: the field key holding the provider id. */
+  dependsOn?: string
   /** Show field only when another field has this value. */
   showWhen?: { key: string; equals: string | number | boolean }
   rows?: number
