@@ -24,6 +24,7 @@ import {
   Type,
   UserCheck,
   Users,
+  Variable,
   Wrench,
 } from 'lucide-react'
 
@@ -38,6 +39,7 @@ function scopeOf(ctx: NodeExecCtx) {
   return {
     inputs: ctx.inputs,
     run,
+    vars: ctx.vars,
     outputsByNode: ctx.inputs as unknown as Record<string, Record<string, FlowValue>>,
   }
 }
@@ -914,6 +916,182 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
       }
       ctx.log(`Number ${n} ${op} → ${value}`)
       return { outputs: { value, text: String(value) } }
+    },
+  },
+  {
+    type: 'setvar',
+    label: 'Set Variable',
+    labelZh: '设置变量',
+    category: 'data',
+    color: '#c084fc',
+    icon: Variable,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [{ id: 'out', label: 'out', dataType: 'any' }],
+    fields: [
+      { key: 'name', label: '变量名', kind: 'text', placeholder: 'token' },
+      { key: 'value', label: '值（留空则透传 in 端口；支持 {{input}}）', kind: 'textarea', rows: 3, placeholder: '{{input}}' },
+    ],
+    defaults: { label: '设置变量', name: 'myVar', value: '' },
+    execute: async (ctx) => {
+      const name = String(ctx.data.name || '').trim()
+      if (!name) throw new Error('Set Variable: variable name is required')
+      const template = String(ctx.data.value ?? '')
+      // An empty template means "store whatever arrived on the in port".
+      const value = template.trim()
+        ? (interpolate(template, scopeOf(ctx)) as FlowValue)
+        : ctx.inputs.in
+      ctx.vars[name] = value
+      ctx.log(`Set ${name} = ${text(value).slice(0, 100)}`)
+      return { outputs: { out: value } }
+    },
+  },
+  {
+    type: 'getvar',
+    label: 'Get Variable',
+    labelZh: '读取变量',
+    category: 'data',
+    color: '#c084fc',
+    icon: Variable,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'value', label: 'value', dataType: 'any' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'name', label: '变量名', kind: 'text', placeholder: 'token' },
+      { key: 'fallback', label: '未设置时的默认值', kind: 'text' },
+      { key: 'required', label: '变量不存在时报错', kind: 'select', options: [
+        { value: 'no', label: '否（用默认值）' },
+        { value: 'yes', label: '是' },
+      ] },
+    ],
+    defaults: { label: '读取变量', name: 'myVar', fallback: '', required: 'no' },
+    execute: async (ctx) => {
+      const name = String(ctx.data.name || '').trim()
+      if (!name) throw new Error('Get Variable: variable name is required')
+      const exists = Object.prototype.hasOwnProperty.call(ctx.vars, name)
+      if (!exists && String(ctx.data.required || 'no') === 'yes') {
+        // Naming the variable is the recovery: the operator forgot to Set it.
+        const known = Object.keys(ctx.vars)
+        throw new Error(
+          `Variable "${name}" was never set${known.length ? ` (known: ${known.join(', ')})` : ''}`,
+        )
+      }
+      const value = exists ? ctx.vars[name] : ((ctx.data.fallback ?? '') as FlowValue)
+      ctx.log(`Get ${name} = ${text(value).slice(0, 100)}${exists ? '' : ' (fallback)'}`)
+      return { outputs: { value, text: text(value) } }
+    },
+  },
+  {
+    type: 'fileread',
+    label: 'Read File',
+    labelZh: '读取文件',
+    category: 'tool',
+    color: '#60a5fa',
+    icon: FileText,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'text', label: 'text', dataType: 'string' },
+      { id: 'path', label: 'path', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'root', label: '允许访问的根目录（绝对路径）', kind: 'text', placeholder: 'D:\\项目\\HakusAgent' },
+      { key: 'path', label: '相对路径（支持 {{input}}）', kind: 'text', placeholder: 'doc/notes.md' },
+    ],
+    defaults: { label: '读取文件', root: '', path: 'README.md' },
+    execute: async (ctx) => {
+      const wideScope = scopeOf(ctx)
+      const root = String(ctx.data.root || '').trim()
+      const rel = interpolate(String(ctx.data.path || ''), wideScope).trim()
+      if (!root) throw new Error('Read File: set the allowed root directory first')
+      if (!rel) throw new Error('Read File: file path is empty')
+      ctx.log(`Read ${rel} (root=${root})`)
+      const { fsOs } = await import('@/api/tauriBridge')
+      const res = await fsOs.readText(root, rel)
+      ctx.log(`Read → ${res.bytes} bytes`)
+      return { outputs: { text: res.content, path: res.path } }
+    },
+  },
+  {
+    type: 'filewrite',
+    label: 'Write File',
+    labelZh: '写入文件',
+    category: 'tool',
+    color: '#60a5fa',
+    icon: FileText,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'path', label: 'path', dataType: 'string' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'root', label: '允许访问的根目录（绝对路径）', kind: 'text', placeholder: 'D:\\项目\\HakusAgent' },
+      { key: 'path', label: '相对路径（支持 {{input}}）', kind: 'text', placeholder: 'out/result.md' },
+      { key: 'content', label: '内容（默认写入 in 端口；支持 {{input}}）', kind: 'textarea', rows: 5, placeholder: '{{input}}' },
+      { key: 'append', label: '追加而非覆盖', kind: 'select', options: [
+        { value: 'no', label: '否（覆盖）' },
+        { value: 'yes', label: '是（追加）' },
+      ] },
+    ],
+    defaults: { label: '写入文件', root: '', path: 'out/result.md', content: '', append: 'no' },
+    execute: async (ctx) => {
+      const wideScope = scopeOf(ctx)
+      const root = String(ctx.data.root || '').trim()
+      const rel = interpolate(String(ctx.data.path || ''), wideScope).trim()
+      if (!root) throw new Error('Write File: set the allowed root directory first')
+      if (!rel) throw new Error('Write File: file path is empty')
+      const template = String(ctx.data.content ?? '')
+      const body = template.trim() ? interpolate(template, wideScope) : text(ctx.inputs.in)
+      const append = String(ctx.data.append || 'no') === 'yes'
+      ctx.log(`Write ${rel} (${body.length} chars${append ? ', append' : ''})`)
+      const { fsOs } = await import('@/api/tauriBridge')
+      let payload = body
+      if (append) {
+        // Read-then-write keeps the Rust side to two simple commands rather
+        // than an append mode the operator cannot inspect before using.
+        try {
+          const existing = await fsOs.readText(root, rel)
+          payload = existing.content + body
+        } catch {
+          /* file does not exist yet — plain create */
+        }
+      }
+      const written = await fsOs.writeText(root, rel, payload)
+      ctx.log(`Wrote → ${written}`)
+      return { outputs: { path: written, text: body } }
+    },
+  },
+  {
+    type: 'filelist',
+    label: 'List Directory',
+    labelZh: '列出目录',
+    category: 'tool',
+    color: '#60a5fa',
+    icon: FileText,
+    inputs: [{ id: 'in', label: 'in', dataType: 'any' }],
+    outputs: [
+      { id: 'items', label: 'items', dataType: 'array' },
+      { id: 'text', label: 'text', dataType: 'string' },
+    ],
+    fields: [
+      { key: 'root', label: '允许访问的根目录（绝对路径）', kind: 'text', placeholder: 'D:\\项目\\HakusAgent' },
+      { key: 'path', label: '相对路径（支持 {{input}}）', kind: 'text', placeholder: 'doc' },
+      { key: 'filter', label: '名称包含（可空）', kind: 'text', placeholder: '.md' },
+    ],
+    defaults: { label: '列出目录', root: '', path: '.', filter: '' },
+    execute: async (ctx) => {
+      const wideScope = scopeOf(ctx)
+      const root = String(ctx.data.root || '').trim()
+      const rel = interpolate(String(ctx.data.path || '.'), wideScope).trim() || '.'
+      if (!root) throw new Error('List Directory: set the allowed root directory first')
+      const needle = String(ctx.data.filter || '').trim().toLowerCase()
+      ctx.log(`List ${rel} (root=${root})`)
+      const { fsOs } = await import('@/api/tauriBridge')
+      const entries = await fsOs.listDir(root, rel)
+      const filtered = needle ? entries.filter((e) => e.name.toLowerCase().includes(needle)) : entries
+      const items = filtered.map((e) => `${e.isDir ? '[dir] ' : ''}${e.name}`)
+      ctx.log(`Listed ${filtered.length}/${entries.length} entries`)
+      return { outputs: { items, text: items.join('\n') } }
     },
   },
 ]

@@ -34,11 +34,21 @@ export function toDisplay(value: FlowValue): string {
  */
 export function interpolate(
   template: string,
-  scope: { inputs?: Record<string, FlowValue>; outputsByNode?: Record<string, Record<string, FlowValue>>; run?: Record<string, FlowValue> },
+  scope: {
+    inputs?: Record<string, FlowValue>
+    outputsByNode?: Record<string, Record<string, FlowValue>>
+    run?: Record<string, FlowValue>
+    /** Run-scoped variables (Set/Get nodes); read via {{var.name}}. */
+    vars?: Record<string, FlowValue>
+  },
 ): string {
   if (!template) return ''
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, rawPath: string) => {
     const path = rawPath.trim()
+    if (path === 'var' || path.startsWith('var.')) {
+      if (path === 'var') return toDisplay(scope.vars ?? null)
+      return toDisplay(getPath(scope.vars || {}, path.slice('var.'.length)))
+    }
     if (path.startsWith('input.') || path === 'input') {
       // Both `{{input}}` and `{{input.field}}` address the node's primary `in`
       // port. The old form looked the field up on the inputs map itself, so

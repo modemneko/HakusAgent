@@ -99,7 +99,7 @@ async function runRegion(
   seeds: Record<string, Record<string, FlowValue>>,
   hooks: ExecutorHooks,
   signal: AbortSignal,
-  opts: { runInputs: Record<string, FlowValue>; tag?: string },
+  opts: { runInputs: Record<string, FlowValue>; vars: Record<string, FlowValue>; tag?: string },
 ): Promise<RegionResult> {
   const outputsByNode: Record<string, Record<string, FlowValue>> = { ...seeds }
   const activeByNode: Record<string, Set<string> | undefined> = {}
@@ -187,7 +187,7 @@ async function runRegion(
         { [node.id]: { out: item, text: item, item, index: i, items, body: true, done: false } },
         hooks,
         signal,
-        { runInputs: opts.runInputs, tag: `iter ${i + 1}/${items.length}` },
+        { runInputs: opts.runInputs, vars: opts.vars, tag: `iter ${i + 1}/${items.length}` },
       )
       Object.assign(nodeStates, region.nodeStates)
       if (region.cancelled) {
@@ -221,6 +221,7 @@ async function runRegion(
       inputs: resolved.inputs,
       incoming: resolved.incoming,
       runInputs: opts.runInputs,
+      vars: opts.vars,
       signal,
       log: (line) => pushLog(node.id, line),
       emit: (partial) => report(node.id, { preview: partial.slice(0, 200) }),
@@ -329,6 +330,9 @@ export async function executeFlow(
   signal: AbortSignal,
 ): Promise<FlowRunState> {
   const lit = new Set<string>()
+  // One variable store per run, shared by every node (Set/Get nodes) and reset
+  // on the next run — it never becomes part of the graph data.
+  const vars: Record<string, FlowValue> = {}
   const region = await runRegion(graph.nodes, graph.edges, {}, {
     onNodeState: hooks.onNodeState,
     onRunState: hooks.onRunState,
@@ -337,7 +341,7 @@ export async function executeFlow(
       hooks.onActiveEdges([...lit])
     },
     waitHuman: hooks.waitHuman,
-  }, signal, { runInputs })
+  }, signal, { runInputs, vars })
 
   const collected: Record<string, FlowValue> = {}
   for (const n of graph.nodes) {

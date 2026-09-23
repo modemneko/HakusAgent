@@ -14,6 +14,8 @@ mod clipboard_cmds;
 // Available on every platform (including Android) so the Flow HTTP node works
 // there too — it must therefore be registered in BOTH invoke handlers below.
 mod http_cmds;
+// Filesystem access for the Flow file nodes (root-confined, see fs_cmds.rs).
+mod fs_cmds;
 #[cfg(not(target_os = "android"))]
 mod git_cmds;
 
@@ -391,6 +393,9 @@ pub fn run() {
         git_cmds::git_pr_checks,
         git_cmds::doctor_check_dependencies,
         http_cmds::http_request,
+        fs_cmds::fs_read_text,
+        fs_cmds::fs_write_text,
+        fs_cmds::fs_list_dir,
     ]);
 
     #[cfg(target_os = "android")]
@@ -407,9 +412,12 @@ pub fn run() {
         store_cmds::store_set,
         store_cmds::store_get_all,
         store_cmds::store_clear,
-        // Registered here too: http_cmds has no platform cfg, so an
+        // Registered here too: http_cmds / fs_cmds have no platform cfg, so an
         // unregistered command would fail with "command not found" on Android.
         http_cmds::http_request,
+        fs_cmds::fs_read_text,
+        fs_cmds::fs_write_text,
+        fs_cmds::fs_list_dir,
     ]);
 
     let app = builder

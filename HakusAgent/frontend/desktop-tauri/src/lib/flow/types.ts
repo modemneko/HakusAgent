@@ -119,6 +119,12 @@ export interface NodeExecCtx {
   incoming: IncomingEdge[]
   /** Graph-level run inputs (from Start node). */
   runInputs: Record<string, FlowValue>
+  /**
+   * Run-scoped mutable variable store, shared by every node in one execution.
+   * Set/Get nodes use it to pass values without drawing an edge; it is reset
+   * per run (never persisted into the graph).
+   */
+  vars: Record<string, FlowValue>
   signal: AbortSignal
   log: (line: string) => void
   /** Stream partial output to the canvas while the node is still running. */

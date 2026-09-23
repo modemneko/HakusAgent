@@ -130,6 +130,30 @@ export const httpOs = {
     }),
 }
 
+// ── Filesystem (Flow file nodes) ───────────────────────────────────
+// Every call takes a `root`; the Rust side resolves paths inside it and
+// rejects anything that escapes (verified after canonicalisation).
+
+export interface TauriFileRead {
+  content: string
+  path: string
+  bytes: number
+}
+
+export interface TauriDirEntry {
+  name: string
+  path: string
+  isDir: boolean
+  bytes: number
+}
+
+export const fsOs = {
+  readText: (root: string, path: string) => invoke<TauriFileRead>('fs_read_text', { root, path }),
+  writeText: (root: string, path: string, content: string) =>
+    invoke<string>('fs_write_text', { root, path, content }),
+  listDir: (root: string, path: string) => invoke<TauriDirEntry[]>('fs_list_dir', { root, path }),
+}
+
 // ── Git review / worktree / doctor ─────────────────────────────────
 export interface TauriWorktree {
   path: string
