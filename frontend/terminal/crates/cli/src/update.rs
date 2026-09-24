@@ -1,7 +1,7 @@
 //! Self-update for the `hakus` binary.
 //!
 //! The `update` subcommand fetches the latest release from
-//! `github.com/Hmbown/CodeWhale/releases/latest`, downloads the
+//! `github.com/modemneko/HakusAgent/releases/latest`, downloads the
 //! platform-correct binary, verifies its SHA256 checksum, and atomically
 //! replaces the currently running binary.
 
@@ -27,9 +27,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-const GITHUB_LATEST_RELEASE_PAGE_URL: &str = "https://github.com/Hmbown/CodeWhale/releases/latest";
+const GITHUB_LATEST_RELEASE_PAGE_URL: &str = "https://github.com/modemneko/HakusAgent/releases/latest";
 const GITHUB_RELEASE_DOWNLOAD_BASE_URL: &str =
-    "https://github.com/Hmbown/CodeWhale/releases/download";
+    "https://github.com/modemneko/HakusAgent/releases/download";
 const UPDATE_HTTP_ATTEMPTS: usize = 3;
 const UPDATE_HTTP_RETRY_DELAY_MS: u64 = 100;
 /// Ceiling for one asset download. Generous, because release binaries are tens
@@ -1006,7 +1006,7 @@ original install method:
 
   Manual binary:
     download the matched hakus asset from
-    https://github.com/Hmbown/CodeWhale/releases/latest
+    https://github.com/modemneko/HakusAgent/releases/latest
 
 Once `hakus` is on your PATH, run `hakus update` for future updates.",
         exe = current_exe.display(),
@@ -1450,8 +1450,8 @@ fn release_tag_from_github_release_url(url: &reqwest::Url) -> Option<String> {
 
 fn release_tag_from_github_release_html(body: &str) -> Option<String> {
     const MARKERS: &[&str] = &[
-        "/Hmbown/CodeWhale/releases/tag/",
-        "/hmbown/CodeWhale/releases/tag/",
+        "/modemneko/HakusAgent/releases/tag/",
+        "/modemneko/hakusagent/releases/tag/",
         "/releases/tag/",
     ];
     for marker in MARKERS {
@@ -2406,7 +2406,7 @@ mod tests {
         assert!(!message.contains("cargo install hakus-tui --locked"));
         assert!(message.contains("brew upgrade hakus"));
         assert!(message.contains("brew upgrade deepseek-tui"));
-        assert!(message.contains("https://github.com/Hmbown/CodeWhale/releases/latest"));
+        assert!(message.contains("https://github.com/modemneko/HakusAgent/releases/latest"));
     }
 
     #[test]
@@ -2919,7 +2919,7 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
 
     #[test]
     fn github_release_url_parser_extracts_tag() {
-        let url = reqwest::Url::parse("https://github.com/Hmbown/CodeWhale/releases/tag/v0.8.61")
+        let url = reqwest::Url::parse("https://github.com/modemneko/HakusAgent/releases/tag/v0.8.61")
             .unwrap();
 
         assert_eq!(
@@ -2935,13 +2935,13 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
         assert_eq!(release.tag_name, "v0.8.61");
         assert_eq!(
             release.assets[0].browser_download_url,
-            "https://github.com/Hmbown/CodeWhale/releases/download/v0.8.61/hakus-artifacts-sha256.txt"
+            "https://github.com/modemneko/HakusAgent/releases/download/v0.8.61/hakus-artifacts-sha256.txt"
         );
         let dispatcher =
             select_platform_asset(&release, "hakus-macos-arm64").expect("dispatcher asset");
         assert_eq!(
             dispatcher.browser_download_url,
-            "https://github.com/Hmbown/CodeWhale/releases/download/v0.8.61/hakus-macos-arm64"
+            "https://github.com/modemneko/HakusAgent/releases/download/v0.8.61/hakus-macos-arm64"
         );
         assert_eq!(release.assets.len(), 2);
         assert!(select_platform_asset(&release, "hakus-tui-macos-arm64").is_none());
@@ -2950,7 +2950,7 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
     #[test]
     fn latest_stable_redirect_fallback_reads_tag_url() {
         let (url, request_rx, handle) = serve_http_once("200 OK", "text/html", b"<html></html>");
-        let tag_url = url.replace("/release", "/Hmbown/CodeWhale/releases/tag/v9.9.9");
+        let tag_url = url.replace("/release", "/modemneko/HakusAgent/releases/tag/v9.9.9");
 
         let tag = fetch_latest_stable_tag_from_redirect_url(&tag_url, None)
             .expect("tag should parse from final URL");
@@ -2958,7 +2958,7 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
         assert_eq!(tag, "v9.9.9");
         let request = request_rx.recv().expect("captured request");
         assert!(
-            request.starts_with("GET /Hmbown/CodeWhale/releases/tag/v9.9.9 "),
+            request.starts_with("GET /modemneko/HakusAgent/releases/tag/v9.9.9 "),
             "got {request:?}"
         );
         handle.join().expect("test server thread");
@@ -2967,8 +2967,8 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
     #[test]
     fn github_release_html_parser_skips_empty_first_marker() {
         let body = r#"
-            <a href="/Hmbown/CodeWhale/releases/tag/?expanded=true">generic</a>
-            <a href="/Hmbown/CodeWhale/releases/tag/v9.9.9">latest</a>
+            <a href="/modemneko/HakusAgent/releases/tag/?expanded=true">generic</a>
+            <a href="/modemneko/HakusAgent/releases/tag/v9.9.9">latest</a>
         "#;
 
         assert_eq!(
@@ -3218,13 +3218,13 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
                     Asset {
                         name: "hakus-linux-x64".to_string(),
                         browser_download_url: format!(
-                            "https://github.com/Hmbown/CodeWhale/releases/download/{tag_name}/hakus-linux-x64"
+                            "https://github.com/modemneko/HakusAgent/releases/download/{tag_name}/hakus-linux-x64"
                         ),
                     },
                     Asset {
                         name: CHECKSUM_MANIFEST_ASSET.to_string(),
                         browser_download_url: format!(
-                            "https://github.com/Hmbown/CodeWhale/releases/download/{tag_name}/{CHECKSUM_MANIFEST_ASSET}"
+                            "https://github.com/modemneko/HakusAgent/releases/download/{tag_name}/{CHECKSUM_MANIFEST_ASSET}"
                         ),
                     },
                 ],
@@ -3307,7 +3307,7 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
         assert_eq!(plan.source, UpdateReleaseSource::GitHub);
         assert_eq!(
             plan.binary_url,
-            "https://github.com/Hmbown/CodeWhale/releases/download/v9.9.9/hakus-linux-x64"
+            "https://github.com/modemneko/HakusAgent/releases/download/v9.9.9/hakus-linux-x64"
         );
     }
 
@@ -3441,7 +3441,7 @@ E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  *hakus-windows
 
         assert_eq!(
             candidate.manifest_url,
-            "https://github.com/Hmbown/CodeWhale/releases/download/v0.9.9/hakus-artifacts-sha256.txt"
+            "https://github.com/modemneko/HakusAgent/releases/download/v0.9.9/hakus-artifacts-sha256.txt"
         );
         assert_eq!(
             candidate.binary_url,
