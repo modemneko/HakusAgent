@@ -2217,20 +2217,25 @@ export function Composer({
                   )}
                 </Button>
               )}
-              <Button
-                size="icon"
-                className={cn(
-                  'h-8 w-8 rounded-full border border-border/40 transition-colors',
-                  (!value.trim() && attachments.length === 0) || disabled || uploading
-                    ? 'border-transparent bg-muted/40 text-muted-foreground/60'
-                    : 'bg-foreground text-background hover:bg-foreground/85',
-                )}
-                onClick={() => void submit()}
-                disabled={(!value.trim() && attachments.length === 0) || disabled || uploading}
-                title={isStreaming ? copy('加入发送队列', 'Add to send queue') : copy('发送', 'Send')}
-              >
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.5} />}
-              </Button>
+              {/* 运行中且输入框为空时不显示发送按钮：此时它永远是灰的、
+                  点不动，和旁边的停止按钮并排只是噪音。一旦有输入（含附件），
+                  它才出现并提供「加入队列」的能力。 */}
+              {(!isStreaming || value.trim() || attachments.length > 0) && (
+                <Button
+                  size="icon"
+                  className={cn(
+                    'h-8 w-8 rounded-full border border-border/40 transition-colors',
+                    (!value.trim() && attachments.length === 0) || disabled || uploading
+                      ? 'border-transparent bg-muted/40 text-muted-foreground/60'
+                      : 'bg-foreground text-background hover:bg-foreground/85',
+                  )}
+                  onClick={() => void submit()}
+                  disabled={(!value.trim() && attachments.length === 0) || disabled || uploading}
+                  title={isStreaming ? copy('加入发送队列', 'Add to send queue') : copy('发送', 'Send')}
+                >
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.5} />}
+                </Button>
+              )}
               {isStreaming && (
                 <Button
                   size="icon"

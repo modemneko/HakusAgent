@@ -155,6 +155,19 @@ jobs:
             echo "::error::No .sig files produced. Set TAURI_SIGNING_PRIVATE_KEY and make sure bundle.createUpdaterArtifacts is true."
             exit 1
           fi
+          # Drop signatures whose bundle was not collected (.deb/.rpm/.msi are
+          # signed by the bundler but are not self-updating, so the updater
+          # never reads them). Uploading them wastes mirror bandwidth and makes
+          # it look like a platform shipped when only its signature did.
+          for sig in stable-assets/*.sig; do
+            bundle="$(basename "$sig" .sig)"
+            if [ ! -f "stable-assets/$bundle" ]; then
+              echo "dropping orphan signature: $bundle.sig (no matching bundle)"
+              rm -f "$sig"
+            fi
+          done
+          echo "--- after pruning orphans ---"
+          ls -la stable-assets/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -283,15 +296,36 @@ jobs:
           done
           delete_if_present "latest.json"
 
+          upload() {
+            local path="$1" name="$2" attempt
+            # Large bundles (~100 MB AppImage) can be cut off mid-upload;
+            # curl then exits 56 ("failure receiving network data"). Without a
+            # retry that aborts the whole mirror step after 18 minutes, so
+            # large files get a second and third attempt.
+            for attempt in 1 2 3; do
+              if curl -sS -f --max-time 900 --retry 2 --retry-delay 5 \
+                   -X POST "${API}/releases/${release_id}/attach_files" \
+                   -F "access_token=${GITEE_TOKEN}" \
+                   -F "file=@${path};filename=${name}" >/dev/null; then
+                return 0
+              fi
+              echo "  upload failed (attempt ${attempt}): ${name}"
+              [ "$attempt" -lt 3 ] && sleep 15
+            done
+            return 1
+          }
+
+          failed=0
           for path in stable-assets/*; do
             echo "uploading $(basename "$path")"
-            curl -sf -X POST "${API}/releases/${release_id}/attach_files" \
-              -F "access_token=${GITEE_TOKEN}" \
-              -F "file=@${path}" >/dev/null
+            upload "$path" "$(basename "$path")" || failed=1
           done
 
           echo "uploading latest.json (Gitee-hosted URLs)"
-          curl -sf -X POST "${API}/releases/${release_id}/attach_files" \
-            -F "access_token=${GITEE_TOKEN}" \
-            -F "file=@latest.gitee.json;filename=latest.json" >/dev/null
+          upload "latest.gitee.json" "latest.json" || failed=1
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more Gitee uploads failed. The GitHub channel is already published, so re-run this workflow to retry the mirror."
+            exit 1
+          fi
           echo "Gitee mirror updated."
