@@ -2343,13 +2343,21 @@ select:focus {
 /* Chat rows participate in nested flex layouts. Explicitly resetting their
    automatic minimum width prevents a long tool name/result from widening the
    outer message scroller and producing a second horizontal scrollbar. */
-.chat-timeline,
 .chat-message,
 .chat-tool-call,
 .chat-message-body,
 .chat-tool-call-body {
   min-width: 0;
   max-width: 100%;
+}
+
+/* 正文列宽度上限。必须写在这里而不是组件里的 Tailwind 类：本文件是无层级
+   (unlayered) 样式，级联优先级高于 @layer utilities，Tailwind 的
+   max-w-* 会被上面的 max-width:100% 覆盖掉。宽度用 Codex 的正文列 token
+   (40rem)，与 composer 共用，保证输入框和正文左右同边。 */
+.chat-timeline {
+  min-width: 0;
+  max-width: var(--thread-content-max-width);
 }
 
 .chat-tool-call-body,

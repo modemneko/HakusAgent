@@ -6719,6 +6719,10 @@ struct ProviderEntry {
     auth_mode: String,
     /// Explicit API dialect selected for this route, when configured.
     wire: Option<String>,
+    /// User-supplied context-window size for this route, when configured.
+    /// The model catalog does not cover custom/aggregator routes, so this is
+    /// what lets the UI show context usage instead of "unknown".
+    context_window: Option<u32>,
     supports_connection_test: bool,
     supports_live_models: bool,
     supports_headers: bool,
@@ -6785,6 +6789,25 @@ struct ProviderUpdateRequest {
     models: Option<Vec<String>>,
     #[serde(default)]
     wire: Option<String>,
+    /// Context-window size in tokens for this route.
+    ///
+    /// Custom and aggregator routes are absent from the built-in model
+    /// catalog, so the UI has no way to show context usage for them unless the
+    /// user supplies the number once here. The double option distinguishes
+    /// "field absent" (leave unchanged) from "explicit null" (clear it).
+    #[serde(default, deserialize_with = "deserialize_optional_u32_field")]
+    context_window: Option<Option<u32>>,
+}
+
+/// Distinguish "field absent" from "field explicitly null" for an optional
+/// numeric field, so a PATCH can clear a value without a magic sentinel.
+fn deserialize_optional_u32_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<u32>::deserialize(deserializer)?))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -7071,6 +7094,7 @@ fn provider_entry_for_identity(
         is_custom: provider == ApiProvider::Custom,
         auth_mode,
         wire,
+        context_window: route_config.and_then(|entry| entry.context_window),
         supports_connection_test: true,
         supports_live_models: true,
         supports_headers: true,
@@ -7647,6 +7671,21 @@ async fn update_provider(
             Some(value),
         )
         .map_err(|error| ApiError::internal(format!("Failed to save provider API format: {error}")))?;
+    }
+
+    if let Some(context_window) = req.context_window {
+        // A context window of 0 is meaningless — treat it as "clear", matching
+        // the config layer's own validation (`parse_context_window`).
+        let value = context_window.filter(|tokens| *tokens > 0);
+        config_persistence::persist_provider_context_window_for_identity(
+            state.config_path.as_deref(),
+            provider_route.provider,
+            &identity.key,
+            value,
+        )
+        .map_err(|error| {
+            ApiError::internal(format!("Failed to save provider context window: {error}"))
+        })?;
     }
 
     if req.set_as_default {
@@ -8346,6 +8385,16 @@ struct GuiConfigResponse {
     mcp_config_path: String,
     subagents_enabled: bool,
     subagents_max_depth: u32,
+    /// Maximum concurrent sub-agents. Sub-agents share the provider's rate
+    /// limit, so lowering this is the main lever against 429s on
+    /// aggregator/proxy routes.
+    subagents_max_concurrent: u32,
+    /// Retry policy for provider requests, surfaced so users on rate-limited
+    /// routes can widen it without hand-editing `config.toml`.
+    retry_enabled: bool,
+    retry_max_retries: u32,
+    retry_initial_delay: f64,
+    retry_max_delay: f64,
     show_thinking: bool,
     thinking_default_expanded: bool,
     thinking_highlight: bool,
@@ -8443,6 +8492,14 @@ async fn get_config(
         mcp_config_path,
         subagents_enabled: config.subagents_enabled(),
         subagents_max_depth: config.subagent_max_spawn_depth(),
+        subagents_max_concurrent: config.max_subagents() as u32,
+        // Report the values actually in effect: an unset `[retry]` table means
+        // the built-in defaults are running, and the UI should show those
+        // rather than blanks.
+        retry_enabled: config.retry.as_ref().and_then(|r| r.enabled).unwrap_or(true),
+        retry_max_retries: config.retry.as_ref().and_then(|r| r.max_retries).unwrap_or(3),
+        retry_initial_delay: config.retry.as_ref().and_then(|r| r.initial_delay).unwrap_or(1.0),
+        retry_max_delay: config.retry.as_ref().and_then(|r| r.max_delay).unwrap_or(60.0),
         show_thinking: settings.show_thinking,
         thinking_default_expanded: settings.thinking_default_expanded,
         thinking_highlight: settings.thinking_highlight,
@@ -8597,6 +8654,82 @@ async fn set_config(
                 })?;
                 let clamped = raw.min(u64::from(hakus_config::MAX_SPAWN_DEPTH_CEILING));
                 config_persistence::persist_subagents_integer_key(config_path, "max_depth", clamped)
+            }
+            // Sub-agents share the provider's rate limit. Lowering concurrency
+            // is the main lever against 429s on aggregator/proxy routes, so it
+            // needs to be reachable without hand-editing config.toml.
+            "subagents_max_concurrent" => {
+                let raw = value.parse::<u64>().map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Invalid value '{value}' for subagents_max_concurrent: expected a positive integer"
+                    ))
+                })?;
+                let clamped = raw.clamp(1, crate::MAX_SUBAGENTS as u64);
+                config_persistence::persist_subagents_integer_key(
+                    config_path,
+                    "max_concurrent",
+                    clamped,
+                )
+            }
+            "retry_enabled" => {
+                let enabled = value.parse::<bool>().map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Invalid value '{value}' for retry_enabled: expected 'true' or 'false'"
+                    ))
+                })?;
+                config_persistence::persist_table_bool_key(config_path, "retry", "enabled", enabled)
+            }
+            "retry_max_retries" => {
+                let raw = value.parse::<u64>().map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Invalid value '{value}' for retry_max_retries: expected a non-negative integer"
+                    ))
+                })?;
+                // 20 attempts at the exponential ceiling would outlast any
+                // reasonable turn; cap so a typo cannot wedge the runtime.
+                let clamped = raw.min(20);
+                config_persistence::persist_table_integer_key(
+                    config_path,
+                    "retry",
+                    "max_retries",
+                    clamped,
+                )
+            }
+            "retry_initial_delay" => {
+                let parsed = value.parse::<f64>().map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Invalid value '{value}' for retry_initial_delay: expected seconds as a number"
+                    ))
+                })?;
+                if !parsed.is_finite() || parsed < 0.0 {
+                    return Err(ApiError::bad_request(
+                        "retry_initial_delay must be a non-negative number of seconds",
+                    ));
+                }
+                config_persistence::persist_table_float_key(
+                    config_path,
+                    "retry",
+                    "initial_delay",
+                    parsed.min(300.0),
+                )
+            }
+            "retry_max_delay" => {
+                let parsed = value.parse::<f64>().map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Invalid value '{value}' for retry_max_delay: expected seconds as a number"
+                    ))
+                })?;
+                if !parsed.is_finite() || parsed <= 0.0 {
+                    return Err(ApiError::bad_request(
+                        "retry_max_delay must be a positive number of seconds",
+                    ));
+                }
+                config_persistence::persist_table_float_key(
+                    config_path,
+                    "retry",
+                    "max_delay",
+                    parsed.min(600.0),
+                )
             }
             "sandbox_mode" => {
                 let normalized = match value.to_lowercase().as_str() {

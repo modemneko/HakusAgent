@@ -274,11 +274,16 @@ fn register_uninstall_entry(install_dir: &Path) -> Result<(), String> {
         let display = PRODUCT;
         let publisher = "modemneko";
         let estimated = 300_000u32; // KB
+        // Version is read from Cargo.toml at compile time. A literal here drifts
+        // silently: the registry would keep advertising whatever version was
+        // current when this line was last edited, so Windows' Add/Remove
+        // Programs would show a stale number forever after.
+        let version = env!("CARGO_PKG_VERSION");
         let script = format!(
             r#"$key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HakusAI';
 New-Item -Path $key -Force | Out-Null;
 Set-ItemProperty -Path $key -Name DisplayName -Value '{display}';
-Set-ItemProperty -Path $key -Name DisplayVersion -Value '0.3.0';
+Set-ItemProperty -Path $key -Name DisplayVersion -Value '{version}';
 Set-ItemProperty -Path $key -Name Publisher -Value '{publisher}';
 Set-ItemProperty -Path $key -Name InstallLocation -Value '{loc}';
 Set-ItemProperty -Path $key -Name DisplayIcon -Value '{icon}';
@@ -288,6 +293,7 @@ Set-ItemProperty -Path $key -Name NoModify -Value 1 -Type DWord;
 Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord;
 "#,
             display = display,
+            version = version,
             publisher = publisher,
             loc = install_dir.to_string_lossy().replace('\'', "''"),
             icon = install_dir.join(APP_EXE).to_string_lossy().replace('\'', "''"),

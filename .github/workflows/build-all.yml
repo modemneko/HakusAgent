@@ -164,6 +164,15 @@ jobs:
 
       - name: Build Tauri app
         working-directory: HakusAgent/frontend/desktop-tauri
+        # bundle.createUpdaterArtifacts is enabled, which makes the bundler
+        # SIGN the updater artifacts. With a pubkey configured in
+        # plugins.updater but no private key in the environment, the bundler
+        # hard-fails ("A public key has been found, but no private key"), so
+        # the secrets must be present for nightly builds too. The signatures
+        # are unused by the nightly channel; they exist so the build passes.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build ${{ matrix.args }}
 
       - name: Stage installer payload (windows)

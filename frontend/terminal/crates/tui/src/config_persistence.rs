@@ -207,6 +207,18 @@ pub(crate) fn persist_table_bool_key(
     persist_table_value_key(config_path, table_name, key, value.into())
 }
 
+/// Persist a float into a `[<table_name>]` entry. Retry delays are seconds and
+/// legitimately fractional (e.g. `initial_delay = 1.5`), so they cannot go
+/// through the integer helper.
+pub(crate) fn persist_table_float_key(
+    config_path: Option<&Path>,
+    table_name: &str,
+    key: &str,
+    value: f64,
+) -> anyhow::Result<PathBuf> {
+    persist_table_value_key(config_path, table_name, key, value.into())
+}
+
 pub(crate) fn persist_table_string_key(
     config_path: Option<&Path>,
     table_name: &str,
@@ -419,6 +431,31 @@ pub(crate) fn persist_provider_wire_for_identity(
         let segments = ["providers", key.as_str(), "wire"];
         match normalized {
             Some(value) => set_document_value(doc, &segments, value),
+            None => unset_document_value(doc, &segments).map(|_| ()),
+        }
+    })?;
+    Ok(path)
+}
+
+/// Persist the provider route's context-window size in tokens.
+///
+/// The runtime's built-in model catalog only covers models it ships, so a
+/// custom route or an aggregator/proxy model resolves to "unknown" and the UI
+/// cannot show context usage. Recording the size here lets the user supply it
+/// once per route. `None` clears the entry so the catalog/default applies
+/// again.
+pub(crate) fn persist_provider_context_window_for_identity(
+    config_path: Option<&Path>,
+    provider: ApiProvider,
+    provider_identity: &str,
+    context_window: Option<u32>,
+) -> anyhow::Result<PathBuf> {
+    let path = config_toml_path(config_path)?;
+    mutate_config_document(&path, |doc| {
+        let key = provider_config_table_key_for_identity(doc, provider, provider_identity)?;
+        let segments = ["providers", key.as_str(), "context_window"];
+        match context_window {
+            Some(value) => set_document_value(doc, &segments, i64::from(value)),
             None => unset_document_value(doc, &segments).map(|_| ()),
         }
     })?;

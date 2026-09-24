@@ -53,6 +53,11 @@ function scopeOf(ctx: NodeExecCtx) {
  */
 const threadIds = new Map<string, string>()
 
+/** Drop a cached mapping whose thread the Runtime no longer has. */
+function forgetThreadId(session: string): void {
+  threadIds.delete(session)
+}
+
 async function resolveThreadId(client: any, session: string): Promise<string> {
   const cached = threadIds.get(session)
   if (cached) return cached
@@ -86,34 +91,53 @@ async function runAgentTurn(
   onDelta?: (text: string) => void,
   route?: { provider?: string; model?: string },
 ): Promise<string> {
-  const { apiClient: client } = await import('@/api/client')
-  const threadId = await resolveThreadId(client, session)
-  let acc = ''
-  let lastEmit = 0
-  await client.chatStream(
-    prompt,
-    threadId,
-    (chunk: any) => {
-      if (chunk?.content) {
-        acc += chunk.content
-        const now = Date.now()
-        if (onDelta && now - lastEmit > 90) {
-          lastEmit = now
-          onDelta(acc)
+  const { apiClient: client, isRuntimeMissingThreadError } = await import('@/api/client')
+
+  const turn = async (threadId: string) => {
+    let acc = ''
+    let lastEmit = 0
+    await client.chatStream(
+      prompt,
+      threadId,
+      (chunk: any) => {
+        if (chunk?.content) {
+          acc += chunk.content
+          const now = Date.now()
+          if (onDelta && now - lastEmit > 90) {
+            lastEmit = now
+            onDelta(acc)
+          }
         }
-      }
-    },
-    signal,
-    // chatStream(message, sessionId, onChunk, signal, provider, runMode,
-    //   reasoningEffort, projectId, model, longRunningGoal, providerId)
-    route?.model,
-    runMode as any,
-    undefined, // reasoning effort
-    undefined, // project id
-    route?.model,
-    false, // longRunningGoal
-    route?.provider,
-  )
+      },
+      signal,
+      // chatStream(message, sessionId, onChunk, signal, provider, runMode,
+      //   reasoningEffort, projectId, model, longRunningGoal, providerId)
+      route?.model,
+      runMode as any,
+      undefined, // reasoning effort
+      undefined, // project id
+      route?.model,
+      false, // longRunningGoal
+      route?.provider,
+    )
+    return acc
+  }
+
+  let threadId = await resolveThreadId(client, session)
+  let acc: string
+  try {
+    acc = await turn(threadId)
+  } catch (error) {
+    // The cached mapping can outlive the thread it points at: the Runtime
+    // restarts onto a fresh store, or the thread was deleted elsewhere. The
+    // cache is process-lifetime, so without this the node fails with
+    // "404 Thread not found" forever. Drop the stale mapping and retry once
+    // on a freshly created thread.
+    if (signal.aborted || !isRuntimeMissingThreadError(error)) throw error
+    forgetThreadId(session)
+    threadId = await resolveThreadId(client, session)
+    acc = await turn(threadId)
+  }
   onDelta?.(acc)
   return acc.trim() || '(empty)'
 }
@@ -443,9 +467,16 @@ export const FLOW_NODE_DEFS: FlowNodeDef[] = [
       try {
         const { apiClient: client } = await import('@/api/client')
         const raw: any = await (client as any).searchRuntimeMemory?.(q, 'all')
-        const items = Array.isArray(raw) ? raw : raw?.items || raw?.results || raw?.memories || []
+        // The runtime answers with `{ entries: [...], total }`; the old chain
+        // only looked for items/results/memories, so every real hit was
+        // dropped and the node always reported "no knowledge hits".
+        const items = Array.isArray(raw)
+          ? raw
+          : raw?.entries || raw?.items || raw?.results || raw?.memories || []
         const snippets = (items as any[]).slice(0, limit).map((m, i) => {
-          const body = m.content || m.text || m.body || JSON.stringify(m)
+          // The runtime's memory rows expose their text as `summary`; the old
+          // lookup checked content/text/body and fell through to a JSON dump.
+          const body = m.summary ?? m.content ?? m.text ?? m.body ?? JSON.stringify(m)
           return `[${i + 1}] ${String(body).slice(0, 400)}`
         })
         const out = snippets.length ? snippets.join('\n\n') : `(no knowledge hits for: ${q.slice(0, 60)})`

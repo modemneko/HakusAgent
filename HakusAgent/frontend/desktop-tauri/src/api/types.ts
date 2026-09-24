@@ -182,6 +182,12 @@ export interface ProviderInfo {
   /** User-curated models merged with catalog/live models. */
   models?: string[]
   configured_models?: string[]
+  /**
+   * User-supplied context-window size in tokens. Set for custom/aggregator
+   * routes the built-in catalog does not cover, so the UI can show context
+   * usage instead of "unknown".
+   */
+  context_window?: number | null
 }
 
 /**
@@ -202,6 +208,13 @@ export interface RuntimeConfigSnapshot {
   mcp_config_path: string
   subagents_enabled: boolean
   subagents_max_depth: number
+  /** Maximum concurrent sub-agents; they share the provider's rate limit. */
+  subagents_max_concurrent: number
+  /** Retry policy for provider requests (rate-limit resilience). */
+  retry_enabled: boolean
+  retry_max_retries: number
+  retry_initial_delay: number
+  retry_max_delay: number
   show_thinking: boolean
   thinking_default_expanded: boolean
   thinking_highlight: boolean
@@ -233,6 +246,11 @@ export interface UpdateProviderBody {
   models?: string[]
   /** Persisted API dialect (for example `openai` or `anthropic`). */
   wire?: string
+  /**
+   * Context-window size in tokens for this route. `null` clears a previously
+   * saved value; omitting the field leaves it unchanged.
+   */
+  context_window?: number | null
 }
 
 // --- Provider 运维操作 (测试连接 / 获取模型 / 多 Key / 自定义 Header) ---

@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react'
 import { Shield, ShieldAlert, ShieldOff, Loader2, RefreshCw, AlertTriangle, Eye, Zap, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
@@ -92,6 +94,7 @@ export function ToolsPanel() {
   const [settingPerm, setSettingPerm] = useState(false)
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigSnapshot | null>(null)
   const [updatingSetting, setUpdatingSetting] = useState<string | null>(null)
+  const [settingPreset, setSettingPreset] = useState<string | null>(null)
   const [outdatedError, setOutdatedError] = useState<BackendOutdatedError | null>(null)
 
   const refresh = async () => {
@@ -176,7 +179,13 @@ export function ToolsPanel() {
     }
   }
 
-  const handleRuntimeSetting = async (key: 'allow_shell' | 'strict_tool_mode' | 'sandbox_mode' | 'memory_enabled' | 'approval_mode', value: boolean | string) => {
+  const handleRuntimeSetting = async (
+    key:
+      | 'allow_shell' | 'strict_tool_mode' | 'sandbox_mode' | 'memory_enabled' | 'approval_mode'
+      | 'retry_enabled' | 'retry_max_retries' | 'retry_initial_delay' | 'retry_max_delay'
+      | 'subagents_max_concurrent',
+    value: boolean | string | number,
+  ) => {
     if (!runtimeConfig) return
     const previous = runtimeConfig[key]
     setRuntimeConfig((current) => current ? { ...current, [key]: value } : current)
@@ -189,6 +198,38 @@ export function ToolsPanel() {
       toast.error(copy(`设置更新失败：${e?.message || e}`, `Could not update setting: ${e?.message || e}`))
     } finally {
       setUpdatingSetting(null)
+    }
+  }
+
+  /**
+   * 中转站/聚合路由的限流档位预设。一次点选同时写入重试次数、初始间隔和
+   * 退避上限，避免用户逐个字段试错——限流断了却不知道该调哪个值，是这类
+   * 路由最常见的困惑。
+   */
+  const applyRetryPreset = async (preset: 'default' | 'tolerant' | 'fast') => {
+    if (!runtimeConfig) return
+    const values = preset === 'tolerant'
+      ? { retry_max_retries: 5, retry_initial_delay: 2, retry_max_delay: 120 }
+      : preset === 'fast'
+        ? { retry_max_retries: 1, retry_initial_delay: 0.5, retry_max_delay: 15 }
+        : { retry_max_retries: 3, retry_initial_delay: 1, retry_max_delay: 60 }
+    setSettingPreset(preset)
+    try {
+      for (const [key, value] of Object.entries(values)) {
+        await apiClient.setRuntimeConfig(key, value)
+      }
+      setRuntimeConfig((current) => current ? { ...current, ...values } : current)
+      toast.success(
+        preset === 'tolerant'
+          ? copy('已切换为「宽松」：适合中转站，重试更多、等待更久', 'Switched to Tolerant: more retries and longer waits, for aggregator routes')
+          : preset === 'fast'
+            ? copy('已切换为「快速失败」：重试少、等待短', 'Switched to Fast-fail: fewer retries, shorter waits')
+            : copy('已恢复默认重试策略', 'Default retry policy restored'),
+      )
+    } catch (e: any) {
+      toast.error(copy(`设置更新失败：${e?.message || e}`, `Could not update setting: ${e?.message || e}`))
+    } finally {
+      setSettingPreset(null)
     }
   }
 
@@ -308,6 +349,111 @@ export function ToolsPanel() {
                     onCheckedChange={(value) => void handleRuntimeSetting('memory_enabled', value)}
                     disabled={updatingSetting === 'memory_enabled'}
                     aria-label={copy('记忆系统', 'Memory')}
+                  />
+                </div>
+
+                {/* 限流韧性：中转站/聚合路由常有速率限制，重试太快会持续断连。
+                    预设一键写入三个值，避免用户逐个字段试错。 */}
+                <div className="space-y-2 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{copy('请求重试', 'Request retry')}</div>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {copy('遇到限流或临时故障时自动重试。使用中转站时建议选「宽松」，避免触发速率限制而中断。', 'Retries on rate limits and transient failures. On aggregator routes choose Tolerant to avoid rate-limit drops.')}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={Boolean(runtimeConfig.retry_enabled)}
+                      onCheckedChange={(value) => void handleRuntimeSetting('retry_enabled', value)}
+                      disabled={updatingSetting === 'retry_enabled'}
+                      aria-label={copy('请求重试', 'Request retry')}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {([
+                      { id: 'default', label: copy('默认', 'Default') },
+                      { id: 'tolerant', label: copy('宽松（中转站）', 'Tolerant (aggregator)') },
+                      { id: 'fast', label: copy('快速失败', 'Fast-fail') },
+                    ] as const).map((preset) => {
+                      const active =
+                        preset.id === 'default'
+                          ? runtimeConfig.retry_max_retries === 3 && runtimeConfig.retry_initial_delay === 1 && runtimeConfig.retry_max_delay === 60
+                          : preset.id === 'tolerant'
+                            ? runtimeConfig.retry_max_retries === 5 && runtimeConfig.retry_initial_delay === 2 && runtimeConfig.retry_max_delay === 120
+                            : runtimeConfig.retry_max_retries === 1 && runtimeConfig.retry_initial_delay === 0.5 && runtimeConfig.retry_max_delay === 15
+                      return (
+                        <Button
+                          key={preset.id}
+                          type="button"
+                          size="sm"
+                          variant={active ? 'default' : 'outline'}
+                          className="h-7 text-[11px]"
+                          disabled={settingPreset !== null || !runtimeConfig.retry_enabled}
+                          onClick={() => void applyRetryPreset(preset.id)}
+                        >
+                          {settingPreset === preset.id && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {preset.label}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">{copy('重试次数', 'Max retries')}</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={20}
+                        value={runtimeConfig.retry_max_retries}
+                        disabled={updatingSetting !== null || !runtimeConfig.retry_enabled}
+                        onChange={(e) => void handleRuntimeSetting('retry_max_retries', e.target.value)}
+                        className="h-7 font-mono text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">{copy('初始间隔（秒）', 'Initial delay (s)')}</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={runtimeConfig.retry_initial_delay}
+                        disabled={updatingSetting !== null || !runtimeConfig.retry_enabled}
+                        onChange={(e) => void handleRuntimeSetting('retry_initial_delay', e.target.value)}
+                        className="h-7 font-mono text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">{copy('最大间隔（秒）', 'Max delay (s)')}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        step={5}
+                        value={runtimeConfig.retry_max_delay}
+                        disabled={updatingSetting !== null || !runtimeConfig.retry_enabled}
+                        onChange={(e) => void handleRuntimeSetting('retry_max_delay', e.target.value)}
+                        className="h-7 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 子代理并发会共享同一个上游配额，并发越高越容易触发限流。 */}
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{copy('子代理并发数', 'Sub-agent concurrency')}</div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {copy('子代理共享同一份速率配额。中转站被限流时把它调低（如 2）通常比调重试更有效。', 'Sub-agents share one rate-limit quota. On a throttled aggregator, lowering this (e.g. 2) helps more than raising retries.')}
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={64}
+                    value={runtimeConfig.subagents_max_concurrent}
+                    disabled={updatingSetting !== null}
+                    onChange={(e) => void handleRuntimeSetting('subagents_max_concurrent', e.target.value)}
+                    className="h-8 w-20 font-mono text-xs"
+                    aria-label={copy('子代理并发数', 'Sub-agent concurrency')}
                   />
                 </div>
               </div>

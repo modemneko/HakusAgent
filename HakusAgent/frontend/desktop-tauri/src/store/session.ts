@@ -25,7 +25,7 @@
 import { create } from 'zustand'
 import type { ChatMessage, ChatSession, ToolCall, TextSegment, ReasoningSegment } from '@/api/types'
 import { generateId } from '@/lib/utils'
-import { apiClient } from '@/api/client'
+import { apiClient, isRuntimeMissingThreadError } from '@/api/client'
 import { removeSessionWorkspace } from '@/lib/sessionWorkspaces'
 
 const EPHEMERAL_KEY = 'hakusai:ephemeral-sessions'
@@ -114,6 +114,16 @@ interface SessionStore {
    * rewind can target this turn's user message we remap its id.
    */
   bindRemoteMessageId: (sessionId: string, localId: string, remoteId: string) => void
+  /**
+   * Re-point a session at a fresh Runtime thread.
+   *
+   * `remote_session_id` is a client-side pointer into the Runtime's thread
+   * store. It goes stale when the Runtime restarts onto a fresh store or the
+   * thread is deleted elsewhere, and every turn then fails with
+   * "404 Thread not found". Creating a replacement thread and swapping the
+   * pointer keeps the local transcript usable instead of dead-ending.
+   */
+  rebindSessionThread: (sessionId: string) => Promise<string | null>
 
   // Message operations — all in-memory during stream; persisted on stream end
   addMessage: (sessionId: string, msg: Omit<ChatMessage, 'id' | 'session_id' | 'created_at' | 'updated_at'>) => string
@@ -428,6 +438,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         hydratedSessionIds: new Set([...get().hydratedSessionIds, id]),
       })
     } catch (e) {
+      // A stale `remote_session_id` (Runtime restarted onto a fresh store,
+      // thread deleted elsewhere) answers 404 here while the local session
+      // row still exists. Treat it as an empty conversation instead of
+      // logging forever — `hydration` is only marked on success, so the
+      // retry would repeat on every activation. The next send heals the
+      // thread pointer (see rebindSessionThread).
+      if (isRuntimeMissingThreadError(e)) {
+        set({
+          messages: { ...get().messages, [id]: [] },
+          hydratedSessionIds: new Set([...get().hydratedSessionIds, id]),
+        })
+        return
+      }
       console.error('[session] hydrateSession failed:', e)
     }
   },
@@ -441,6 +464,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         [sessionId]: list.map((m) => (m.id === localId ? { ...m, id: remoteId } : m)),
       },
     })
+  },
+
+  rebindSessionThread: async (sessionId) => {
+    const session = get().sessions.find((s) => s.id === sessionId)
+    if (!session) return null
+    try {
+      const created = await apiClient.createSession({
+        id: session.id,
+        title: session.title,
+        created_at: session.created_at,
+        updated_at: Date.now(),
+      })
+      const remoteId = created.remote_session_id || created.id
+      if (!remoteId) return null
+      set({
+        sessions: get().sessions.map((s) =>
+          s.id === sessionId ? { ...s, remote_session_id: remoteId } : s,
+        ),
+      })
+      return remoteId
+    } catch (e) {
+      console.error('[session] rebindSessionThread failed:', e)
+      return null
+    }
   },
 
   rewindToMessage: async (sessionId, messageId) => {

@@ -98,10 +98,24 @@ function runtimeModeFromAgentMode(mode: string): string {
 }
 
 export class HakusAIError extends Error {
-  constructor(message: string, public code?: string) {
+  constructor(message: string, public code?: string, public status?: number) {
     super(message)
     this.name = 'HakusAIError'
   }
+}
+
+/**
+ * True when the Runtime answered 404 for a thread/item it no longer has.
+ *
+ * A session's `remote_session_id` is a client-side pointer into the Runtime's
+ * thread store; it goes stale when the Runtime restarts onto a fresh store or
+ * the thread is deleted elsewhere. Callers heal the mapping and retry rather
+ * than surfacing "Thread not found" to the user.
+ */
+export function isRuntimeMissingThreadError(error: unknown): boolean {
+  if (!(error instanceof HakusAIError)) return false
+  if (error.status !== 404) return false
+  return /thread not found|message item not found|message not found/i.test(error.message)
 }
 
 /**
@@ -556,7 +570,7 @@ export class HakusAIClient {
         : rawDetail && typeof rawDetail === 'object'
           ? String((rawDetail as { message?: unknown }).message ?? JSON.stringify(rawDetail))
           : String(rawDetail)
-    throw new HakusAIError(`${fallbackMsg}: ${res.status} ${detail}`.trim())
+    throw new HakusAIError(`${fallbackMsg}: ${res.status} ${detail}`.trim(), undefined, res.status)
   }
 
   // ============ REST endpoints ============
@@ -731,6 +745,9 @@ export class HakusAIClient {
           enabled: body.enabled,
           models: body.models,
           wire: body.wire,
+          // Only forward when the caller actually decided about it: omitting
+          // the key leaves the saved value alone, explicit null clears it.
+          ...(body.context_window !== undefined ? { context_window: body.context_window } : {}),
         }),
       }, 10000)
       if (!res.ok) await this._throwForResponse(res, `${this.baseUrl}/v1/providers/${body.provider}`, 'Update Runtime provider failed')

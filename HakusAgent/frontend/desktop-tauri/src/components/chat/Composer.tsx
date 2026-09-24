@@ -536,7 +536,11 @@ export function Composer({
     const entries = currentProvider ? modelsCache[currentProvider.id] : undefined
     return entries?.find((entry) => entry.id === modelId)
   }, [currentProvider, model, modelsCache])
-  const contextWindow = selectedModelMeta?.context_window ?? null
+  // Prefer the catalog value for the selected model; fall back to the
+  // user-supplied per-route size. Aggregator/self-hosted routes are absent
+  // from the built-in catalog, so without that fallback the ring can only
+  // ever say "unknown" for them.
+  const contextWindow = selectedModelMeta?.context_window ?? currentProvider?.context_window ?? null
   const contextUsed = useMemo(() => {
     const messages = sessionMessages || []
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1307,8 +1311,8 @@ export function Composer({
 
   return (
     <div className="composer-shell bg-transparent px-4 pb-4 pt-2">
-      {/* 宽度对齐聊天内容列（--chat-max-width），输入框与正文左右同边。 */}
-      <div className="composer-inner mx-auto w-full max-w-[var(--chat-max-width)]">
+      {/* 宽度对齐聊天正文列（同一个 token），输入框与正文左右同边。 */}
+      <div className="composer-inner mx-auto w-full max-w-[var(--thread-content-max-width)]">
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}

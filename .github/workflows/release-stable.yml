@@ -1,0 +1,293 @@
+# 稳定版发布：手动触发，构建三平台桌面端产物、签名、生成 latest.json 并上传双源。
+#
+# 与 build-all.yml 的区别：
+#   - build-all 只发 `nightly` 预发布（用户手动下载，不参与自动更新）
+#   - 本工作流发布固定 tag `stable`，是应用内「检查更新」读取的通道
+#
+# 为什么用固定 tag 而不是 v* 版本 tag：Gitee 没有 GitHub 的
+# `releases/latest/download/` 语法，latest.json 的 URL 必须写死。固定 tag
+# 让两个源的清单地址长期稳定，不必每次发版都改客户端配置。
+#
+# 前置条件（仓库 Settings → Secrets and variables → Actions）：
+#   TAURI_SIGNING_PRIVATE_KEY           更新签名私钥（必需，缺失则无法产出 .sig）
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  私钥密码（生成时未设密码则留空）
+#   GITEE_TOKEN                         Gitee 私人令牌，projects 权限（可选，跳过镜像）
+#
+# 触发：Actions → release-stable → Run workflow，输入要发布的版本号。
+
+name: release-stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号（须与 tauri.conf.json 的 version 一致，例如 0.3.0）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  STABLE_TAG: stable
+
+jobs:
+  desktop:
+    name: desktop-${{ matrix.artifact }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            artifact: windows
+            args: ""
+          - platform: macos-latest
+            artifact: macos-arm64
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-14
+            artifact: macos-x64
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            artifact: linux
+            args: ""
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-14' && 'x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Verify every version declaration matches
+        shell: bash
+        run: |
+          # Four files declare a version and all of them feed user-visible
+          # output: the app's updater comparison, the NSIS installer's bundle
+          # name, and the branded installer's Add/Remove Programs entry. A
+          # partial bump ships a release whose parts disagree about what
+          # version it is, so every source is checked up front.
+          expected="${{ inputs.version }}"
+          fail=0
+          check() {
+            local label="$1" actual="$2"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$label is '$actual' but the workflow was given '$expected'"
+              fail=1
+            else
+              echo "ok: $label = $actual"
+            fi
+          }
+          check "desktop-tauri/tauri.conf.json" \
+            "$(node -p "require('./HakusAgent/frontend/desktop-tauri/src-tauri/tauri.conf.json').version")"
+          check "desktop-tauri/Cargo.toml" \
+            "$(grep -m1 '^version' HakusAgent/frontend/desktop-tauri/src-tauri/Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          check "installer/tauri.conf.json" \
+            "$(node -p "require('./HakusAgent/frontend/installer/src-tauri/tauri.conf.json').version")"
+          check "installer/Cargo.toml" \
+            "$(grep -m1 '^version' HakusAgent/frontend/installer/src-tauri/Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          exit $fail
+
+      - name: Install frontend dependencies
+        working-directory: HakusAgent/frontend/desktop-tauri
+        run: npm ci
+
+      - name: Verify signing secret is configured
+        # Fail here rather than after a 15-minute build: a missing key does not
+        # error at build time (the bundler just skips signing), so the only
+        # symptom would be absent .sig files discovered much later.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. Add it under Settings → Secrets and variables → Actions. Without it the updater artifacts cannot be signed and no update can ever be installed."
+            exit 1
+          fi
+          echo "signing key present (${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+
+      - name: Build Tauri app (signed)
+        working-directory: HakusAgent/frontend/desktop-tauri
+        # createUpdaterArtifacts is enabled in tauri.conf.json, so the bundler
+        # emits the updater bundle plus its .sig sidecar.
+        #
+        # TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be set even when the key has
+        # no password. Verified locally: with the variable simply absent, the
+        # bundler logs "Decrypting updater signing key, expect a prompt for
+        # password", skips signing WITHOUT failing, and produces no .sig — the
+        # build looks green and the breakage only surfaces at publish time.
+        # An explicitly empty string makes it sign with an empty password.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build ${{ matrix.args }}
+
+      - name: Collect updater artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stable-assets
+          base="HakusAgent/frontend/desktop-tauri/src-tauri/target"
+          # Updater bundles live under the target triple's bundle dir on
+          # cross-compiled macOS builds, so search the whole tree.
+          find "$base" -type f \( \
+            -name '*.sig' -o \
+            -name '*-setup.exe' -o \
+            -name '*.app.tar.gz' -o \
+            -name '*.AppImage' \
+          \) -exec cp -v {} stable-assets/ \;
+          echo "--- collected ---"
+          ls -la stable-assets/
+          if ! ls stable-assets/*.sig >/dev/null 2>&1; then
+            echo "::error::No .sig files produced. Set TAURI_SIGNING_PRIVATE_KEY and make sure bundle.createUpdaterArtifacts is true."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stable-${{ matrix.artifact }}
+          path: stable-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: publish-stable
+    needs: [desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: _stable
+          merge-multiple: true
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stable-assets
+          find _stable -type f -exec cp -v {} stable-assets/ \;
+          ls -la stable-assets/
+
+      - name: Generate latest.json for GitHub
+        run: |
+          node scripts/generate-latest-json.mjs \
+            --version "${{ inputs.version }}" \
+            --assets-dir stable-assets \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/${STABLE_TAG}" \
+            --out latest.json
+
+      - name: Generate latest.json for Gitee
+        run: |
+          node scripts/generate-latest-json.mjs \
+            --version "${{ inputs.version }}" \
+            --assets-dir stable-assets \
+            --base-url "https://gitee.com/modemneko_admin/HakusAgent/releases/download/${STABLE_TAG}" \
+            --out latest.gitee.json
+
+      - name: Publish GitHub stable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.STABLE_TAG }}
+          name: HakusAI Stable
+          # Fixed tag, refreshed each release: the client's endpoint URL is
+          # baked into the binary, so the tag must not change per version.
+          prerelease: false
+          make_latest: true
+          files: |
+            stable-assets/*
+            latest.json
+
+      - name: Publish to Gitee
+        # The token is now configured, so the mirror step is expected to run.
+        # Its absence is a hard failure rather than a skip: a silently skipped
+        # mirror would leave domestic users on the slow GitHub path with
+        # nothing in the log to explain it.
+        #
+        # Note the `secrets` context is deliberately NOT used in an `if:`
+        # expression — GitHub does not evaluate it there, so such a condition
+        # is always false and the step would be skipped without warning.
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: modemneko_admin
+          GITEE_REPO: HakusAgent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GITEE_TOKEN}" ]; then
+            echo "::error::GITEE_TOKEN is not set, so the Gitee mirror cannot be updated. Add it under Settings → Secrets and variables → Actions, or remove this step to ship GitHub-only."
+            exit 1
+          fi
+          API="https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
+          TAG="${STABLE_TAG}"
+
+          # Reuse the fixed-tag release when it already exists so its download
+          # URLs stay stable across versions.
+          release_id=$(curl -sf "${API}/releases/tags/${TAG}" \
+            | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).id" 2>/dev/null || true)
+          if [ -z "$release_id" ]; then
+            # target_commitish is REQUIRED by the Gitee API — omitting it fails
+            # with "target_commitish is missing" (verified against the live
+            # API). Gitee has no equivalent of GitHub's default-branch
+            # inference, so the branch is named explicitly.
+            release_id=$(curl -sf -X POST "${API}/releases" \
+              -d "access_token=${GITEE_TOKEN}" \
+              -d "tag_name=${TAG}" \
+              -d "target_commitish=master" \
+              -d "name=HakusAI Stable" \
+              -d "body=HakusAI v${{ inputs.version }} stable build" \
+              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).id")
+          fi
+          echo "gitee release id: $release_id"
+
+          # Gitee has no replace-asset API: a same-named upload fails with
+          # "attachment already exists", which would leave the mirror silently
+          # serving the previous version. Delete matching attachments first.
+          existing=$(curl -sf "${API}/releases/${release_id}/attach_files?access_token=${GITEE_TOKEN}" || echo '[]')
+
+          delete_if_present() {
+            local target="$1"
+            local id
+            id=$(printf '%s' "$existing" | node -e "
+              let raw = '';
+              process.stdin.on('data', (c) => { raw += c });
+              process.stdin.on('end', () => {
+                let list = [];
+                try { list = JSON.parse(raw) || [] } catch { list = [] }
+                if (!Array.isArray(list)) list = list.attach_files || [];
+                const hit = list.find((a) => a && (a.title === process.argv[1] || a.name === process.argv[1]));
+                if (hit) process.stdout.write(String(hit.id));
+              });
+            " "$target")
+            if [ -n "$id" ]; then
+              echo "removing stale attachment: $target (id=$id)"
+              curl -sf -X DELETE "${API}/releases/${release_id}/attach_files/${id}?access_token=${GITEE_TOKEN}" || true
+            fi
+          }
+
+          for path in stable-assets/*; do
+            delete_if_present "$(basename "$path")"
+          done
+          delete_if_present "latest.json"
+
+          for path in stable-assets/*; do
+            echo "uploading $(basename "$path")"
+            curl -sf -X POST "${API}/releases/${release_id}/attach_files" \
+              -F "access_token=${GITEE_TOKEN}" \
+              -F "file=@${path}" >/dev/null
+          done
+
+          echo "uploading latest.json (Gitee-hosted URLs)"
+          curl -sf -X POST "${API}/releases/${release_id}/attach_files" \
+            -F "access_token=${GITEE_TOKEN}" \
+            -F "file=@latest.gitee.json;filename=latest.json" >/dev/null
+          echo "Gitee mirror updated."

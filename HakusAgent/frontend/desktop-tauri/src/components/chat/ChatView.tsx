@@ -5,7 +5,7 @@ import { useSettingsStore } from '@/store/settings'
 import { useConnectionStore } from '@/store/connection'
 import { useAppStore } from '@/store/app'
 import { useProjectsStore } from '@/store/projects'
-import { apiClient, HakusAIError } from '@/api/client'
+import { apiClient, HakusAIError, isRuntimeMissingThreadError } from '@/api/client'
 import type { AgentEvent, ToolCall, QuestionAskedEvent, TaskProgressEvent, TaskProgressAttachment, TextSegment, ThreadGoal, Project, ApprovalRecord } from '@/api/types'
 import { MessageBubble } from './MessageBubble'
 import { InlineToolCallBubble } from './InlineToolCallBubble'
@@ -201,6 +201,7 @@ export function ChatView() {
   const persistMessage = useSessionStore((s) => s.persistMessage)
   const rewindToMessage = useSessionStore((s) => s.rewindToMessage)
   const bindRemoteMessageId = useSessionStore((s) => s.bindRemoteMessageId)
+  const rbindSessionThread = useSessionStore((s) => s.rebindSessionThread)
 
   const settings = useSettingsStore()
   const configuredProviders = settings.providers.filter(isProviderConfigured)
@@ -385,10 +386,12 @@ export function ChatView() {
       setAbortCtrl(ctrl)
       setStreaming(true, ctrl)
 
-      try {
-        await apiClient.chatStream(
+      // One turn attempt against a given Runtime thread id. Extracted so a
+      // stale thread pointer can be healed and retried (see below).
+      const streamTurn = (threadId: string) =>
+        apiClient.chatStream(
           text,
-          session?.remote_session_id || sessionId,
+          threadId,
           (chunk, event) => {
             // Defensive guard: if the stream has been aborted by rewind
             // or stop, streamingLogId[session] is null and assistantMsgId
@@ -430,6 +433,23 @@ export function ChatView() {
           activeModel,
           longRunningGoal || goal?.status === 'active',
         )
+
+      try {
+        try {
+          await streamTurn(session?.remote_session_id || sessionId)
+        } catch (e) {
+          // `remote_session_id` is a client-side pointer into the Runtime's
+          // thread store and goes stale when the Runtime restarts onto a
+          // fresh store or the thread is deleted elsewhere. Without this,
+          // every later send fails with "404 Thread not found" and the
+          // session is permanently dead. Mint a replacement thread and
+          // retry the turn once.
+          if (!isRuntimeMissingThreadError(e)) throw e
+          if (!rbindSessionThread) throw e
+          const freshThreadId = await rbindSessionThread(sessionId)
+          if (!freshThreadId) throw e
+          await streamTurn(freshThreadId)
+        }
         updateMessage(sessionId, assistantMsgId, { streaming: false })
         void persistMessage(sessionId, assistantMsgId)
       } catch (e: any) {
@@ -463,7 +483,7 @@ export function ChatView() {
         setTimeout(runNextQueued, 0)
       }
     },
-    [activeModel, addMessage, agentMode, getReasoningEffort, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued, goal?.status],
+    [activeModel, addMessage, agentMode, getReasoningEffort, appendToStreamingLog, persistMessage, persistNewMessage, renameSession, setStreaming, settings.defaultModel, startStreamingLog, stopStreamingLog, updateMessage, runNextQueued, rbindSessionThread, goal?.status],
   )
 
   useEffect(() => {
@@ -1018,7 +1038,9 @@ export function ChatView() {
             onPick={(prompt) => setComposerDraft(prompt)}
           />
         ) : (
-          <div className="chat-timeline mx-auto min-w-0 w-full max-w-[var(--chat-max-width)] py-6">
+          // 宽度上限由 index.css 的 .chat-timeline 提供（它覆盖了
+          // @layer utilities 的 max-width:100%，Tailwind 的 max-w-* 在此无效）。
+          <div className="chat-timeline mx-auto min-w-0 w-full py-6">
             {buildTimeline(activeMessages).map((item, idx, arr) => {
               if (item.kind === 'message') {
                 return (

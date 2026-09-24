@@ -46,6 +46,16 @@ const PATTERNS: Pattern[] = [
     title: 'API Key 无效或未配置',
   },
 
+  // Authorization / plan entitlement — the provider refused a model or
+  // feature this account may not use. Distinct from a bad key: the
+  // credential is valid, the plan just does not include it. Must come
+  // before the generic fallback, which tells the user to "retry" — advice
+  // that can never succeed here.
+  {
+    test: /AuthorizationError|Authorization failed|not available in the current token plan|not available on your (current )?plan|insufficient_quota|quota exceeded|exceeded your current quota|billing|do(es)? not have access to (this )?model/i,
+    title: '当前套餐不支持该模型，请在设置中更换模型或升级套餐',
+  },
+
   // Rate limit
   {
     test: /RateLimitError|rate.?limit|429|too many requests/i,

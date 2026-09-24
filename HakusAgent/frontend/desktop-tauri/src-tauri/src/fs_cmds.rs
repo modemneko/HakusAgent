@@ -86,7 +86,7 @@ fn root_from(raw: &str) -> Result<PathBuf, String> {
 /// the UI and in graph data stay the ones the operator typed.
 fn display_path(path: &Path) -> String {
     let s = path.display().to_string();
-    s.strip_prefix(r"\?\").map(str::to_string).unwrap_or(s)
+    s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
 }
 
 #[derive(serde::Serialize, Clone)]

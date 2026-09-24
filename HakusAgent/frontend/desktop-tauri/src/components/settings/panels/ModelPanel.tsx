@@ -21,7 +21,7 @@ import { GlassSelect } from '@/components/ui/glass-select'
 import {
   Check, Eye, EyeOff, Loader2,
   Activity, ListPlus, KeyRound, Settings2, Search, Trash2, Plus, RefreshCw,
-  CheckCircle2, XCircle, ArrowLeft, ChevronDown,
+  CheckCircle2, XCircle, ArrowLeft, ChevronDown, Pencil, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -113,16 +113,22 @@ export function ModelPanel() {
   const [modelName, setModelName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiFormat, setApiFormat] = useState<'openai' | 'responses' | 'anthropic'>('openai')
+  // 上下文窗口（token 数），以字符串保存输入态以便区分「空」与「0」。
+  // 中转站/自建路由不在内置模型目录里，只有用户手填后上下文圆环才能显示占比。
+  const [contextWindow, setContextWindow] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [providerModels, setProviderModels] = useState<string[]>([])
   const [newModel, setNewModel] = useState('')
+  // 正在就地重命名的模型（值为原模型 ID），null = 没有编辑中的行。
+  const [editingModel, setEditingModel] = useState<string | null>(null)
+  const [editingValue, setEditingValue] = useState('')
   const [saving, setSaving] = useState(false)
 
   // ── 自动保存：模型相关配置改动后防抖落盘，无需手动点保存 ──
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [savedAt, setSavedAt] = useState<Date | null>(null)
-  const savedSnapshotRef = useRef<{ providerId: string; modelName: string; baseUrl: string; apiFormat: string; models: string[] } | null>(null)
+  const savedSnapshotRef = useRef<{ providerId: string; modelName: string; baseUrl: string; apiFormat: string; models: string[]; contextWindow: string } | null>(null)
 
   // ── 批量删除自定义模型商（内置确认弹窗，不用系统 confirm）──
   const [deleteSelection, setDeleteSelection] = useState<string[]>([])
@@ -158,6 +164,9 @@ export function ModelPanel() {
   const [customSaving, setCustomSaving] = useState(false)
   const [customModels, setCustomModels] = useState<string[]>([])
   const [customNewModel, setCustomNewModel] = useState('')
+  // 自定义模型商编辑器里的就地重命名（与内置模型商同一套交互）。
+  const [editingCustomModel, setEditingCustomModel] = useState<string | null>(null)
+  const [editingCustomValue, setEditingCustomValue] = useState('')
   const [lastProviderRefresh, setLastProviderRefresh] = useState<Date | null>(null)
   const [customForm, setCustomForm] = useState({
     id: '', display_name: '', base_url: '', model: '', api_key: '', api_key_env: '', group: '自定义模型商', wire: 'openai',
@@ -255,6 +264,8 @@ export function ModelPanel() {
         ? configuredModels
         : (selected.model_name ? [selected.model_name] : [])
       setProviderModels(Array.from(new Set(initialModels)))
+      const initialContextWindow = selected.context_window ? String(selected.context_window) : ''
+      setContextWindow(initialContextWindow)
       setNewModel('')
       setTestResult(null) // 切换 provider 时清空上次测试结果
       savedSnapshotRef.current = {
@@ -263,6 +274,7 @@ export function ModelPanel() {
         baseUrl: selected.base_url || '',
         apiFormat: selected.wire === 'anthropic' ? 'anthropic' : selected.wire === 'responses' ? 'responses' : 'openai',
         models: Array.from(new Set(initialModels)),
+        contextWindow: initialContextWindow,
       }
       setSaveState('idle')
     }
@@ -326,6 +338,20 @@ export function ModelPanel() {
       body.models = providerModels
       body.enabled = selected.enabled !== false
       body.wire = apiFormat
+      // 空字符串 = 清除已保存的值（发送显式 null），非空必须是合法正整数。
+      const trimmedContextWindow = contextWindow.trim()
+      if (trimmedContextWindow) {
+        const parsed = Number(trimmedContextWindow)
+        if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+          setSaveState('error')
+          toast.error(copy('上下文窗口必须是正整数（token 数）', 'Context window must be a positive integer (tokens)'))
+          setSaving(false)
+          return
+        }
+        body.context_window = parsed
+      } else {
+        body.context_window = null
+      }
       await apiClient.updateProvider(body as any)
       savedSnapshotRef.current = {
         providerId: selected.id,
@@ -333,6 +359,7 @@ export function ModelPanel() {
         baseUrl: baseUrl.trim(),
         apiFormat,
         models: providerModels,
+        contextWindow: trimmedContextWindow,
       }
       if (overrides?.apiKey) {
         setApiKey('')
@@ -680,6 +707,24 @@ export function ModelPanel() {
     setCustomModels((prev) => prev.filter((m) => m !== model))
   }
 
+  // 列表首位即当前模型，重命名第一项时要连当前模型 ID 一起更新，
+  // 否则保存后配置里的 `model` 与列表对不上。
+  const handleRenameCustomModel = (from: string, to: string) => {
+    const value = to.trim()
+    if (!value || value === from) {
+      setEditingCustomModel(null)
+      return
+    }
+    const clash = customModels.some(
+      (m) => m !== from && m.toLowerCase() === value.toLowerCase(),
+    )
+    if (clash) return
+    const wasFirst = customModels[0] === from
+    setCustomModels((prev) => prev.map((m) => (m === from ? value : m)))
+    if (wasFirst) setCustomForm((v) => ({ ...v, model: value }))
+    setEditingCustomModel(null)
+  }
+
   const handleToggleProvider = async (enabled: boolean, providerOverride?: ProviderInfo) => {
     const target = providerOverride || selected
     if (!target) return
@@ -710,6 +755,25 @@ export function ModelPanel() {
     setProviderModels((current) => current.some((item) => item.toLowerCase() === value.toLowerCase()) ? current : [...current, value])
     if (!modelName.trim()) setModelName(value)
     setNewModel('')
+  }
+
+  // 就地重命名一条模型记录。中转站/自建路由的模型 ID 经常要改（上游换了
+  // 别名、手抄时打错），此前只能删掉重加，而删掉会连带清掉「当前模型」的
+  // 选择。重命名保留它在列表中的位置，并把当前模型指针一起跟着走。
+  const handleRenameModel = (from: string, to: string) => {
+    const value = to.trim()
+    if (!value || value === from) {
+      setEditingModel(null)
+      return
+    }
+    // 与添加保持同一套去重规则：大小写不敏感，避免同一 ID 出现两次。
+    const clash = providerModels.some(
+      (item) => item !== from && item.toLowerCase() === value.toLowerCase(),
+    )
+    if (clash) return
+    setProviderModels((current) => current.map((item) => (item === from ? value : item)))
+    if (modelName === from) setModelName(value)
+    setEditingModel(null)
   }
 
   const handleRemoveModel = (model: string) => {
@@ -1050,9 +1114,30 @@ export function ModelPanel() {
                 <div className="rounded-lg border border-dashed border-border/70 px-3 py-3 text-center text-xs text-muted-foreground">{copy('尚未添加模型', 'No models added yet')}</div>
               ) : customModels.map((model, index) => (
                 <div key={model} className="flex items-center gap-2 rounded-lg px-3 py-2 bg-muted/20">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{model}</span>
-                  {index === 0 && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveCustomModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  {editingCustomModel === model ? (
+                    <>
+                      <Input
+                        autoFocus
+                        value={editingCustomValue}
+                        onChange={(e) => setEditingCustomValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); handleRenameCustomModel(model, editingCustomValue) }
+                          if (e.key === 'Escape') { e.preventDefault(); setEditingCustomModel(null) }
+                        }}
+                        className="h-7 flex-1 font-mono text-xs"
+                        aria-label={copy('编辑模型 ID', 'Edit model id')}
+                      />
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-600 hover:text-emerald-500" onClick={() => handleRenameCustomModel(model, editingCustomValue)} disabled={!editingCustomValue.trim()} title={copy('确认', 'Confirm')} aria-label={copy('确认修改', 'Confirm edit')}><Check className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={() => setEditingCustomModel(null)} title={copy('取消', 'Cancel')} aria-label={copy('取消修改', 'Cancel edit')}><X className="h-3.5 w-3.5" /></Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{model}</span>
+                      {index === 0 && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={() => { setEditingCustomModel(model); setEditingCustomValue(model) }} title={copy('编辑模型 ID', 'Edit model id')} aria-label={`${copy('编辑模型', 'Edit model')} ${model}`}><Pencil className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveCustomModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -1358,11 +1443,55 @@ export function ModelPanel() {
                   <div className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">{copy('尚未添加模型', 'No models added yet')}</div>
                 ) : providerModels.map((model) => {
                   const current = modelName === model
+                  const editing = editingModel === model
                   return (
                     <div key={model} className={cn('flex items-center gap-2 rounded-lg px-3 py-2', current ? 'bg-foreground/[0.055] ring-1 ring-foreground/10' : 'bg-muted/20')}>
-                      <button type="button" onClick={() => setModelName(model)} className="min-w-0 flex-1 truncate text-left font-mono text-xs" title={model}>{model}</button>
-                      {current && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      {editing ? (
+                        <>
+                          <Input
+                            autoFocus
+                            value={editingValue}
+                            onChange={(e) => setEditingValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); handleRenameModel(model, editingValue) }
+                              if (e.key === 'Escape') { e.preventDefault(); setEditingModel(null) }
+                            }}
+                            className="h-7 flex-1 font-mono text-xs"
+                            aria-label={copy('编辑模型 ID', 'Edit model id')}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-emerald-600 hover:text-emerald-500"
+                            onClick={() => handleRenameModel(model, editingValue)}
+                            disabled={!editingValue.trim()}
+                            title={copy('确认', 'Confirm')}
+                            aria-label={copy('确认修改', 'Confirm edit')}
+                          ><Check className="h-3.5 w-3.5" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground"
+                            onClick={() => setEditingModel(null)}
+                            title={copy('取消', 'Cancel')}
+                            aria-label={copy('取消修改', 'Cancel edit')}
+                          ><X className="h-3.5 w-3.5" /></Button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => setModelName(model)} className="min-w-0 flex-1 truncate text-left font-mono text-xs" title={model}>{model}</button>
+                          {current && <span className="text-[10px] text-muted-foreground">{copy('当前', 'Current')}</span>}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            onClick={() => { setEditingModel(model); setEditingValue(model) }}
+                            title={copy('编辑模型 ID', 'Edit model id')}
+                            aria-label={`${copy('编辑模型', 'Edit model')} ${model}`}
+                          ><Pencil className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => handleRemoveModel(model)} title={copy('移除模型', 'Remove model')} aria-label={`${copy('移除模型', 'Remove model')} ${model}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        </>
+                      )}
                     </div>
                   )
                 })}
@@ -1402,6 +1531,24 @@ export function ModelPanel() {
                 ]}
               />
               <p className="text-[11px] text-muted-foreground">{copy('按当前模型商支持的接口选择，更改后自动应用。', 'Choose the interface supported by this provider; changes apply automatically.')}</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="context-window">{copy('上下文窗口', 'Context window')}</Label>
+              <Input
+                id="context-window"
+                inputMode="numeric"
+                value={contextWindow}
+                onChange={(e) => setContextWindow(e.target.value.replace(/[^\d]/g, ''))}
+                placeholder={copy('例如 128000', 'e.g. 128000')}
+                className="font-mono text-xs"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {copy(
+                  '可选，单位 token。中转站和自建路由不在内置模型目录里，填了这项后聊天框旁的上下文圆环才能显示占用比例；留空则显示「未知」。',
+                  'Optional, in tokens. Aggregator and self-hosted routes are not in the built-in model catalog; filling this in lets the context ring show usage. Leave blank to show "unknown".',
+                )}
+              </p>
             </div>
 
             {selected.id !== 'ollama' && (
