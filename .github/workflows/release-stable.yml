@@ -103,6 +103,10 @@ jobs:
         run: npm ci
 
       - name: Verify signing secret is configured
+        # shell: bash is required — without it the Windows runner falls back to
+        # PowerShell, where the bash test below is not evaluated and the guard
+        # misfires (it reported "not set" for a secret that was present).
+        shell: bash
         # Fail here rather than after a 15-minute build: a missing key does not
         # error at build time (the bundler just skips signing), so the only
         # symptom would be absent .sig files discovered much later.
@@ -110,7 +114,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. Add it under Settings → Secrets and variables → Actions. Without it the updater artifacts cannot be signed and no update can ever be installed."
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. Add it under Settings / Secrets and variables / Actions. Without it the updater artifacts cannot be signed and no update can ever be installed."
             exit 1
           fi
           echo "signing key present (${#TAURI_SIGNING_PRIVATE_KEY} chars)"
