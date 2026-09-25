@@ -318,6 +318,11 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # 默认 'tools platform-tools' 里的 legacy `tools` 包在
+          # cmdline-tools 16.0 已被移除，sdkmanager 会直接 exit 1
+          # （nightly #54/#55 同因失败）。所需包由下一步显式安装。
+          packages: 'platform-tools'
 
       - name: Install Android SDK packages
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
