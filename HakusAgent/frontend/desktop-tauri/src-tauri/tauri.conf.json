@@ -66,8 +66,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/modemneko/HakusAgent/releases/download/stable/latest.json",
-        "https://gitee.com/modemneko_admin/HakusAgent/releases/download/stable/latest.json"
+        "https://github.com/modemneko/HakusAgent/releases/download/stable/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGMTIzNDBBRUM1Mzc0MzgKUldRNGRGUHNDalFTejgzRUdsa2VRVE5BSXZQZ2YvdlVmd0lBY2NSME0wejJMTnJpUzlPM3VrNC8K"
     },

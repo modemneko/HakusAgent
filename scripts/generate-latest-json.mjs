@@ -3,11 +3,11 @@
  * Assemble a Tauri updater manifest (`latest.json`) from signed bundle
  * artifacts.
  *
- * Why this exists instead of relying on the bundler's own manifest: the app
- * ships two update endpoints (GitHub primary, Gitee mirror fallback) and each
- * manifest must point its download URLs at ITS OWN host. A GitHub-hosted
- * manifest whose URLs point at Gitee would stall users who fell back, and vice
- * versa. Generating both from one set of signed artifacts keeps them in sync.
+ * Why this exists instead of relying on the bundler's own manifest: each
+ * platform's bundler run only knows its own artifacts, while the release
+ * serves one merged manifest from a fixed-tag URL baked into the client.
+ * Assembling it from the collected signed artifacts keeps every platform
+ * entry in sync with what actually shipped.
  *
  * The scan is driven by `.sig` sidecars rather than a hardcoded filename list:
  * the bundler's artifact names vary by platform, version and target triple, and

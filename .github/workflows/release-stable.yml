@@ -1,5 +1,5 @@
 # 稳定版发布：手动触发，构建桌面端 + HakusCLI 全部产物、签名、生成
-# latest.json 并上传双源。
+# latest.json 并发布到 GitHub。
 #
 # 与 build-all.yml 的区别：
 #   - build-all 只发 `nightly` 预发布（用户手动下载，不参与自动更新）
@@ -8,14 +8,13 @@
 # 产物范围与 nightly 对齐：桌面端（含品牌安装器）、HakusCLI 六平台、
 # Android APK。nightly 有什么，stable 就发什么。
 #
-# 为什么用固定 tag 而不是 v* 版本 tag：Gitee 没有 GitHub 的
-# `releases/latest/download/` 语法，latest.json 的 URL 必须写死。固定 tag
-# 让两个源的清单地址长期稳定，不必每次发版都改客户端配置。
+# 为什么用固定 tag 而不是 v* 版本 tag：客户端把
+# `releases/download/stable/latest.json` 烘焙进二进制，固定 tag 让清单地址
+# 长期稳定，不必每次发版都改客户端配置。
 #
 # 前置条件（仓库 Settings → Secrets and variables → Actions）：
 #   TAURI_SIGNING_PRIVATE_KEY           更新签名私钥（必需，缺失则无法产出 .sig）
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  私钥密码（生成时未设密码则留空）
-#   GITEE_TOKEN                         Gitee 私人令牌，projects 权限（可选，跳过镜像）
 #
 # 触发：Actions → release-stable → Run workflow，输入要发布的版本号。
 
@@ -358,21 +357,13 @@ jobs:
           find _stable -type f -exec cp -v {} stable-assets/ \;
           ls -la stable-assets/
 
-      - name: Generate latest.json for GitHub
+      - name: Generate latest.json
         run: |
           node scripts/generate-latest-json.mjs \
             --version "${{ inputs.version }}" \
             --assets-dir stable-assets \
             --base-url "https://github.com/${{ github.repository }}/releases/download/${STABLE_TAG}" \
             --out latest.json
-
-      - name: Generate latest.json for Gitee
-        run: |
-          node scripts/generate-latest-json.mjs \
-            --version "${{ inputs.version }}" \
-            --assets-dir stable-assets \
-            --base-url "https://gitee.com/modemneko_admin/HakusAgent/releases/download/${STABLE_TAG}" \
-            --out latest.gitee.json
 
       - name: Publish GitHub stable release
         uses: softprops/action-gh-release@v2
@@ -387,108 +378,3 @@ jobs:
             stable-assets/*
             latest.json
 
-      - name: Publish to Gitee
-        # The token is now configured, so the mirror step is expected to run.
-        # Its absence is a hard failure rather than a skip: a silently skipped
-        # mirror would leave domestic users on the slow GitHub path with
-        # nothing in the log to explain it.
-        #
-        # Note the `secrets` context is deliberately NOT used in an `if:`
-        # expression — GitHub does not evaluate it there, so such a condition
-        # is always false and the step would be skipped without warning.
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: modemneko_admin
-          GITEE_REPO: HakusAgent
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${GITEE_TOKEN}" ]; then
-            echo "::error::GITEE_TOKEN is not set, so the Gitee mirror cannot be updated. Add it under Settings → Secrets and variables → Actions, or remove this step to ship GitHub-only."
-            exit 1
-          fi
-          API="https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
-          TAG="${STABLE_TAG}"
-
-          # Reuse the fixed-tag release when it already exists so its download
-          # URLs stay stable across versions.
-          release_id=$(curl -sf "${API}/releases/tags/${TAG}" \
-            | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).id" 2>/dev/null || true)
-          if [ -z "$release_id" ]; then
-            # target_commitish is REQUIRED by the Gitee API — omitting it fails
-            # with "target_commitish is missing" (verified against the live
-            # API). Gitee has no equivalent of GitHub's default-branch
-            # inference, so the branch is named explicitly.
-            release_id=$(curl -sf -X POST "${API}/releases" \
-              -d "access_token=${GITEE_TOKEN}" \
-              -d "tag_name=${TAG}" \
-              -d "target_commitish=master" \
-              -d "name=HakusAI Stable" \
-              -d "body=HakusAI v${{ inputs.version }} stable build" \
-              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).id")
-          fi
-          echo "gitee release id: $release_id"
-
-          # Gitee has no replace-asset API: a same-named upload fails with
-          # "attachment already exists", which would leave the mirror silently
-          # serving the previous version. Delete matching attachments first.
-          existing=$(curl -sf "${API}/releases/${release_id}/attach_files?access_token=${GITEE_TOKEN}" || echo '[]')
-
-          delete_if_present() {
-            local target="$1"
-            local id
-            id=$(printf '%s' "$existing" | node -e "
-              let raw = '';
-              process.stdin.on('data', (c) => { raw += c });
-              process.stdin.on('end', () => {
-                let list = [];
-                try { list = JSON.parse(raw) || [] } catch { list = [] }
-                if (!Array.isArray(list)) list = list.attach_files || [];
-                const hit = list.find((a) => a && (a.title === process.argv[1] || a.name === process.argv[1]));
-                if (hit) process.stdout.write(String(hit.id));
-              });
-            " "$target")
-            if [ -n "$id" ]; then
-              echo "removing stale attachment: $target (id=$id)"
-              curl -sf -X DELETE "${API}/releases/${release_id}/attach_files/${id}?access_token=${GITEE_TOKEN}" || true
-            fi
-          }
-
-          for path in stable-assets/*; do
-            delete_if_present "$(basename "$path")"
-          done
-          delete_if_present "latest.json"
-
-          upload() {
-            local path="$1" name="$2" attempt
-            # Large bundles (~100 MB AppImage) can be cut off mid-upload;
-            # curl then exits 56 ("failure receiving network data"). Without a
-            # retry that aborts the whole mirror step after 18 minutes, so
-            # large files get a second and third attempt.
-            for attempt in 1 2 3; do
-              if curl -sS -f --max-time 900 --retry 2 --retry-delay 5 \
-                   -X POST "${API}/releases/${release_id}/attach_files" \
-                   -F "access_token=${GITEE_TOKEN}" \
-                   -F "file=@${path};filename=${name}" >/dev/null; then
-                return 0
-              fi
-              echo "  upload failed (attempt ${attempt}): ${name}"
-              [ "$attempt" -lt 3 ] && sleep 15
-            done
-            return 1
-          }
-
-          failed=0
-          for path in stable-assets/*; do
-            echo "uploading $(basename "$path")"
-            upload "$path" "$(basename "$path")" || failed=1
-          done
-
-          echo "uploading latest.json (Gitee-hosted URLs)"
-          upload "latest.gitee.json" "latest.json" || failed=1
-
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::One or more Gitee uploads failed. The GitHub channel is already published, so re-run this workflow to retry the mirror."
-            exit 1
-          fi
-          echo "Gitee mirror updated."
