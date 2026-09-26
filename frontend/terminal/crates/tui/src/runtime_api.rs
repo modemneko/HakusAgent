@@ -7461,6 +7461,18 @@ async fn delete_custom_provider(
             return Err(ApiError::bad_request(format!("Provider '{id}' is not a custom provider")));
         }
     }
+    // Unload threads pinned to this route and clear their bindings BEFORE the
+    // table is removed — otherwise the reload preflight rejects the whole
+    // config update because a thread references the just-removed provider, and
+    // since the removal is already persisted at that point, every later
+    // provider operation would fail the same way until a restart. Detaching
+    // first also means a refusal (a thread with a running turn) happens before
+    // anything has changed.
+    state
+        .runtime_threads
+        .detach_provider_route(&id)
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     config_persistence::delete_custom_provider(state.config_path.as_deref(), &id)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let reloaded = Config::load(state.config_path.clone(), state.config_profile.as_deref())
@@ -7639,6 +7651,18 @@ async fn update_provider(
     }
 
     if let Some(enabled) = req.enabled {
+        // Disabling is the "delete" path for built-in providers (the catalog
+        // entry itself cannot be removed). Threads pinned to this route must
+        // be detached BEFORE anything persists, or the reload preflight below
+        // rejects the update and — with it — every later provider operation,
+        // since a thread then references a route that may no longer resolve.
+        if !enabled {
+            state
+                .runtime_threads
+                .detach_provider_route(&identity.key)
+                .await
+                .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        }
         config_persistence::persist_provider_enabled_for_identity(
             state.config_path.as_deref(),
             provider_route.provider,

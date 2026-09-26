@@ -614,7 +614,7 @@ async fn create_thread_falls_back_to_default_route_when_live_provider_pointer_is
 }
 
 #[tokio::test]
-async fn named_custom_thread_identity_round_trips_and_fails_closed_when_removed() -> Result<()> {
+async fn named_custom_thread_identity_round_trips_and_heals_when_removed() -> Result<()> {
     let mut custom = std::collections::HashMap::new();
     custom.insert(
         "lm-studio".to_string(),
@@ -660,12 +660,26 @@ async fn named_custom_thread_identity_round_trips_and_fails_closed_when_removed(
     assert_eq!(route.model, "local-code-model");
     assert_eq!(route.config.deepseek_base_url(), "http://127.0.0.1:1234/v1");
 
-    let err = manager
-        .resolved_route_for_thread(&Config::default(), &persisted)
-        .expect_err("removed provider must fail closed");
-    let message = err.to_string();
-    assert!(message.contains("[providers.lm-studio]"), "{message}");
-    assert!(message.contains("will not fall back"), "{message}");
+    // Provider removed → the stale binding self-heals instead of dead-ending
+    // the session: the persisted record is repaired (binding cleared) and the
+    // thread falls back to the active provider. This is what lets users
+    // delete a provider without permanently bricking the sessions pinned to
+    // it — the previous fail-closed behavior left them unopenable AND blocked
+    // every provider config reload while loaded.
+    let healed_route = manager.resolved_route_for_thread(&Config::default(), &persisted)?;
+    assert_ne!(healed_route.identity.key, "lm-studio");
+
+    let repaired = manager.get_thread(&thread.id).await?;
+    assert_eq!(
+        repaired.model_provider.as_deref(),
+        None,
+        "stale binding must be cleared"
+    );
+    assert_eq!(repaired.model_provider_id.as_deref(), None);
+
+    // The repair is durable: resolving again against the default config now
+    // succeeds from the cleared record without another heal pass.
+    manager.resolved_route_for_thread(&Config::default(), &repaired)?;
 
     let mut legacy_value = serde_json::to_value(&persisted)?;
     legacy_value

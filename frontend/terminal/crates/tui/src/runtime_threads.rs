@@ -2810,6 +2810,56 @@ impl RuntimeThreadManager {
         config: &Config,
         thread: &ThreadRecord,
     ) -> Result<ResolvedRuntimeRoute> {
+        match self.resolved_route_for_thread_inner(config, thread) {
+            Ok(route) => Ok(route),
+            Err(err) => {
+                // A thread pinned to a provider route that no longer resolves
+                // (its provider was removed) would otherwise be permanently
+                // unopenable AND, while loaded, block every provider config
+                // reload. Self-heal: clear the stale binding and fall back to
+                // the active provider — the outcome removing the provider
+                // promises the user. The cleared binding is persisted so the
+                // repair happens once, not on every open.
+                let had_persisted_route = thread
+                    .model_provider
+                    .as_deref()
+                    .is_some_and(|provider| !provider.trim().is_empty())
+                    || thread.model_provider_id.is_some();
+                if !had_persisted_route {
+                    return Err(err);
+                }
+                let healed = (|| -> Result<ThreadRecord> {
+                    let _thread_mutation = self.store.thread_mutation.lock();
+                    let mut persisted = self.store.load_thread(&thread.id)?;
+                    persisted.model_provider = None;
+                    persisted.model_provider_id = None;
+                    self.store.save_thread(&persisted)?;
+                    let mut healed = thread.clone();
+                    healed.model_provider = None;
+                    healed.model_provider_id = None;
+                    Ok(healed)
+                })();
+                match healed {
+                    Ok(healed) => {
+                        tracing::warn!(
+                            thread_id = %thread.id,
+                            "thread route no longer resolvable; cleared provider binding and fell back to the active provider: {err}"
+                        );
+                        self.resolved_route_for_thread_inner(config, &healed)
+                    }
+                    // Could not persist the repair (store failure); surface the
+                    // original resolution error, which is still the truth.
+                    Err(_) => Err(err),
+                }
+            }
+        }
+    }
+
+    fn resolved_route_for_thread_inner(
+        &self,
+        config: &Config,
+        thread: &ThreadRecord,
+    ) -> Result<ResolvedRuntimeRoute> {
         let provider_identity = self.provider_identity_for_thread(config, thread)?;
         if !thread.model.trim().eq_ignore_ascii_case("auto") {
             return resolve_runtime_thread_route_for_identity(
@@ -2872,6 +2922,73 @@ impl RuntimeThreadManager {
             config.active_provider_identity(config.api_provider())
         };
         identity.map_err(|reason| anyhow!(reason))
+    }
+
+    /// Detach every thread pinned to a provider route that is being removed.
+    ///
+    /// Removing a provider leaves any thread pinned to it unresolvable: the
+    /// reload preflight validates every loaded engine's exact route and
+    /// rejects the whole config update otherwise, which dead-ends provider
+    /// cleanup with an opaque 400 and — because the removal has already been
+    /// persisted at that point — blocks every later provider operation too,
+    /// not just the one that caused it.
+    ///
+    /// Clearing the binding instead lets those threads fall back to the
+    /// active provider, which matches what a user expects when deleting a
+    /// provider they no longer want. Threads with an active turn are left
+    /// untouched and returned: unloading one mid-run would abort work, so
+    /// the caller refuses the removal and the user can stop the turn first.
+    pub(crate) async fn detach_provider_route(&self, key: &str) -> Result<Vec<String>> {
+        let mut blocked = Vec::new();
+        let mut evicted = Vec::new();
+        {
+            let mut active = self.active.lock().await;
+            let mut unload = Vec::new();
+            for (thread_id, state) in active.engines.iter() {
+                let bound = state.route_identity.key == key
+                    || state.route_identity.exact_id.as_deref() == Some(key);
+                if !bound {
+                    continue;
+                }
+                if state.active_turn.is_some() {
+                    blocked.push(thread_id.clone());
+                    continue;
+                }
+                unload.push(thread_id.clone());
+            }
+            for id in &unload {
+                if let Some(state) = active.engines.remove(id) {
+                    evicted.push(state.engine);
+                }
+                if let Some(pos) = active.lru.iter().position(|c| c == id) {
+                    active.lru.remove(pos);
+                }
+            }
+        }
+        for engine in evicted {
+            let _ = engine.send(Op::Shutdown).await;
+        }
+
+        // Clear the persisted binding so the next resume resolves against the
+        // active provider instead of the removed route.
+        for mut thread in self.store.list_threads()? {
+            let bound = thread.model_provider.as_deref() == Some(key)
+                || thread.model_provider_id.as_deref() == Some(key);
+            if !bound {
+                continue;
+            }
+            thread.model_provider = None;
+            thread.model_provider_id = None;
+            self.store.save_thread(&thread)?;
+        }
+
+        if !blocked.is_empty() {
+            bail!(
+                "Cannot remove this provider while these threads still have a running turn: {}. Stop the turns first.",
+                blocked.join(", ")
+            );
+        }
+        Ok(Vec::new())
     }
 
     /// Atomically replace the authoritative runtime config after preflighting
